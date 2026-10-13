@@ -190,15 +190,17 @@ export function clusters(contacts: readonly Contact[], radius = 5): { at: Point;
 export function rebuildExposure(w: World, side: Side): void {
   const grid = w.exposure[side];
   grid.fill(0);
-  const groups = clusters(sideContacts(w, side, 90), 4).slice(0, 8);
+  const groups = clusters(sideContacts(w, side, 90), 4).slice(0, 6);
   if (groups.length === 0) return;
   const W = w.map.width, H = w.map.height;
-  const reach = 110;
+  // As far as the enemy could see today, in a circle.
+  const reach = Math.round(Math.min(110, w.config.perception.maxRange * w.weather.sight));
   for (const g of groups) {
     const weight = (g.automatic ? 1.6 : 1) * Math.min(2, 0.6 + 0.2 * g.n);
-    const x0 = Math.max(0, g.at.x - reach), x1 = Math.min(W - 1, g.at.x + reach);
     const y0 = Math.max(0, g.at.y - reach), y1 = Math.min(H - 1, g.at.y + reach);
     for (let y = y0; y <= y1; y++) {
+      const span = Math.floor(Math.sqrt(reach * reach - (y - g.at.y) ** 2));
+      const x0 = Math.max(0, g.at.x - span), x1 = Math.min(W - 1, g.at.x + span);
       for (let x = x0; x <= x1; x++) {
         const i = y * W + x;
         if (!Number.isFinite(w.map.cost(i))) continue;

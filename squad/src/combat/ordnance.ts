@@ -8,6 +8,7 @@ import { label, note, shout } from "../entities/soldier.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { FireMission, Ordnance, OrdnanceKind, Point, Side, Soldier } from "../world/types.ts";
 import type { World } from "../world/world.ts";
+import { shellDamage } from "./destruction.ts";
 import { hearShot } from "./perception.ts";
 
 const NAMES: Record<OrdnanceKind, string> = {
@@ -171,30 +172,8 @@ function explode(w: World, o: Ordnance): void {
     const d = dist(s, o);
     if (d > spec.radius && d <= spec.radius * 1.6) suppress(w, s, w.config.explosives.suppression * 0.3);
   }
-  // Shells leave holes; artillery knocks walls down.
-  if (o.kind === "mortar" || o.kind === "artillery") {
-    const t = w.map.at(o.x, o.y);
-    let changed = false;
-    if (t === "grass" || t === "wheat" || t === "orchard" || t === "road") {
-      w.map.set(o.x, o.y, "crater");
-      changed = true;
-    }
-    if (o.kind === "artillery") {
-      for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-        const x = o.x + dx, y = o.y + dy;
-        if (!w.map.inBounds(x, y)) continue;
-        const tt = w.map.at(x, y);
-        if (tt === "building" || tt === "window" || tt === "wall") {
-          w.map.set(x, y, "rubble");
-          changed = true;
-        } else if (tt === "hedge" && rng.chance(0.4)) {
-          w.map.set(x, y, "rubble");
-          changed = true;
-        }
-      }
-    }
-    if (changed) w.map.finalize();
-  }
+  // Shells leave holes, knock walls down, bring houses in and smash trees.
+  shellDamage(w, o);
   w.emit("explosion", hurt, { kind: o.kind, at: [o.x, o.y], z: o.z, by: o.byId, hurt });
 }
 

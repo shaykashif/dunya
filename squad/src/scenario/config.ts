@@ -62,6 +62,7 @@ const moveCost: Record<Terrain, number> = {
   marsh: 2.2,
   brush: 1.5,
   ditch: 1.4,
+  deadfall: 1.9,
 };
 
 export const DEFAULT_CONFIG = {
@@ -89,15 +90,15 @@ export const DEFAULT_CONFIG = {
   terrain: {
     moveCost,
     /** Line-of-sight left after passing through one tile of each kind. */
-    seeThrough: { woods: 0.78, orchard: 0.9, wheat: 0.97, hedge: 0, wall: 0.85, building: 0, rubble: 0.92, window: 0.75, door: 0.75, brush: 0.82 } as Partial<Record<Terrain, number>>,
+    seeThrough: { woods: 0.78, orchard: 0.9, wheat: 0.97, hedge: 0, wall: 0.85, building: 0, rubble: 0.92, window: 0.75, door: 0.75, brush: 0.82, deadfall: 0.88 } as Partial<Record<Terrain, number>>,
     /** Protection from a hedge, wall or window between a man and the shooter, right beside him. */
-    edgeCover: { hedge: 0.85, wall: 0.65, window: 0.8, door: 0.55, rubble: 0.45, woods: 0.3, orchard: 0.15, building: 0.95, brush: 0.2 } as Partial<Record<Terrain, number>>,
+    edgeCover: { hedge: 0.85, wall: 0.65, window: 0.8, door: 0.55, rubble: 0.45, woods: 0.3, orchard: 0.15, building: 0.95, brush: 0.2, deadfall: 0.35 } as Partial<Record<Terrain, number>>,
     /** Protection from the tile he lies in. */
-    ownCover: { foxhole: 0.75, crater: 0.5, rubble: 0.3, woods: 0.2, orchard: 0.1, ditch: 0.55, brush: 0.1 } as Partial<Record<Terrain, number>>,
+    ownCover: { foxhole: 0.75, crater: 0.5, rubble: 0.3, woods: 0.2, orchard: 0.1, ditch: 0.55, brush: 0.1, deadfall: 0.25 } as Partial<Record<Terrain, number>>,
     /** Concealment: how much harder he is to spot on this ground. Foliage and dark rooms hide a man well. */
-    concealment: { woods: 0.35, orchard: 0.6, wheat: 0.6, rubble: 0.65, foxhole: 0.45, crater: 0.7, floor: 0.4, stairs: 0.4, door: 0.7, brush: 0.42, ditch: 0.5, marsh: 0.85 } as Partial<Record<Terrain, number>>,
+    concealment: { woods: 0.35, orchard: 0.6, wheat: 0.6, rubble: 0.65, foxhole: 0.45, crater: 0.7, floor: 0.4, stairs: 0.4, door: 0.7, brush: 0.42, ditch: 0.5, marsh: 0.85, deadfall: 0.55 } as Partial<Record<Terrain, number>>,
     /** How tall what grows or stands on each kind of ground is, in metres. */
-    height: { hedge: 2.6, wall: 1.8, woods: 9, orchard: 4.5, wheat: 1.1, brush: 1.6, rubble: 1 } as Partial<Record<Terrain, number>>,
+    height: { hedge: 2.6, wall: 1.8, woods: 9, orchard: 4.5, wheat: 1.1, brush: 1.6, rubble: 1, deadfall: 1.5 } as Partial<Record<Terrain, number>>,
     floorHeight: 3,
     eye: 1.5,
     body: 1,
@@ -148,6 +149,50 @@ export const DEFAULT_CONFIG = {
     priorityMinHit: 0.05,
     /** He wants no friend nearer than this: alone, he is harder to find. */
     alone: 5,
+  },
+  /** What shells do to what they hit. */
+  destruction: {
+    /** Hits a stretch of wall takes before it is a breach: stone, a window or door, a garden wall. */
+    wallHp: { building: 4, window: 2, door: 2, wall: 3 } as Partial<Record<Terrain, number>>,
+    /** Damage to walls at the burst and around it, and how far it reaches, in tiles. */
+    mortar: { center: 2, ring: 1, reach: 1.5 },
+    artillery: { center: 4, ring: 2, reach: 2.5 },
+    /** A house falls in when this share of its walls are breached, or its roof has taken this many hits per ten tiles of floor. */
+    collapseWalls: 0.3,
+    collapseRoof: 0.8,
+    /** Chance a tree within reach is smashed to deadfall, by a mortar bomb and by a shell. */
+    treeMortar: 0.6,
+    treeArtillery: 0.85,
+    /** Chance a hedge is blown open by a mortar bomb bursting on it, and by a shell bursting near it (one bursting on it always does). */
+    hedgeMortar: 0.5,
+    hedgeArtillery: 0.85,
+  },
+  ambush: {
+    /** Chance the defenders put a squad out in ambush, when they have two or more. */
+    chance: 0.55,
+    /** It springs when an enemy it can see comes this close, or when it is found. */
+    trigger: 22,
+    /** How far in front of the defended hedge it may lie, in tiles. */
+    forward: [6, 34] as [number, number],
+  },
+  help: {
+    /** A German runner takes this long to reach the Zugführer; an American squad radio is instant. */
+    runnerTicks: 25,
+    /** A squad calls again no sooner than this. */
+    again: 300,
+    /** It calls when this share of its men are pinned, or it has been stuck fixing the enemy this long, or it is down to this strength in contact. */
+    pinnedShare: 0.5,
+    stuckTicks: 50,
+    weak: 0.6,
+  },
+  breach: {
+    /** A house within this many tiles of the assault is cleared with grenades first. */
+    within: 9,
+    /** Ticks to wait for the stack before throwing anyway, and for the grenades before going in. */
+    stackTicks: 45,
+    grenadeTicks: 5,
+    /** The clearing is given up after this long. */
+    giveUp: 160,
   },
   shelling: {
     /** A squad reacts to rounds landing within this many tiles of its men, for this many ticks. */
@@ -249,7 +294,7 @@ export const DEFAULT_CONFIG = {
     /** Contacts are shared with squadmates within this range by shouting. */
     shoutRange: 25,
     /** How often exposure maps are rebuilt, in ticks. */
-    exposureEvery: 15,
+    exposureEvery: 20,
     /** A man firing from concealment gives himself away this much less; a sniper far less still. */
     concealedFiring: 0.4,
     sniperFiring: 0.15,

@@ -30,7 +30,7 @@ const PORT: Partial<Record<Terrain, number>> = { hedge: 0.5, wall: 1, window: 0.
 
 const WALLS = new Set<Terrain>(["building", "window", "door"]);
 /** Ground that turns to mud in the rain. */
-const MUDDY = new Set<Terrain>(["grass", "wheat", "orchard", "marsh", "crater", "foxhole", "ditch", "brush", "woods"]);
+const MUDDY = new Set<Terrain>(["grass", "wheat", "orchard", "marsh", "crater", "foxhole", "ditch", "brush", "woods", "deadfall"]);
 
 export class GameMap {
   readonly width: number;
@@ -55,6 +55,10 @@ export class GameMap {
   version = 0;
   /** How much heavier going rain makes open ground. */
   mud = 1;
+  /** Hits each stretch of wall can still take before it is breached (0 for anything else). */
+  readonly wallHp: Uint8Array;
+  /** Shell hits each tile of a roof has taken. */
+  readonly roofHits: Uint8Array;
 
   constructor(width: number, height: number, rules: TerrainRules) {
     this.width = width;
@@ -66,6 +70,8 @@ export class GameMap {
     this.levels = new Uint8Array(width * height);
     this.upper = new Uint8Array(width * height);
     this.top = new Float32Array(width * height);
+    this.wallHp = new Uint8Array(width * height);
+    this.roofHits = new Uint8Array(width * height);
     this.seeAt = new Float32Array(width * height).fill(1);
     this.portAt = new Float32Array(width * height).fill(-1);
   }

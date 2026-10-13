@@ -206,6 +206,34 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
       const sq = w.squads[d.squad as number]!;
       return line(`${d.ranging ? "A ranging round" : "Mortar rounds"} ${d.ranging ? "lands" : "land"} among ${sq.name}.`, "fire", [], false);
     }
+    case "help_call": {
+      const p = s("by");
+      const sq = w.squads[d.squad as number]!;
+      return line(`${sq.name} is ${d.why as string}: ${d.by === "radio" ? "the squad leader radios the platoon leader" : "a runner dashes back to the Zugführer"} for help.`, sq.side, p ? [p.id] : [], true);
+    }
+    case "help_sent": {
+      const to = w.squads[d.to as number]!;
+      if (d.squad === null) return line(`No squad can be spared for ${to.name}${d.mortars ? "; the mortars are told where they are wanted" : ""}.`, to.side, [], false);
+      return line(`The platoon leader sends ${w.squads[d.squad as number]!.name} to help ${to.name}.`, to.side, [], true);
+    }
+    case "ambush_laid": {
+      const sq = w.squads[d.squad as number]!;
+      return line(`${sq.name} goes forward to lie in ambush beside the way the enemy must come.`, sq.side, [], false);
+    }
+    case "ambush_sprung": {
+      const sq = w.squads[d.squad as number]!;
+      return line(d.found ? `${sq.name}'s ambush is discovered; they open fire.` : `${sq.name} springs its ambush: every rifle and the machine gun open up at once on ${d.enemies as number} men in the open.`, sq.side, [], true);
+    }
+    case "breach": {
+      const sq = w.squads[d.squad as number]!;
+      const b = w.buildings[d.house as number]!;
+      const text = d.stage === "stack" ? `${sq.name} closes on ${b.name}: the assault team flattens itself against the walls by the doors and windows while the base of fire keeps the windows busy.` : d.stage === "grenades" ? `${sq.name}: grenades through the windows of ${b.name}!` : `${sq.name} storms into ${b.name}, room by room.`;
+      return line(text, sq.side, [], d.stage !== "grenades");
+    }
+    case "building_collapse": {
+      const hurt = d.hurt as number[];
+      return line(`${(d.name as string).replace(/^./, (c) => c.toUpperCase())} falls in under the shelling${hurt.length ? `, burying ${hurt.map((id) => label(w.soldier(id))).join(", ")}` : ""}.`, "fire", hurt, true);
+    }
     case "infection":
       return null;
     default:

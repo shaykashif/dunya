@@ -185,7 +185,7 @@ export class World {
     return findPath(this.map, this.cellOf(s), this.map.cell(to.x, to.y, this.floorFor(s, to)), {
       blocked: (c) => this.occupancy[c] !== 0 && this.occupancy[c] !== s.id,
       extra: exposureWeight > 0 ? (c) => ex[c % n]! * exposureWeight : undefined,
-      maxExpand: 12000,
+      maxExpand: 5000,
     });
   }
 

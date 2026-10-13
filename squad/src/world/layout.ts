@@ -22,6 +22,8 @@ export interface Building {
   name: string;
   /** Storeys: 1 is the ground floor only. */
   floors: number;
+  /** Shelled until it fell in: no roof, no upper floors. */
+  destroyed: boolean;
 }
 
 export interface Layout {
@@ -313,7 +315,7 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
     // Never on top of another building or off the map; out in the country, not wall to wall either.
     const m = terrace ? 0 : 1;
     for (let yy = y - m; yy < y + h + m; yy++) for (let xx = x - m; xx < x + w + m; xx++) if (!map.inBounds(xx, yy) || map.building[map.idx(xx, yy)]! >= 0) return null;
-    const b: Building = { id: buildings.length, x, y, w, h, kind: k, name, floors };
+    const b: Building = { id: buildings.length, x, y, w, h, kind: k, name, floors, destroyed: false };
     buildings.push(b);
     for (let yy = y; yy < y + h; yy++) {
       for (let xx = x; xx < x + w; xx++) {
@@ -536,6 +538,8 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
     }
   }
 
+  // Every stretch of wall can take so many hits.
+  for (let i = 0; i < W * H; i++) map.wallHp[i] = cfg.destruction.wallHp[map.terrain[i]!] ?? 0;
   map.finalize();
   return {
     kind,

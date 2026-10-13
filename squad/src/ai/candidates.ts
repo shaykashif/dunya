@@ -195,6 +195,12 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
     }
   }
 
+  // ---- In ambush: lie still, wait ----
+  if (sq.state === "ambush") {
+    out.push(cand("hold", "ambush", "lie still in ambush, waiting", { duration: 3, value: 0.7, ordered: true, safety: 0.6 }));
+    return out.filter((c) => c.kind !== "move" && c.kind !== "rifle_grenade" && c.kind !== "suppress");
+  }
+
   // ---- Cover ----
   const here3 = s.z > 0 ? { x: s.x, y: s.y, z: s.z } : here;
   const coverHere = threats.length > 0 ? threats.reduce((a, t) => a + w.map.cover(here3, t, "crouch"), 0) / threats.length : 0;
@@ -228,6 +234,32 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
   // ---- Pinned: hug the dirt ----
   if (s.pinned || s.suppression > 0.45) out.push(cand("hug", "hug", "press himself into the dirt", { duration: 2, value: 0.15 + s.suppression * 0.55, safety: 1 }));
 
+  // ---- Clearing a house: on the word, a grenade through the nearest door or window ----
+  const br = sq.breach;
+  if (br && br.stage === "grenades" && s.grenades > 0 && w.tick - br.tick < cfg.breach.grenadeTicks && s.cooldowns["breachThrow"] !== br.tick && s.element === (sq.orders.B.kind === "move" ? "B" : s.element)) {
+    const b = w.buildings[br.house]!;
+    let best: { inside: Point; door: boolean; d: number } | null = null;
+    for (let y = b.y; y < b.y + b.h; y++) {
+      for (let x = b.x; x < b.x + b.w; x++) {
+        if (!(x === b.x || y === b.y || x === b.x + b.w - 1 || y === b.y + b.h - 1)) continue;
+        const t = w.map.at(x, y);
+        if (t !== "window" && t !== "door" && t !== "rubble") continue;
+        const d = cheb(s, { x, y });
+        if (d > 7 || (best && d >= best.d)) continue;
+        const inner = w.map.neighbors4(x, y).find((p) => w.map.building[w.map.idx(p.x, p.y)] === br.house && w.map.passable(p.x, p.y));
+        if (inner) best = { inside: inner, door: t !== "window", d };
+      }
+    }
+    if (best) {
+      // Upstairs, if that is where they are and this is a window.
+      const up = liveContacts(w, sq, 25).find((c) => c.z > 0 && w.map.building[w.map.idx(c.x, c.y)] === br.house);
+      const z = up && !best.door && w.map.passable(best.inside.x, best.inside.y, up.z) ? up.z : 0;
+      const at = z > 0 ? { ...best.inside, z } : best.inside;
+      s.cooldowns["breachThrow"] = br.tick;
+      out.push(cand("grenade", `breach:${at.x},${at.y},${z}`, z > 0 ? "lob a grenade through the upstairs window" : best.door ? "roll a grenade in through the door" : "post a grenade through the window", { at, duration: 1, value: 1.8, ordered: true, danger: 0.2, offense: 1 }));
+    }
+  }
+
   // ---- Grenades ----
   const assaulting = order.kind === "assault";
   if (s.grenades > 0 && !(s.cooldowns["grenade"] !== undefined && w.tick < s.cooldowns["grenade"]!)) {
@@ -239,7 +271,9 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
       const behind = w.map.cover({ x: c.x, y: c.y }, s, "crouch") >= 0.45 || !c.visible || w.map.at(c.x, c.y) === "foxhole" || w.map.indoors(c.x, c.y);
       // A man in the open is a rifle target; grenades are for men behind cover, or for the final rush.
       if (!behind && !assaulting && d > 6) continue;
-      out.push(cand("grenade", `grenade:${c.x},${c.y}`, "throw a grenade", { at: { x: c.x, y: c.y }, duration: 1, value: 0.4 + (behind ? 0.35 : 0) + (assaulting ? 0.3 : 0) + (c.automatic ? 0.2 : 0), ordered: assaulting, danger: 0.25 + 0.2 * exHere, offense: 0.9 }));
+      // Up through an upstairs window, if that is where he is.
+      const aim = c.z > 0 && d <= 8 ? { x: c.x, y: c.y, z: c.z } : { x: c.x, y: c.y };
+      out.push(cand("grenade", `grenade:${c.x},${c.y}`, c.z > 0 && d <= 8 ? "lob a grenade up through the window" : "throw a grenade", { at: aim, duration: 1, value: 0.4 + (behind ? 0.35 : 0) + (assaulting ? 0.3 : 0) + (c.automatic ? 0.2 : 0), ordered: assaulting, danger: 0.25 + 0.2 * exHere, offense: 0.9 }));
       break;
     }
   }

@@ -539,7 +539,7 @@ function workFor(s: Soldier, c: Candidate): number {
 
 /** Gets down appropriately: crouched behind a bank or in a hole, prone in the open when there is fire about. */
 function restPosture(w: World, s: Soldier, firing: boolean): void {
-  if (s.pinned) {
+  if (s.pinned || w.squad(s.squadId).state === "ambush") {
     s.posture = "prone";
     return;
   }

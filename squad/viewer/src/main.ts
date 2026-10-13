@@ -112,6 +112,20 @@ function effectsFor(e: SimEvent): void {
       renderer.addEffect({ kind: "boom", x: x * TILE + 8, y: y * TILE + 8, size, seed: e.seq, born: t, dur: BLAST_SECONDS[size]!, delay: 0 });
       break;
     }
+    case "destroyed": {
+      // Each wall, tree or hedge knocked down throws up its pieces.
+      for (const [k, tile] of (d.tiles as [number, number, string][]).entries()) {
+        const [x, y, to] = tile;
+        if (k > 12) break;
+        renderer.addEffect({ kind: "debris", x: x * TILE + 8, y: y * TILE + 8, seed: e.seq * 31 + k, stuff: to === "rubble" ? 0 : to === "deadfall" ? 1 : 2, born: t, dur: 1.6, delay: 0.05 + k * 0.03 });
+      }
+      break;
+    }
+    case "building_collapse": {
+      const b = world.buildings[d.building as number]!;
+      renderer.addEffect({ kind: "collapse", x: b.x * TILE, y: b.y * TILE, w: b.w * TILE, h: b.h * TILE, seed: e.seq, born: t, dur: 4, delay: 0.1 });
+      break;
+    }
     case "smoke": {
       const [x, y] = d.at as [number, number];
       renderer.addEffect({ kind: "pop", x: x * TILE + 8, y: y * TILE + 8, seed: e.seq, born: t, dur: 1.2, delay: 0 });
@@ -153,6 +167,7 @@ const SQUAD_ALERTS: Record<string, [string, string]> = {
   withdraw: ["Retreating", "is retreating"],
   broken: ["Broken", "has broken and is drifting back"],
   displace: ["Under mortar fire", "is displacing out of the barrage"],
+  reinforce: ["Reinforcing", "is moving up to help another squad"],
   hold: ["New line", "is holding a new line"],
   advance: ["Advancing", "is pushing on"],
 };
@@ -178,6 +193,32 @@ function toastFor(e: SimEvent): void {
   switch (e.type) {
     case "squad_state":
       squadAlert(e);
+      break;
+    case "help_call": {
+      const sq = world.squads[d.squad as number]!;
+      toast("squad", `${d.by === "radio" ? "Radio" : "Runner"} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} is ${d.why as string} and ${d.by === "radio" ? "radios" : "sends a runner"} for help.`, [], sq.color);
+      break;
+    }
+    case "help_sent": {
+      const to = world.squads[d.to as number]!;
+      const sent = d.squad !== null ? world.squads[d.squad as number]! : null;
+      toast("squad", `Support · ${to.side === "us" ? "US" : "German"}`, sent ? `${sent.name} is sent to help ${to.name}.` : `No squad to spare for ${to.name}${d.mortars ? "; the mortars will be told" : ""}.`, [], (sent ?? to).color);
+      break;
+    }
+    case "ambush_sprung": {
+      const sq = world.squads[d.squad as number]!;
+      toast("fire", `Ambush · ${sq.side === "us" ? "US" : "German"}`, d.found ? `${sq.name}'s ambush is found; they open fire.` : `${sq.name} springs its ambush on ${d.enemies as number} men in the open!`, [], sq.color);
+      break;
+    }
+    case "breach": {
+      const sq = world.squads[d.squad as number]!;
+      const b = world.buildings[d.house as number]!;
+      const what = d.stage === "stack" ? `is stacking up on ${b.name}` : d.stage === "grenades" ? `posts grenades through the windows of ${b.name}` : `storms into ${b.name}`;
+      toast("squad", `Clearing a house · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} ${what}.`, [], sq.color);
+      break;
+    }
+    case "building_collapse":
+      toast("fire", "Collapse", `${(d.name as string).replace(/^./, (c) => c.toUpperCase())} falls in under the shelling${(d.hurt as number[]).length ? `; ${(d.hurt as number[]).length} men caught inside` : ""}.`, d.hurt as number[]);
       break;
     case "death": {
       const p = s("person");
@@ -582,7 +623,7 @@ function whereText(s: Soldier): string {
   const up = Math.round(world.map.heightAt(s.x, s.y, s.z));
   if (b >= 0 && world.map.indoors(s.x, s.y, s.z)) return `In ${world.buildings[b]!.name}, ${FLOOR_NAMES[s.z] ?? `floor ${s.z}`}${s.role === "sniper" && s.hide && s.hide.x === s.x && s.hide.y === s.y ? " (his hide)" : ""} · ${up} m above the stream`;
   const t = world.map.at(s.x, s.y);
-  const ground: Record<string, string> = { grass: "in a pasture", wheat: "in the wheat", road: "on the road", orchard: "in an orchard", woods: "in the woods", hedge: "in a hedgerow", wall: "at a wall", water: "in the stream", bridge: "on the bridge", rubble: "in rubble", crater: "in a shell hole", foxhole: "in a foxhole", marsh: "in wet meadow", brush: "in the brambles", ditch: "in a ditch", floor: "indoors", door: "in a doorway", stairs: "on the stairs" };
+  const ground: Record<string, string> = { deadfall: "among shattered trees", grass: "in a pasture", wheat: "in the wheat", road: "on the road", orchard: "in an orchard", woods: "in the woods", hedge: "in a hedgerow", wall: "at a wall", water: "in the stream", bridge: "on the bridge", rubble: "in rubble", crater: "in a shell hole", foxhole: "in a foxhole", marsh: "in wet meadow", brush: "in the brambles", ditch: "in a ditch", floor: "indoors", door: "in a doorway", stairs: "on the stairs" };
   return `${(ground[t] ?? t).replace(/^./, (c) => c.toUpperCase())} · ${up} m above the stream`;
 }
 
@@ -621,7 +662,7 @@ function renderInspector(): void {
   });
 }
 
-const STATE_NAMES: Record<string, string> = { displace: "displacing", deploy: "forming up", advance: "advancing", react: "contact", fix: "fixing", flank: "flanking", assault: "assault", consolidate: "consolidating", hold: "holding", fall_back: "falling back", withdraw: "withdrawing", broken: "broken", support: "support" };
+const STATE_NAMES: Record<string, string> = { ambush: "in ambush", reinforce: "reinforcing", displace: "displacing", deploy: "forming up", advance: "advancing", react: "contact", fix: "fixing", flank: "flanking", assault: "assault", consolidate: "consolidating", hold: "holding", fall_back: "falling back", withdraw: "withdrawing", broken: "broken", support: "support" };
 
 function renderSquads(): void {
   const out: string[] = [];

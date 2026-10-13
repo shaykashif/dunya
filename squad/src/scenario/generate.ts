@@ -4,6 +4,7 @@
 // split into a base-of-fire team and a manoeuvre team; the German Gruppe
 // around its MG 42, with a gun team and a rifle team.
 import { emptyOrder } from "../ai/command.ts";
+import { ambushSite, ambushSpots } from "../ai/ambush.ts";
 import { vantage } from "../ai/tactics.ts";
 import { Rng } from "../engine/rng.ts";
 import type { EventLog } from "../log/events.ts";
@@ -269,6 +270,9 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       refuge: null,
       fellBackTick: -1000,
       sniperAlert: null,
+      help: null,
+      helping: null,
+      breach: null,
     };
     w.squads.push(sq);
     for (const slot of slots) {
@@ -307,6 +311,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       rearY,
       fireMissionsLeft: cfg.mortars.missions[side],
       missions: [],
+      priority: null,
       phase: role === "attack" ? "forming up" : "waiting",
       startStrength: 0,
       withdrawing: false,
@@ -413,6 +418,30 @@ function deployDefenders(w: World, side: Side, layout: Layout, rng: Rng): void {
       sq.orders[el] = { kind: "hold", positions: keep, target: null, pace: "crouch", fire: "hold", issued: 0 };
     }
   });
+  // Sometimes one squad goes out in front to lie in wait in the woods beside the enemy's way in.
+  if (pl.squadIds.length >= 2 && rng.chance(w.config.ambush.chance)) {
+    const site = ambushSite(w, side);
+    if (site) {
+      const sq = pl.squadIds.map((id) => w.squad(id)).sort((a, b) => cheb(a.post ?? site.at, site.at) - cheb(b.post ?? site.at, site.at) || a.id - b.id)[0]!;
+      const men = sq.members.map((m) => w.soldier(m));
+      const spots = ambushSpots(w, men, site);
+      for (const m of men) {
+        const p = spots[m.id]!;
+        placeAt(w, m, p);
+        m.posture = "prone";
+      }
+      for (const el of ["A", "B"] as const) {
+        const keep: Record<number, Point> = {};
+        for (const m of men.filter((x) => x.element === el)) keep[m.id] = { x: m.x, y: m.y };
+        sq.orders[el] = { kind: "hold", positions: keep, target: null, pace: "crawl", fire: "hold", issued: 0 };
+      }
+      sq.state = "ambush";
+      sq.intent = "lying in ambush in cover beside the enemy's way in, holding fire";
+      sq.post = site.at;
+      sq.facing = { x: Math.sign(site.look.x - site.at.x), y: Math.sign(site.look.y - site.at.y) };
+      w.emit("ambush_laid", [], { squad: sq.id, at: [site.at.x, site.at.y] });
+    }
+  }
   const hq = w.squad(pl.hqSquadId);
   const post = w.freeTileNear({ x: layout.objective.x, y: layout.objective.y - 4 }, 6) ?? layout.objective;
   hq.post = post;

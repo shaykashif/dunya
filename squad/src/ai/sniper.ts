@@ -42,6 +42,8 @@ export function compromised(w: World, s: Soldier): boolean {
 export function needsHide(w: World, s: Soldier): boolean {
   const cfg = w.config.sniper;
   if (!s.hide) return w.tick - s.hideTick > 30;
+  // The house he was in has come down.
+  if (!w.map.passable(s.hide.x, s.hide.y, s.hide.z ?? 0)) return true;
   if ((s.cooldowns["hideShots"] ?? 0) >= cfg.shotsPerHide) return true;
   if (compromised(w, s) && cheb(s, s.hide) === 0) return true;
   // While a wounded man lies in his sights, he stays put and waits.

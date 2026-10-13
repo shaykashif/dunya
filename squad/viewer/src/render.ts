@@ -4,7 +4,7 @@ import { cannotWalk } from "../../src/entities/body.ts";
 import type { Building } from "../../src/world/layout.ts";
 import type { Soldier, Terrain } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
-import { blastShake, drawBlast, shotShake, drawSmokeCloud, dustSpurt, muzzleFlash, shellShadow, smokePop } from "./fx.ts";
+import { blastShake, drawBlast, drawCollapse, drawDebris, shotShake, drawSmokeCloud, dustSpurt, muzzleFlash, shellShadow, smokePop } from "./fx.ts";
 import { Flora, buildingBounds, buildingShadow, buildingSprite, groundShadow, pick, type Prop } from "./scenery.ts";
 import { SIDE_COLORS, TILE, hash2, soldierSprite } from "./sprites.ts";
 
@@ -30,6 +30,8 @@ export type Effect =
   | { kind: "pop"; x: number; y: number; born: number; dur: number; delay: number; seed: number }
   | { kind: "arc"; x0: number; y0: number; x1: number; y1: number; born: number; dur: number; delay: number; smoke: boolean }
   | { kind: "shell"; x: number; y: number; born: number; dur: number; delay: number }
+  | { kind: "debris"; x: number; y: number; born: number; dur: number; delay: number; seed: number; stuff: number }
+  | { kind: "collapse"; x: number; y: number; w: number; h: number; born: number; dur: number; delay: number; seed: number }
   | { kind: "text"; x: number; y: number; text: string; color: string; born: number; dur: number; delay: number; follow: number | null };
 
 const BASE: Record<Terrain, string> = {
@@ -53,10 +55,11 @@ const BASE: Record<Terrain, string> = {
   marsh: "#4e7a46",
   brush: "#58843a",
   ditch: "#4a6a30",
+  deadfall: "#5a6a3a",
 };
 
 /** Colours for the minimap. */
-export const MINI: Record<Terrain, string> = { ...BASE, hedge: "#24481e", woods: "#2a5022", orchard: "#4a7a30", building: "#4a4038", window: "#4a4038", crater: "#5a4630", foxhole: "#3a2e20", brush: "#3e6a2c", ditch: "#3a5426", marsh: "#4a6e5a" };
+export const MINI: Record<Terrain, string> = { ...BASE, deadfall: "#4a4a30", hedge: "#24481e", woods: "#2a5022", orchard: "#4a7a30", building: "#4a4038", window: "#4a4038", crater: "#5a4630", foxhole: "#3a2e20", brush: "#3e6a2c", ditch: "#3a5426", marsh: "#4a6e5a" };
 
 let flora: Flora | undefined;
 
@@ -101,6 +104,51 @@ function drawTile(g: CanvasRenderingContext2D, w: World, tx: number, ty: number)
         px(fx + 1, fy + 3, fc);
       }
       break;
+    case "brush":
+      for (let k = 0; k < 6; k++) px(x + Math.floor(r(k) * 16), y + Math.floor(r(k + 9) * 16), r(k + 20) < 0.5 ? "#6a9a42" : "#4a7430", 1, 2);
+      break;
+    case "marsh":
+      // Tussocks and standing water.
+      for (let k = 0; k < 3; k++) px(x + Math.floor(r(k) * 12), y + Math.floor(r(k + 5) * 14), "#5a8aa8", 4, 1);
+      for (let k = 0; k < 5; k++) {
+        const rx = x + Math.floor(r(k + 30) * 15), ry = y + 2 + Math.floor(r(k + 40) * 12);
+        px(rx, ry - 2, "#7aa04a", 1, 3);
+        px(rx + 1, ry - 1, "#6a8a3a", 1, 2);
+      }
+      break;
+    case "ditch":
+      // A trench of wet earth between grassy lips.
+      px(x, y + 3, "#3e5a28", 16, 10);
+      px(x, y + 5, "#4a3a26", 16, 6);
+      px(x, y + 7, "#3a5a6a", 16, 2);
+      for (let k = 0; k < 4; k++) px(x + Math.floor(r(k) * 15), y + 3, "#6a9a42", 1, 2);
+      break;
+    case "stairs":
+      for (let row = 0; row < 16; row += 4) px(x, y + row, "#7a5a3a", 16, 1);
+      for (let k = 0; k < 4; k++) {
+        px(x + 2, y + 2 + k * 3, "#a88660", 12, 2);
+        px(x + 2, y + 4 + k * 3, "#5a3e24", 12, 1);
+      }
+      break;
+    case "deadfall": {
+      // Shattered trees: stumps, splintered trunks lying every which way, torn-up earth.
+      for (let k = 0; k < 5; k++) px(x + Math.floor(r(k) * 15), y + Math.floor(r(k + 9) * 15), r(k + 20) < 0.5 ? "#4a3a26" : "#6a8a3a", 2, 1);
+      const sx = x + 3 + Math.floor(r(50) * 8), sy = y + 4 + Math.floor(r(51) * 6);
+      px(sx, sy, "#3a2a1a", 4, 4);
+      px(sx + 1, sy - 2, "#5a4028", 2, 3);
+      px(sx + 1, sy, "#c8a878", 2, 1);
+      const lx = x + Math.floor(r(53) * 6), ly = y + 2 + Math.floor(r(54) * 10);
+      if (r(52) < 0.5) {
+        px(lx, ly, "#2e2216", 10, 3);
+        px(lx, ly, "#6a4a2c", 10, 1);
+        px(lx + 10, ly, "#d8b888", 1, 3);
+      } else {
+        px(lx + 4, ly - 4, "#2e2216", 3, 8);
+        px(lx + 4, ly - 4, "#6a4a2c", 1, 8);
+      }
+      for (let k = 0; k < 3; k++) px(x + Math.floor(r(k + 60) * 14), y + Math.floor(r(k + 63) * 14), "#3e6a28", 2, 2);
+      break;
+    }
     case "wheat":
       for (let row = 1; row < 16; row += 3) px(x, y + row, "#a88a38", 16, 1);
       for (let k = 0; k < 7; k++) px(x + Math.floor(r(k) * 16), y + Math.floor(r(k + 9) * 16), "#e0c870", 1, 1);
@@ -724,8 +772,8 @@ export class Renderer {
     let c = this.houses.get(b.id);
     if (!c || c.version !== w.map.version || c.world !== w) {
       // Only redraw when a shell has changed this house's own tiles.
-      let look = "";
-      for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) look += w.map.at(x, y)[0];
+      let look = b.destroyed ? "X" : "";
+      for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) look += w.map.at(x, y)[0] + String(Math.min(9, w.map.roofHits[w.map.idx(x, y)]!));
       if (!c || c.world !== w || c.look !== look) c = { version: w.map.version, world: w, look, img: buildingSprite(w, b) };
       c.version = w.map.version;
       this.houses.set(b.id, c);
@@ -801,6 +849,12 @@ export class Renderer {
           break;
         case "pop":
           smokePop(g, e.x, e.y, e.seed, t * e.dur, e.dur);
+          break;
+        case "debris":
+          drawDebris(g, e.x, e.y, e.seed, e.stuff, t * e.dur, e.dur);
+          break;
+        case "collapse":
+          drawCollapse(g, e.x, e.y, e.w, e.h, e.seed, t * e.dur, e.dur);
           break;
         case "arc": {
           const x = Math.round(e.x0 + (e.x1 - e.x0) * t), gy = e.y0 + (e.y1 - e.y0) * t;

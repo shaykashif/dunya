@@ -270,6 +270,7 @@ export function buildingBounds(b: Building): { x: number; y: number; w: number; 
  * the real windows and doors of that wall.
  */
 export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
+  if (b.destroyed) return ruinSprite(w, b);
   const L = LOOKS[b.kind];
   const B = buildingBounds(b);
   const [c, g] = canvas(B.w, B.h);
@@ -422,16 +423,26 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
     px(RX + RW - 3, RY + 1, shade(L.roof[1], 0.6), 2, RH - 2);
   }
 
-  // Shell holes through the roof.
+  // Shell holes through the roof: over breached walls, and wherever bombs came through.
   for (let yy = b.y; yy < b.y + b.h; yy++) {
     for (let xx = b.x; xx < b.x + b.w; xx++) {
-      if (w.map.at(xx, yy) !== "rubble") continue;
+      const hits = w.map.roofHits[w.map.idx(xx, yy)]!;
+      if (w.map.at(xx, yy) !== "rubble" && hits === 0) continue;
       const X = ox + (xx - b.x) * TILE, Y = oy + (yy - b.y) * TILE - WH;
-      px(X + 2, Y + 3, L.roof[3], 12, 10);
-      px(X + 3, Y + 4, "#1a140e", 10, 8);
+      if (hits === 1 && w.map.at(xx, yy) !== "rubble") {
+        // A single bomb: a ragged hole and slipped tiles round it.
+        px(X + 4, Y + 5, L.roof[3], 8, 6);
+        px(X + 5, Y + 6, "#1a140e", 6, 4);
+        px(X + 7, Y + 5, "#5a3e24", 1, 6);
+        for (let k = 0; k < 5; k++) px(X + 2 + Math.floor(hash2(xx, yy, k) * 12), Y + 3 + Math.floor(hash2(yy, xx, k) * 10), L.roof[2], 2, 1);
+        continue;
+      }
+      px(X + 1, Y + 2, L.roof[3], 14, 12);
+      px(X + 2, Y + 3, "#1a140e", 12, 10);
       px(X + 4, Y + 5, "#2e2418", 4, 3);
-      px(X + 3, Y + 7, "#5a3e24", 11, 1);
-      px(X + 9, Y + 3, "#5a3e24", 1, 10);
+      px(X + 2, Y + 7, "#5a3e24", 13, 1);
+      px(X + 9, Y + 2, "#5a3e24", 1, 12);
+      px(X + 4, Y + 3, "#5a3e24", 1, 5);
     }
   }
 
@@ -473,6 +484,56 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
     }
     px(TX + TW / 2 - 1, top - SH - 9, "#d8c890", 2, 10);
     px(TX + TW / 2 - 3, top - SH - 6, "#d8c890", 6, 2);
+  }
+  return c;
+}
+
+/**
+ * What is left of a house that fell in: no roof, the walls broken off at
+ * jagged heights, heaps of stone and charred beams at their foot. The rubble
+ * inside is the ground itself, drawn by the terrain.
+ */
+function ruinSprite(w: World, b: Building): HTMLCanvasElement {
+  const L = LOOKS[b.kind];
+  const B = buildingBounds(b);
+  const [c, g] = canvas(B.w, B.h);
+  const px = (x: number, y: number, col: string, ww = 1, hh = 1) => {
+    g.fillStyle = col;
+    g.fillRect(x, y, ww, hh);
+  };
+  const ox = b.x * TILE - B.x, oy = b.y * TILE - B.y;
+  const FW = b.w * TILE, FH = b.h * TILE;
+  const base = oy + FH;
+  // The front wall, snapped off: higher by the corners, low where the shells came through.
+  for (let x = 0; x < FW; x += 2) {
+    const tx = b.x + Math.floor(x / TILE);
+    const breach = w.map.at(tx, b.y + b.h - 1) === "rubble";
+    const corner = Math.min(x, FW - 1 - x) < 10;
+    const h = breach ? 2 + Math.floor(hash2(x, b.id, 3) * 3) : Math.round(L.wallH * (corner ? 0.75 : 0.25 + 0.45 * hash2(Math.floor(x / 6), b.id, 4)));
+    px(ox + x, base - h, L.wall, 2, h);
+    if (hash2(x, b.id, 5) < 0.4) px(ox + x, base - h, L.wallDark, 2, 1);
+    for (let y = base - h + 2; y < base; y += 3) if ((x + y) % 7 === 0) px(ox + x, y, L.wallDark, 2, 1);
+  }
+  px(ox, base - 2, "#5a544a", FW, 2);
+  // Scorched beams and heaps of stone.
+  for (let k = 0; k < b.w * 2; k++) {
+    const x = ox + Math.floor(hash2(b.id, k, 6) * (FW - 10)), y = base - 3 - Math.floor(hash2(b.id, k, 7) * 4);
+    if (k % 3 === 0) px(x, y - 1, "#2a1e16", 9, 2);
+    else {
+      px(x, y, "#8a8478", 5, 3);
+      px(x + 1, y, "#a8a294", 2, 1);
+      px(x, y + 2, "#5a544a", 5, 1);
+    }
+  }
+  // Charred rafters standing up out of the shell of the back wall.
+  for (let k = 0; k < 3; k++) {
+    const x = ox + 6 + Math.floor(hash2(b.id, k, 8) * (FW - 12));
+    px(x, oy - 6, "#2a1e16", 2, 12 + Math.floor(hash2(b.id, k, 9) * 8));
+  }
+  // The back wall's stub along the top of the footprint.
+  for (let x = 0; x < FW; x += 2) {
+    const h = Math.round(6 + 6 * hash2(Math.floor(x / 5), b.id, 10));
+    px(ox + x, oy - h + 4, L.wallDark, 2, h);
   }
   return c;
 }

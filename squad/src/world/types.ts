@@ -63,7 +63,9 @@ export type Terrain =
   /** Scrub and bramble: some concealment, slow. */
   | "brush"
   /** A roadside ditch: a ready-made trench. */
-  | "ditch";
+  | "ditch"
+  /** Trees smashed by shellfire: stumps, splintered trunks and fallen limbs. */
+  | "deadfall";
 
 // ---------- Bodies and wounds (kept from the village simulation) ----------
 
@@ -346,7 +348,11 @@ export type SquadState =
   | "broken"
   | "support"
   /** Getting out from under mortar fire. */
-  | "displace";
+  | "displace"
+  /** Lying in wait, hidden and holding fire until the enemy walks into it. */
+  | "ambush"
+  /** Moving up to bolster another squad that called for help. */
+  | "reinforce";
 
 export type FirePolicy = "hold" | "return" | "free";
 
@@ -403,6 +409,12 @@ export interface Squad {
   shelledTick: number;
   /** Where it is heading to get out of a barrage. */
   refuge: Point | null;
+  /** A call for help, by radio or runner: when it was made, when it reaches the platoon leader, and whether it was answered. */
+  help: { tick: number; arrives: number; by: "radio" | "runner"; answered: boolean } | null;
+  /** The squad it is helping, if any. */
+  helping: number | null;
+  /** Clearing a house: which one, and how far along (stacking up outside, grenades in, going in). */
+  breach: { house: number; stage: "stack" | "grenades" | "enter"; tick: number } | null;
   /** When it last fell back: a squad that has just done so holds rather than running again. */
   fellBackTick: number;
   /** A sniper is working on the squad: where they think he is, and when he last fired. */
@@ -435,6 +447,8 @@ export interface Platoon {
   rearY: number;
   fireMissionsLeft: number;
   missions: FireMission[];
+  /** Where a squad that called for help, and got no squad sent, wants the mortars. */
+  priority: Point | null;
   phase: string;
   startStrength: number;
   withdrawing: boolean;
