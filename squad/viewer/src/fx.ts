@@ -268,3 +268,47 @@ export function shellShadow(g: CanvasRenderingContext2D, x: number, y: number, t
   blocks.flush(g);
   g.globalAlpha = 1;
 }
+
+// ---------- Destruction ----------
+
+/** Plaster and stone dust, darker at the heart. */
+const DUST = ["#7a7262", "#948c7c", "#aea696", "#c6beae"];
+
+const STUFF = [
+  ["#8a8478", "#a8a294", "#5a544a", "#6e6458"], // stone and plaster
+  ["#5a4028", "#c8a878", "#2e2216", "#6a8a3a"], // splintered wood and leaves
+  ["#4a7a30", "#6a9a42", "#4a3a26", "#2e5a24"], // a hedge's brush and earth
+];
+
+/**
+ * A wall, tree or hedge knocked to pieces: chunks of it thrown up and out,
+ * falling back, and a puff of dust where it stood.
+ */
+export function drawDebris(g: CanvasRenderingContext2D, x: number, y: number, seed: number, stuff: number, T: number, life: number): void {
+  const pal = STUFF[stuff] ?? STUFF[0]!;
+  const end = Math.max(0, 1 - T / life);
+  disc(x, y - 4 - T * 6, 6 + T * 7, 2, 0.8, (d, gx, gy) => (end * 1.3 * (1.1 - d) > dither(gx, gy) ? (d < 0.5 ? "#9a9284" : "#b8b2a4") : null));
+  const G = 240;
+  for (let i = 0; i < 9; i++) {
+    const a = hash2(seed, i, 1) * Math.PI * 2, v = 10 + 30 * hash2(seed, i, 2), vz = 40 + 70 * hash2(seed, i, 3);
+    const flight = (2 * vz) / G;
+    const tt = Math.min(T, flight);
+    const px = x + Math.cos(a) * v * tt, py = y + Math.sin(a) * v * tt * 0.6 - (vz * tt - 0.5 * G * tt * tt);
+    if (T > flight && end * 2 < dither(i, seed)) continue;
+    blocks.add(pal[i % pal.length]!, Math.round(px), Math.round(py), i % 3 === 0 ? 3 : 2);
+  }
+  blocks.flush(g);
+}
+
+/** A house falling in: a great cloud of dust and smoke boiling up over it and drifting off. */
+export function drawCollapse(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, seed: number, T: number, life: number): void {
+  const u = T / life;
+  const puffs = Math.max(6, Math.round((w * h) / 400));
+  for (let k = 0; k < puffs; k++) {
+    const px = x + hash2(seed, k, 1) * w + T * 4, py = y + hash2(seed, k, 2) * h - T * (8 + 10 * hash2(seed, k, 3));
+    const r = 10 + 14 * hash2(seed, k, 4) * (0.6 + u);
+    const left = Math.min(1, (1 - u) * 1.8);
+    disc(px, py, r, 3, 0.85, (d, gx, gy) => (left * (1.25 - d * 0.7) > dither(gx, gy) ? DUST[Math.min(3, Math.floor(u * 2 + d * 1.5))]! : null));
+  }
+  blocks.flush(g);
+}

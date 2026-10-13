@@ -65,7 +65,8 @@ export function moraleStep(w: World): void {
   const sup = w.config.suppression;
   for (const s of w.soldiers) {
     if (s.status !== "active") continue;
-    const cover = w.map.besideCover(s.x, s.y) || w.map.at(s.x, s.y) === "foxhole" || w.map.indoors(s.x, s.y);
+    const t = w.map.at(s.x, s.y);
+    const cover = w.map.besideCover(s.x, s.y) || t === "foxhole" || t === "ditch" || w.map.indoors(s.x, s.y, s.z);
     s.suppression = Math.max(0, s.suppression - sup.decay * (cover ? 1.3 : 1) * (s.experience === "veteran" ? 1.2 : 1));
     const underFire = s.underFire !== null && w.tick - s.underFire.tick < 5;
     if (underFire && s.suppression > 0.5) s.morale = clamp01(s.morale - cfg.underFirePerTick * steadiness(s));

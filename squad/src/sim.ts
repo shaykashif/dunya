@@ -4,7 +4,7 @@ import { Engine } from "./engine/engine.ts";
 import { EventLog } from "./log/events.ts";
 import { makeConfig, type DeepPartial, type SimConfig } from "./scenario/config.ts";
 import { generateScenario } from "./scenario/generate.ts";
-import type { Side } from "./world/types.ts";
+import type { MapKind, Side, WeatherKind } from "./world/types.ts";
 import type { World } from "./world/world.ts";
 
 export interface SimulationOptions {
@@ -38,6 +38,9 @@ export interface RunSummary {
   ticks: number;
   clock: string;
   attacker: Side;
+  /** What kind of place, and the weather. */
+  map: MapKind;
+  weather: WeatherKind;
   winner: Side | null;
   reason: string;
   us: SideSummary;
@@ -72,6 +75,8 @@ export function summarize(world: World): RunSummary {
     ticks: world.tick,
     clock: world.clock(),
     attacker: world.attacker,
+    map: world.layout.kind,
+    weather: world.weather.kind,
     winner: world.result?.winner ?? null,
     reason: world.result?.reason ?? "still fighting",
     us: sideSummary(world, "us"),

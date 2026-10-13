@@ -87,8 +87,8 @@ function effectsFor(e: SimEvent): void {
         const x0 = fx * TILE + 8, y0 = fy * TILE + 6, x1 = ax * TILE + 8 + jx, y1 = ay * TILE + 6 + jy;
         // Every fourth round of a belt is a tracer; rifles show a faint streak.
         const automatic = rounds > 1;
-        if (!automatic || k % 2 === 0) renderer.addEffect({ kind: "tracer", x0, y0, x1, y1, color: automatic ? color : "rgba(255,240,200,0.55)", born: t, dur: 0.14, delay });
-        renderer.addEffect({ kind: "flash", x: x0 + (ax > fx ? 4 : -4), y: y0, r: automatic ? 3 : 2.5, born: t, dur: 0.07, delay });
+        if (!automatic || k % 2 === 0) renderer.addEffect({ kind: "tracer", x0, y0, x1, y1, color: automatic ? color : "rgba(255,240,200,0.55)", born: t, dur: 0.14, delay, by: shooter?.id });
+        renderer.addEffect({ kind: "flash", x: x0 + (ax > fx ? 4 : -4), y: y0, r: automatic ? 3 : 2.5, born: t, dur: 0.07, delay, by: shooter?.id });
         renderer.addEffect({ kind: "puff", x: x1, y: y1 + 2, color: "rgba(200,180,140,A)", born: t, dur: 0.35, delay: delay + 0.1 });
       }
       break;
@@ -112,6 +112,20 @@ function effectsFor(e: SimEvent): void {
       renderer.addEffect({ kind: "boom", x: x * TILE + 8, y: y * TILE + 8, size, seed: e.seq, born: t, dur: BLAST_SECONDS[size]!, delay: 0 });
       break;
     }
+    case "destroyed": {
+      // Each wall, tree or hedge knocked down throws up its pieces.
+      for (const [k, tile] of (d.tiles as [number, number, string][]).entries()) {
+        const [x, y, to] = tile;
+        if (k > 12) break;
+        renderer.addEffect({ kind: "debris", x: x * TILE + 8, y: y * TILE + 8, seed: e.seq * 31 + k, stuff: to === "rubble" ? 0 : to === "deadfall" ? 1 : 2, born: t, dur: 1.6, delay: 0.05 + k * 0.03 });
+      }
+      break;
+    }
+    case "building_collapse": {
+      const b = world.buildings[d.building as number]!;
+      renderer.addEffect({ kind: "collapse", x: b.x * TILE, y: b.y * TILE, w: b.w * TILE, h: b.h * TILE, seed: e.seq, born: t, dur: 4, delay: 0.1 });
+      break;
+    }
     case "smoke": {
       const [x, y] = d.at as [number, number];
       renderer.addEffect({ kind: "pop", x: x * TILE + 8, y: y * TILE + 8, seed: e.seq, born: t, dur: 1.2, delay: 0 });
@@ -131,9 +145,10 @@ function effectsFor(e: SimEvent): void {
   }
 }
 
-function toast(kind: string, title: string, text: string, people: number[] = []): void {
+function toast(kind: string, title: string, text: string, people: number[] = [], accent: string | null = null): void {
   const el = document.createElement("div");
   el.className = `toast ${kind}`;
+  if (accent) el.style.borderLeft = `6px solid ${accent}`;
   el.innerHTML = `<b>${esc(title)}</b>${linkNames(esc(text), people)}`;
   const box = $("toasts");
   box.prepend(el);
@@ -141,10 +156,70 @@ function toast(kind: string, title: string, text: string, people: number[] = [])
   setTimeout(() => el.remove(), 9000);
 }
 
+/** What each change of squad state reads as in an alert: a title, and what the squad "is" doing. */
+const SQUAD_ALERTS: Record<string, [string, string]> = {
+  react: ["Contact", "has made contact and is returning fire"],
+  fix: ["Pinning", "is pinning the enemy down with fire"],
+  flank: ["Flanking", "is working round the flank"],
+  assault: ["Assault", "is assaulting the position"],
+  consolidate: ["Objective", "is digging in on the objective"],
+  fall_back: ["Falling back", "is falling back"],
+  withdraw: ["Retreating", "is retreating"],
+  broken: ["Broken", "has broken and is drifting back"],
+  displace: ["Under mortar fire", "is displacing out of the barrage"],
+  reinforce: ["Reinforcing", "is moving up to help another squad"],
+  hold: ["New line", "is holding a new line"],
+  advance: ["Advancing", "is pushing on"],
+};
+const lastSquadAlert = new Map<number, { state: string; tick: number }>();
+
+function squadAlert(e: SimEvent): void {
+  const d = e.data;
+  const sq = world.squads[d.squad as number];
+  const to = d.to as string, from = d.from as string;
+  const words = SQUAD_ALERTS[to];
+  if (!sq || !words) return;
+  // Not the opening orders, nor a squad that is only picking up its advance again.
+  if (from === "deploy" || (to === "hold" && from !== "fall_back") || (to === "advance" && from !== "assault")) return;
+  const last = lastSquadAlert.get(sq.id);
+  if (last && last.state === to && e.tick - last.tick < 30) return;
+  lastSquadAlert.set(sq.id, { state: to, tick: e.tick });
+  toast("squad", `${words[0]} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} ${words[1]}.`, [], sq.color);
+}
+
 function toastFor(e: SimEvent): void {
   const d = e.data;
   const s = (k: string) => world.maybe(d[k] as number);
   switch (e.type) {
+    case "squad_state":
+      squadAlert(e);
+      break;
+    case "help_call": {
+      const sq = world.squads[d.squad as number]!;
+      toast("squad", `${d.by === "radio" ? "Radio" : "Runner"} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} is ${d.why as string} and ${d.by === "radio" ? "radios" : "sends a runner"} for help.`, [], sq.color);
+      break;
+    }
+    case "help_sent": {
+      const to = world.squads[d.to as number]!;
+      const sent = d.squad !== null ? world.squads[d.squad as number]! : null;
+      toast("squad", `Support · ${to.side === "us" ? "US" : "German"}`, sent ? `${sent.name} is sent to help ${to.name}.` : `No squad to spare for ${to.name}${d.mortars ? "; the mortars will be told" : ""}.`, [], (sent ?? to).color);
+      break;
+    }
+    case "ambush_sprung": {
+      const sq = world.squads[d.squad as number]!;
+      toast("fire", `Ambush · ${sq.side === "us" ? "US" : "German"}`, d.found ? `${sq.name}'s ambush is found; they open fire.` : `${sq.name} springs its ambush on ${d.enemies as number} men in the open!`, [], sq.color);
+      break;
+    }
+    case "breach": {
+      const sq = world.squads[d.squad as number]!;
+      const b = world.buildings[d.house as number]!;
+      const what = d.stage === "stack" ? `is stacking up on ${b.name}` : d.stage === "grenades" ? `posts grenades through the windows of ${b.name}` : `storms into ${b.name}`;
+      toast("squad", `Clearing a house · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} ${what}.`, [], sq.color);
+      break;
+    }
+    case "building_collapse":
+      toast("fire", "Collapse", `${(d.name as string).replace(/^./, (c) => c.toUpperCase())} falls in under the shelling${(d.hurt as number[]).length ? `; ${(d.hurt as number[]).length} men caught inside` : ""}.`, d.hurt as number[]);
+      break;
     case "death": {
       const p = s("person");
       if (p && (p.role === "squad_leader" || p.role === "platoon_leader" || p.role === "medic" || p.role === "machine_gunner" || p.role === "auto_rifleman")) toast("death", "Killed", `${label(p)}, ${roleName(p)}, is dead.`, [p.id]);
@@ -192,6 +267,7 @@ function newBattle(seed: number): void {
   feed = [];
   reportShown = false;
   renderer.reset();
+  lastSquadAlert.clear();
   miniBase.img = null;
   $("toasts").innerHTML = "";
   log.addSink((e) => onEvent(e));
@@ -208,7 +284,8 @@ function newBattle(seed: number): void {
   acc = 0;
   paused = false;
   dirty = { feed: true, events: true };
-  $("date").textContent = world.config.time.date.toUpperCase();
+  $("date").textContent = `${world.config.time.date} · ${world.weather.kind}`.toUpperCase();
+  $("date").title = `${world.layout.name}, ${world.weather.label}`;
   fitCamera();
   renderRoster();
   syncControls();
@@ -538,6 +615,18 @@ function describeBody(s: Soldier): string {
   return parts.join("");
 }
 
+const FLOOR_NAMES = ["ground floor", "first floor", "second floor"];
+
+/** Where a man is: indoors and on which floor, or on what ground, and how high. */
+function whereText(s: Soldier): string {
+  const b = world.map.building[world.map.idx(s.x, s.y)]!;
+  const up = Math.round(world.map.heightAt(s.x, s.y, s.z));
+  if (b >= 0 && world.map.indoors(s.x, s.y, s.z)) return `In ${world.buildings[b]!.name}, ${FLOOR_NAMES[s.z] ?? `floor ${s.z}`}${s.role === "sniper" && s.hide && s.hide.x === s.x && s.hide.y === s.y ? " (his hide)" : ""} · ${up} m above the stream`;
+  const t = world.map.at(s.x, s.y);
+  const ground: Record<string, string> = { deadfall: "among shattered trees", grass: "in a pasture", wheat: "in the wheat", road: "on the road", orchard: "in an orchard", woods: "in the woods", hedge: "in a hedgerow", wall: "at a wall", water: "in the stream", bridge: "on the bridge", rubble: "in rubble", crater: "in a shell hole", foxhole: "in a foxhole", marsh: "in wet meadow", brush: "in the brambles", ditch: "in a ditch", floor: "indoors", door: "in a doorway", stairs: "on the stairs" };
+  return `${(ground[t] ?? t).replace(/^./, (c) => c.toUpperCase())} · ${up} m above the stream`;
+}
+
 function renderInspector(): void {
   const el = $("inspector");
   const s = world.maybe(selected);
@@ -558,8 +647,10 @@ function renderInspector(): void {
     ${bar("Morale", s.morale, "#6ab0f0")}
     ${bar("Suppressed", s.suppression, "#f0963a")}
     ${bar("Pain", fightingPain(s), "#e07a9a", s.morphineTick >= 0 ? "morphine" : "")}
+    ${bar("Fatigue", s.fatigue, "#c8b060", s.fatigue >= world.config.fatigue.winded ? "winded" : "")}
     ${bleeding > 0 ? bar("Bleeding", Math.min(1, bleeding), "#c01818") : ""}
     <div class="traits">${esc(ammo)}${kit ? ` · ${esc(kit)}` : ""} · aim ${Math.round(aimFactor(s) * 100)}%</div>
+    <div class="traits">${esc(whereText(s))}</div>
     <div class="pp-mid"><canvas id="bodydiag" class="bodydiag"></canvas><div class="desc">${describeBody(s)}</div></div>
     ${after ? `<h4>A MONTH LATER</h4><p>${esc(after.outcome)}.</p>` : ""}
     <div class="traits">${s.shots} rounds fired · ${s.hits} hits · ${s.kills} killed${s.treated ? ` · ${s.treated} men treated` : ""}</div>
@@ -571,7 +662,7 @@ function renderInspector(): void {
   });
 }
 
-const STATE_NAMES: Record<string, string> = { deploy: "forming up", advance: "advancing", react: "contact", fix: "fixing", flank: "flanking", assault: "assault", consolidate: "consolidating", hold: "holding", fall_back: "falling back", withdraw: "withdrawing", broken: "broken", support: "support" };
+const STATE_NAMES: Record<string, string> = { ambush: "in ambush", reinforce: "reinforcing", displace: "displacing", deploy: "forming up", advance: "advancing", react: "contact", fix: "fixing", flank: "flanking", assault: "assault", consolidate: "consolidating", hold: "holding", fall_back: "falling back", withdraw: "withdrawing", broken: "broken", support: "support" };
 
 function renderSquads(): void {
   const out: string[] = [];
@@ -749,6 +840,12 @@ canvas.addEventListener("pointerup", (ev) => {
   const rect = canvas.getBoundingClientRect();
   const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
   const tx = Math.floor((sx / cam.zoom + cam.x) / TILE), ty = Math.floor((sy / cam.zoom + cam.y) / TILE);
+  // The floor button by a house: show the next floor up.
+  const house = renderer.buttonAt(sx, sy);
+  if (house >= 0) {
+    renderer.cycleFloor(world, house);
+    return;
+  }
   if (power === "artillery" || power === "smoke") {
     if (world.map.inBounds(tx, ty)) engine.intervene({ kind: power, x: tx, y: ty });
     setPower("inspect");

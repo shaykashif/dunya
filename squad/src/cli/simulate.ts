@@ -37,6 +37,7 @@ const side = (name: string, s: SideSummary) =>
   `  ${name.padEnd(9)} ${String(s.men).padStart(2)} men: ${s.killed} killed, ${s.wounded} wounded, ${s.captured} captured, ${s.fled} left the field; ${s.shots} rounds, ${s.hits} hits`;
 const w = engine.world;
 console.log(`Squad simulation, seed ${seed}: ${w.config.time.date}, ${w.attacker === "us" ? "the US platoon attacks" : "the German Zug attacks"} (${summary.ticks} ticks, to ${summary.clock}; ${ms} ms)`);
+console.log(`  ground    ${w.layout.name}, ${w.weather.label}${w.side("us").concat(w.side("de")).some((s) => s.role === "sniper") ? `; snipers: ${w.soldiers.filter((s) => s.role === "sniper").map((s) => s.side).join(", ")}` : ""}`);
 console.log(`  outcome   ${summary.winner === null ? "no decision" : summary.winner === "us" ? "US victory" : "German victory"}: ${summary.reason}`);
 console.log(side("US", summary.us));
 console.log(side("German", summary.de));

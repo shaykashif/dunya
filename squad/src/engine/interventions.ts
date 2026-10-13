@@ -27,7 +27,7 @@ export function applyIntervention(w: World, cmd: Intervention): void {
       for (let k = 0; k < n; k++) {
         const x = Math.max(0, Math.min(w.map.width - 1, Math.round(cmd.x + (rng.next() * 2 - 1) * scatter)));
         const y = Math.max(0, Math.min(w.map.height - 1, Math.round(cmd.y + (rng.next() * 2 - 1) * scatter)));
-        const o: Ordnance = { id: w.nextId("ordnance"), kind: cmd.kind === "artillery" ? "artillery" : "smoke_shell", side: null, byId: null, from: { x, y: y - 30 }, x, y, burstTick: w.tick + 4 + k * 2, thrownTick: w.tick };
+        const o: Ordnance = { id: w.nextId("ordnance"), kind: cmd.kind === "artillery" ? "artillery" : "smoke_shell", side: null, byId: null, from: { x, y: y - 30 }, x, y, z: 0, burstTick: w.tick + 4 + k * 2, thrownTick: w.tick, spotting: false };
         w.ordnance.push(o);
       }
       w.emit("intervention", [], { kind: cmd.kind, at: [cmd.x, cmd.y] });

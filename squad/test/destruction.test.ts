@@ -1,0 +1,92 @@
+// Shells against houses, trees and hedges; ambushes laid and sprung.
+import { describe, expect, it } from "vitest";
+import { shellDamage } from "../src/combat/destruction.ts";
+import { checkInvariants } from "../src/engine/invariants.ts";
+import { EventLog } from "../src/log/events.ts";
+import { createSimulation } from "../src/sim.ts";
+import type { Ordnance } from "../src/world/types.ts";
+import type { World } from "../src/world/world.ts";
+
+function world(seed: number, kind: "hamlet" | "town" = "hamlet"): World {
+  return createSimulation({ seed, config: { map: { kind }, weather: { kind: "clear" } } }).world;
+}
+
+function shell(w: World, kind: "mortar" | "artillery", x: number, y: number, z = 0): Ordnance {
+  return { id: 1, kind, side: null, byId: null, from: { x, y: y - 30 }, x, y, z, burstTick: w.tick, thrownTick: w.tick, spotting: false };
+}
+
+describe("shellfire knocks things down", () => {
+  it("a wall takes several bombs before it is breached, and the breach can be walked through", () => {
+    const w = world(5);
+    const b = w.buildings[0]!;
+    const x = b.x + 1, y = b.y + b.h - 1;
+    expect(w.map.at(x, y)).toBe("building");
+    expect(w.map.passable(x, y)).toBe(false);
+    const hp = w.map.wallHp[w.map.idx(x, y)]!;
+    shellDamage(w, shell(w, "mortar", x, y + 1));
+    expect(w.map.wallHp[w.map.idx(x, y)]!).toBeLessThan(hp);
+    for (let k = 0; k < 4 && w.map.at(x, y) !== "rubble"; k++) shellDamage(w, shell(w, "mortar", x, y));
+    expect(w.map.at(x, y)).toBe("rubble");
+    expect(w.map.passable(x, y)).toBe(true);
+  });
+
+  it("a house shelled hard enough falls in, bringing the men upstairs down with it", () => {
+    const log = new EventLog({ retain: true });
+    const w = createSimulation({ seed: 5, log, config: { map: { kind: "town" }, weather: { kind: "clear" } } }).world;
+    const b = w.buildings.find((x) => x.floors >= 2)!;
+    let up: { x: number; y: number } | null = null;
+    for (let y = b.y; y < b.y + b.h && !up; y++) for (let x = b.x; x < b.x + b.w && !up; x++) if (w.map.passable(x, y, 1)) up = { x, y };
+    const man = w.soldiers.find((s) => s.side === "de" && s.role === "rifleman")!;
+    w.place(man, up!.x, up!.y, 1);
+    for (let k = 0; k < 12 && !b.destroyed; k++) shellDamage(w, shell(w, "artillery", b.x + 1 + (k % (b.w - 2)), b.y + 1 + (k % (b.h - 2)), 1));
+    expect(b.destroyed).toBe(true);
+    expect(man.z).toBe(0);
+    expect(man.injuries.length).toBeGreaterThan(0);
+    for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) expect(w.map.passable(x, y, 1)).toBe(false);
+    expect(log.retained!.some((e) => e.type === "building_collapse")).toBe(true);
+    expect(() => checkInvariants(w)).not.toThrow();
+  });
+
+  it("shells smash trees to deadfall and blow hedges open", () => {
+    const w = world(5);
+    for (let y = 40; y <= 50; y++) for (let x = 40; x <= 50; x++) w.map.set(x, y, y === 45 ? "hedge" : "woods");
+    w.map.finalize();
+    shellDamage(w, shell(w, "artillery", 45, 45));
+    shellDamage(w, shell(w, "artillery", 42, 42));
+    let smashed = 0;
+    for (let y = 40; y <= 50; y++) for (let x = 40; x <= 50; x++) if (w.map.at(x, y) === "deadfall" || w.map.at(x, y) === "crater") smashed++;
+    expect(smashed).toBeGreaterThan(3);
+    expect(w.map.at(45, 45)).not.toBe("hedge");
+    expect(w.map.passable(45, 45)).toBe(true);
+  });
+});
+
+describe("ambushes", () => {
+  it("a squad lies in wait, flat and silent in cover, and springs it when the enemy comes close", async () => {
+    let checked = false;
+    for (const seed of [1, 3, 9, 11, 12, 14]) {
+      const log = new EventLog({ retain: true });
+      const engine = createSimulation({ seed, log, config: { ambush: { chance: 1 } } });
+      const w = engine.world;
+      const sq = w.squads.find((s) => s.state === "ambush");
+      if (!sq) continue;
+      const men = sq.members.map((id) => w.soldier(id));
+      expect(men.every((m) => m.posture === "prone")).toBe(true);
+      expect(men.filter((m) => ["woods", "brush", "orchard", "deadfall"].includes(w.map.at(m.x, m.y)) || w.map.besideCover(m.x, m.y)).length).toBeGreaterThanOrEqual(men.length - 1);
+      expect(sq.orders.A.fire).toBe("hold");
+      // Nobody in the ambush fires before it is sprung.
+      let sprung = -1;
+      for (let t = 0; t < 900 && sprung < 0 && w.phase === "battle"; t++) {
+        await engine.step();
+        const e = log.retained!.find((x) => x.type === "ambush_sprung");
+        if (e) sprung = e.seq;
+      }
+      if (sprung < 0) continue;
+      const early = log.retained!.find((x) => x.type === "fire" && sq.members.includes(x.data.by as number) && x.seq < sprung);
+      expect(early).toBeUndefined();
+      checked = true;
+      break;
+    }
+    expect(checked).toBe(true);
+  });
+});

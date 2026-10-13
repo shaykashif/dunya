@@ -4,7 +4,7 @@ import { cannotWalk } from "../../src/entities/body.ts";
 import type { Building } from "../../src/world/layout.ts";
 import type { Soldier, Terrain } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
-import { blastShake, drawBlast, shotShake, drawSmokeCloud, dustSpurt, muzzleFlash, shellShadow, smokePop } from "./fx.ts";
+import { blastShake, drawBlast, drawCollapse, drawDebris, shotShake, drawSmokeCloud, dustSpurt, muzzleFlash, shellShadow, smokePop } from "./fx.ts";
 import { Flora, buildingBounds, buildingShadow, buildingSprite, groundShadow, pick, type Prop } from "./scenery.ts";
 import { SIDE_COLORS, TILE, hash2, soldierSprite } from "./sprites.ts";
 
@@ -23,13 +23,15 @@ export interface Camera {
 }
 
 export type Effect =
-  | { kind: "tracer"; x0: number; y0: number; x1: number; y1: number; color: string; born: number; dur: number; delay: number }
-  | { kind: "flash"; x: number; y: number; born: number; dur: number; delay: number; r: number }
+  | { kind: "tracer"; x0: number; y0: number; x1: number; y1: number; color: string; born: number; dur: number; delay: number; by?: number }
+  | { kind: "flash"; x: number; y: number; born: number; dur: number; delay: number; r: number; by?: number }
   | { kind: "puff"; x: number; y: number; born: number; dur: number; delay: number; color: string }
   | { kind: "boom"; x: number; y: number; born: number; dur: number; delay: number; size: number; seed: number }
   | { kind: "pop"; x: number; y: number; born: number; dur: number; delay: number; seed: number }
   | { kind: "arc"; x0: number; y0: number; x1: number; y1: number; born: number; dur: number; delay: number; smoke: boolean }
   | { kind: "shell"; x: number; y: number; born: number; dur: number; delay: number }
+  | { kind: "debris"; x: number; y: number; born: number; dur: number; delay: number; seed: number; stuff: number }
+  | { kind: "collapse"; x: number; y: number; w: number; h: number; born: number; dur: number; delay: number; seed: number }
   | { kind: "text"; x: number; y: number; text: string; color: string; born: number; dur: number; delay: number; follow: number | null };
 
 const BASE: Record<Terrain, string> = {
@@ -49,10 +51,15 @@ const BASE: Record<Terrain, string> = {
   rubble: "#7a7266",
   crater: "#5d8a3a",
   foxhole: "#5d8a3a",
+  stairs: "#8a6a48",
+  marsh: "#4e7a46",
+  brush: "#58843a",
+  ditch: "#4a6a30",
+  deadfall: "#5a6a3a",
 };
 
 /** Colours for the minimap. */
-export const MINI: Record<Terrain, string> = { ...BASE, hedge: "#24481e", woods: "#2a5022", orchard: "#4a7a30", building: "#4a4038", window: "#4a4038", crater: "#5a4630", foxhole: "#3a2e20" };
+export const MINI: Record<Terrain, string> = { ...BASE, deadfall: "#4a4a30", hedge: "#24481e", woods: "#2a5022", orchard: "#4a7a30", building: "#4a4038", window: "#4a4038", crater: "#5a4630", foxhole: "#3a2e20", brush: "#3e6a2c", ditch: "#3a5426", marsh: "#4a6e5a" };
 
 let flora: Flora | undefined;
 
@@ -97,6 +104,51 @@ function drawTile(g: CanvasRenderingContext2D, w: World, tx: number, ty: number)
         px(fx + 1, fy + 3, fc);
       }
       break;
+    case "brush":
+      for (let k = 0; k < 6; k++) px(x + Math.floor(r(k) * 16), y + Math.floor(r(k + 9) * 16), r(k + 20) < 0.5 ? "#6a9a42" : "#4a7430", 1, 2);
+      break;
+    case "marsh":
+      // Tussocks and standing water.
+      for (let k = 0; k < 3; k++) px(x + Math.floor(r(k) * 12), y + Math.floor(r(k + 5) * 14), "#5a8aa8", 4, 1);
+      for (let k = 0; k < 5; k++) {
+        const rx = x + Math.floor(r(k + 30) * 15), ry = y + 2 + Math.floor(r(k + 40) * 12);
+        px(rx, ry - 2, "#7aa04a", 1, 3);
+        px(rx + 1, ry - 1, "#6a8a3a", 1, 2);
+      }
+      break;
+    case "ditch":
+      // A trench of wet earth between grassy lips.
+      px(x, y + 3, "#3e5a28", 16, 10);
+      px(x, y + 5, "#4a3a26", 16, 6);
+      px(x, y + 7, "#3a5a6a", 16, 2);
+      for (let k = 0; k < 4; k++) px(x + Math.floor(r(k) * 15), y + 3, "#6a9a42", 1, 2);
+      break;
+    case "stairs":
+      for (let row = 0; row < 16; row += 4) px(x, y + row, "#7a5a3a", 16, 1);
+      for (let k = 0; k < 4; k++) {
+        px(x + 2, y + 2 + k * 3, "#a88660", 12, 2);
+        px(x + 2, y + 4 + k * 3, "#5a3e24", 12, 1);
+      }
+      break;
+    case "deadfall": {
+      // Shattered trees: stumps, splintered trunks lying every which way, torn-up earth.
+      for (let k = 0; k < 5; k++) px(x + Math.floor(r(k) * 15), y + Math.floor(r(k + 9) * 15), r(k + 20) < 0.5 ? "#4a3a26" : "#6a8a3a", 2, 1);
+      const sx = x + 3 + Math.floor(r(50) * 8), sy = y + 4 + Math.floor(r(51) * 6);
+      px(sx, sy, "#3a2a1a", 4, 4);
+      px(sx + 1, sy - 2, "#5a4028", 2, 3);
+      px(sx + 1, sy, "#c8a878", 2, 1);
+      const lx = x + Math.floor(r(53) * 6), ly = y + 2 + Math.floor(r(54) * 10);
+      if (r(52) < 0.5) {
+        px(lx, ly, "#2e2216", 10, 3);
+        px(lx, ly, "#6a4a2c", 10, 1);
+        px(lx + 10, ly, "#d8b888", 1, 3);
+      } else {
+        px(lx + 4, ly - 4, "#2e2216", 3, 8);
+        px(lx + 4, ly - 4, "#6a4a2c", 1, 8);
+      }
+      for (let k = 0; k < 3; k++) px(x + Math.floor(r(k + 60) * 14), y + Math.floor(r(k + 63) * 14), "#3e6a28", 2, 2);
+      break;
+    }
     case "wheat":
       for (let row = 1; row < 16; row += 3) px(x, y + row, "#a88a38", 16, 1);
       for (let k = 0; k < 7; k++) px(x + Math.floor(r(k) * 16), y + Math.floor(r(k + 9) * 16), "#e0c870", 1, 1);
@@ -192,6 +244,9 @@ function propsAt(w: World, tx: number, ty: number, out: Placed[]): void {
     else add(pick(roll < 0.2 ? f.pines : roll < 0.6 ? f.bigOaks : f.oaks, tx, ty, 93), x - 4 + r(94) * 8, y + 2 + r(95) * 6);
   } else if (t === "orchard" && (tx + ty * 2) % 4 === 0 && ty % 2 === 0) {
     add(pick(f.apples, tx, ty, 96), x + r(97) * 2 - 1, y + 5);
+  } else if (t === "brush") {
+    add(pick(f.shrubs, tx, ty, 101), x - 3 + r(102) * 6, y + 3 + r(103) * 4);
+    if (r(104) < 0.5) add(pick(f.bushes, tx, ty, 105), x - 2 + r(106) * 4, y + 6);
   } else if ((t === "grass" || t === "orchard") && r(98) < 0.012) {
     add(pick(f.shrubs, tx, ty, 99), x, y + 5);
   }
@@ -208,6 +263,51 @@ function drawProps(g: CanvasRenderingContext2D, w: World, props: Placed[], box?:
 }
 
 /**
+ * Light and shade from the lie of the land, at a quarter-tile grid: slopes
+ * facing the morning sun in the north-west are lit, the far sides darker,
+ * and high ground a little paler. Drawn over the ground, under the plants.
+ */
+function hillShade(w: World): HTMLCanvasElement {
+  const W = w.map.width, H = w.map.height, S = 4;
+  const c = document.createElement("canvas");
+  c.width = W * S;
+  c.height = H * S;
+  const g = c.getContext("2d")!;
+  const img = g.createImageData(W * S, H * S);
+  const e = w.map.elev;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < W * H; i++) {
+    lo = Math.min(lo, e[i]!);
+    hi = Math.max(hi, e[i]!);
+  }
+  const at = (x: number, y: number) => {
+    const cx = Math.max(0, Math.min(W - 1.001, x)), cy = Math.max(0, Math.min(H - 1.001, y));
+    const x0 = Math.floor(cx), y0 = Math.floor(cy), fx = cx - x0, fy = cy - y0;
+    const i = y0 * W + x0;
+    const a = e[i]!, b = e[Math.min(i + 1, W * H - 1)]!, cc = e[Math.min(i + W, W * H - 1)]!, d = e[Math.min(i + W + 1, W * H - 1)]!;
+    return a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + cc * (1 - fx) * fy + d * fx * fy;
+  };
+  for (let by = 0; by < H * S; by++) {
+    for (let bx = 0; bx < W * S; bx++) {
+      const x = (bx + 0.5) / S - 0.5, y = (by + 0.5) / S - 0.5;
+      // Rising toward the south-east means facing the north-west light.
+      const lit = (at(x + 0.6, y + 0.6) - at(x - 0.6, y - 0.6)) * 0.5;
+      const height = hi > lo ? (at(x, y) - lo) / (hi - lo) - 0.5 : 0;
+      // Quantised into a few steps, for the pixel look.
+      const v = Math.round(Math.max(-0.34, Math.min(0.34, lit * 0.8 + height * 0.1)) / 0.04) * 0.04;
+      const o = (by * W * S + bx) * 4;
+      const light = v > 0;
+      img.data[o] = light ? 255 : 10;
+      img.data[o + 1] = light ? 246 : 18;
+      img.data[o + 2] = light ? 200 : 30;
+      img.data[o + 3] = Math.round(Math.abs(v) * 255);
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+/**
  * The ground and everything growing on it, drawn once into one big canvas.
  * When shells change a few tiles, only those tiles are painted again.
  */
@@ -218,14 +318,18 @@ class TerrainLayer {
   private props: Placed[] = [];
   readonly world: World;
   version: number;
+  private readonly shade: HTMLCanvasElement;
 
   constructor(w: World) {
     this.world = w;
+    this.shade = hillShade(w);
     this.canvas = document.createElement("canvas");
     this.canvas.width = w.map.width * TILE;
     this.canvas.height = w.map.height * TILE;
     this.g = this.canvas.getContext("2d")!;
     for (let ty = 0; ty < w.map.height; ty++) for (let tx = 0; tx < w.map.width; tx++) drawTile(this.g, w, tx, ty);
+    this.g.imageSmoothingEnabled = false;
+    this.g.drawImage(this.shade, 0, 0, w.map.width * TILE, w.map.height * TILE);
     for (let ty = 0; ty < w.map.height; ty++) for (let tx = 0; tx < w.map.width; tx++) propsAt(w, tx, ty, this.props);
     this.props.sort(backToFront);
     drawProps(this.g, w, this.props);
@@ -257,11 +361,34 @@ class TerrainLayer {
         g.rect(box[0], box[1], TILE, TILE);
         g.clip();
         drawTile(g, w, x, y);
+        g.imageSmoothingEnabled = false;
+        g.drawImage(this.shade, x * 4, y * 4, 4, 4, x * TILE, y * TILE, TILE, TILE);
         drawProps(g, w, props, box);
         g.restore();
       }
     }
   }
+}
+
+/** Where a sprite's figure sits: sprites carry a one-pixel outline, so place the figure inside it. */
+function figureBox(spr: HTMLCanvasElement, p: { x: number; y: number }, bob: number): { sx: number; sy: number; iw: number; prone: boolean } {
+  const prone = spr.width > spr.height;
+  const iw = spr.width - 2, ih = spr.height - 2;
+  return { sx: Math.round(p.x - iw / 2), sy: Math.round(p.y + (prone ? 6 - ih : 7 - ih) + bob), iw, prone };
+}
+
+/** The weapon in a man's hands, by posture and facing, and the muzzle at its far end. */
+function weaponShape(s: Soldier, sx: number, sy: number, iw: number, prone: boolean): { x: number; y: number; w: number; h: number; muzzle: { x: number; y: number }; bipod: { x: number; y: number } | null } | null {
+  if (!s.weapon || s.status !== "active") return null;
+  const big = s.weapon === "mg42" || s.weapon === "bar";
+  const len = big ? 7 : s.weapon === "thompson" || s.weapon === "mp40" ? 4 : 6;
+  const left = s.dir < 0;
+  if (prone) {
+    const x = left ? sx - len + 2 : sx + iw - 2, y = sy + 1;
+    return { x, y, w: len, h: 1, muzzle: { x: left ? x - 1 : x + len, y: y + 0.5 }, bipod: big ? { x: left ? x : x + len - 2, y: sy + 2 } : null };
+  }
+  const x = left ? sx - len + 3 : sx + iw - 3, y = sy + (s.posture === "crouch" ? 4 : 6);
+  return { x, y, w: len, h: big ? 2 : 1, muzzle: { x: left ? x - 1 : x + len, y: y + (big ? 1 : 0.5) }, bipod: null };
 }
 
 export class Renderer {
@@ -284,6 +411,9 @@ export class Renderer {
     this.terrain = null;
     this.effects = [];
     this.houses.clear();
+    // Soldier ids restart with every battle, and the same id may be on the other side now.
+    this.spriteCache.clear();
+    this.floorView.clear();
   }
 
   addEffect(e: Effect): void {
@@ -307,7 +437,7 @@ export class Renderer {
   private sprite(s: Soldier, walking: boolean): HTMLCanvasElement {
     const dead = s.status === "dead";
     const posture = dead || s.status === "casualty" || s.carriedById !== null ? "prone" : s.posture;
-    const key = `${s.id}|${posture}|${walking ? 1 : 0}|${s.dir}|${s.status}`;
+    const key = `${s.id}|${s.side}|${s.role === "medic" ? 1 : 0}|${posture}|${walking ? 1 : 0}|${s.dir}|${s.status}`;
     let spr = this.spriteCache.get(key);
     if (!spr) {
       spr = soldierSprite({ side: s.side, posture, walking, medic: s.role === "medic", surrendered: s.status === "surrendered" || s.status === "captured", flip: s.dir < 0, dead, id: s.id });
@@ -340,28 +470,45 @@ export class Renderer {
     const obj = w.platoons[w.attacker].objective;
     this.drawFlag(obj.x * TILE + 8, obj.y * TILE + 8, w.phase === "over" && w.result?.winner ? SIDE_COLORS[w.result.winner].name : "#f2c84a");
 
-    // The fallen first, then everyone else from back to front.
+    // The fallen first, then everyone else from back to front. Men upstairs, or
+    // on a floor of a house that is cut away above them, are drawn with that floor.
     const sel = selected !== null ? w.maybe(selected) : null;
+    const views = new Map<number, number>();
+    for (const b of w.buildings) views.set(b.id, this.viewOf(w, b, sel, opts));
+    const houseOf = (s: Soldier) => {
+      const b = w.map.building[w.map.idx(s.x, s.y)]!;
+      return b >= 0 && w.map.indoors(s.x, s.y, s.z) ? b : -1;
+    };
     const order = w.soldiers.filter((s) => s.status !== "routed" && s.carriedById === null).sort((a, b) => (a.status === "dead" ? 0 : 1) - (b.status === "dead" ? 0 : 1) || a.y - b.y || a.id - b.id);
+    const upstairs = new Map<number, Soldier[]>();
     for (const s of order) {
       const p = this.worldPos(s, prev, alpha);
       if (!visible(p.x, p.y)) continue;
-      if (s.status === "dead" || s.bloodied) {
-        if (s.status === "dead" || s.status === "casualty") {
-          g.fillStyle = "rgba(120,10,10,0.55)";
-          g.beginPath();
-          g.ellipse(p.x, p.y + 4, s.status === "dead" ? 7 : 4, s.status === "dead" ? 3.5 : 2, 0, 0, Math.PI * 2);
-          g.fill();
+      const house = houseOf(s);
+      if (house >= 0 && (s.z > 0 || (views.get(house) ?? -1) > 0)) {
+        if (s.z > 0 && views.get(house) === s.z) {
+          const list = upstairs.get(house) ?? [];
+          list.push(s);
+          upstairs.set(house, list);
         }
+        continue;
       }
+      this.drawCorpseStain(s, p);
       this.drawSoldier(w, s, p, prev, time, s === sel);
     }
 
-    // Roofs, unless looking inside.
+    // Roofs, unless looking inside; an upper floor cut away, with the men on it.
     for (const b of w.buildings) {
-      const inside = sel && w.map.building[w.map.idx(sel.x, sel.y)] === b.id;
-      if (!opts.roofs || b.id === this.hoverBuilding || inside) continue;
-      this.drawBuilding(w, b);
+      const v = views.get(b.id) ?? -1;
+      if (v < 0) this.drawBuilding(w, b);
+      else if (v > 0) {
+        this.drawUpperFloor(w, b, v);
+        for (const s of upstairs.get(b.id) ?? []) {
+          const p = this.worldPos(s, prev, alpha);
+          this.drawCorpseStain(s, p);
+          this.drawSoldier(w, s, p, prev, time, s === sel);
+        }
+      }
     }
 
     this.drawSmoke(w, time);
@@ -369,6 +516,172 @@ export class Renderer {
     if (opts.orders) this.drawOrders(w, prev);
     if (sel && opts.sight) this.drawSight(w, sel, prev);
     if (opts.names) this.drawNames(w, cam, prev);
+
+    // Screen space from here: the weather over everything, and the floor buttons.
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.drawWeather(w, vw, vh, time);
+    this.drawFloorButtons(w, cam, vw, vh, views);
+  }
+
+  /** Floor shown for each building: the roof (-1), or a floor cut away for looking inside. */
+  floorView = new Map<number, number>();
+  private buttons: { id: number; x: number; y: number; w: number; h: number }[] = [];
+
+  /** How many floors a building has, counting a church tower. */
+  floorsOf(w: World, id: number): number {
+    const b = w.buildings[id]!;
+    let n = 1;
+    for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) n = Math.max(n, w.map.levels[w.map.idx(x, y)]!);
+    return n;
+  }
+
+  private viewOf(w: World, b: Building, sel: Soldier | null, opts: ViewOptions): number {
+    const set = this.floorView.get(b.id);
+    if (set !== undefined && set >= 0) return set;
+    if (sel && w.map.building[w.map.idx(sel.x, sel.y)] === b.id && w.map.indoors(sel.x, sel.y, sel.z)) return sel.z;
+    if (b.id === this.hoverBuilding || !opts.roofs) return 0;
+    return -1;
+  }
+
+  /** The floor button under a point on the screen (CSS pixels), or -1. */
+  buttonAt(x: number, y: number): number {
+    for (const r of this.buttons) if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return r.id;
+    return -1;
+  }
+
+  /** Roof, ground floor, first floor and so on, then the roof again. */
+  cycleFloor(w: World, id: number): number {
+    const cur = this.floorView.get(id) ?? -1;
+    const next = cur + 1 >= this.floorsOf(w, id) ? -1 : cur + 1;
+    this.floorView.set(id, next);
+    return next;
+  }
+
+  private drawCorpseStain(s: Soldier, p: { x: number; y: number }): void {
+    if (s.status !== "dead" && s.status !== "casualty") return;
+    const g = this.g;
+    g.fillStyle = "rgba(120,10,10,0.55)";
+    g.beginPath();
+    g.ellipse(p.x, p.y + 4, s.status === "dead" ? 7 : 4, s.status === "dead" ? 3.5 : 2, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  /** An upper floor seen from above with the roof off: boards, inner walls, windows, the stairs. */
+  private drawUpperFloor(w: World, b: Building, z: number): void {
+    const g = this.g;
+    const px = (x: number, y: number, col: string, ww = 1, hh = 1) => {
+      g.fillStyle = col;
+      g.fillRect(x, y, ww, hh);
+    };
+    for (let ty = b.y; ty < b.y + b.h; ty++) {
+      for (let tx = b.x; tx < b.x + b.w; tx++) {
+        const x = tx * TILE, y = ty * TILE;
+        const t = w.map.at(tx, ty);
+        if (w.map.passable(tx, ty, z)) {
+          px(x, y, "#9a7650", TILE, TILE);
+          for (let row = 0; row < 16; row += 4) px(x, y + row, "#86643f", 16, 1);
+          for (let k = 0; k < 4; k++) px(x + ((k * 7 + ty * 5) % 16), y + k * 4, "#7a5a38", 1, 4);
+          if (t === "stairs") {
+            for (let k = 0; k < 4; k++) {
+              px(x + 2, y + 2 + k * 3, "#b8946a", 12, 2);
+              px(x + 2, y + 4 + k * 3, "#5a3e24", 12, 1);
+            }
+          }
+        } else if (w.map.levels[w.map.idx(tx, ty)]! > z) {
+          // Walls, with the window openings of this floor.
+          px(x, y, "#5a5248", TILE, TILE);
+          px(x, y, "#7a7266", TILE, 3);
+          if (t === "window") {
+            px(x + 3, y + 3, "#2a3440", 10, 10);
+            px(x + 4, y + 4, "#5a7a94", 3, 3);
+          } else if (t === "rubble") {
+            px(x + 2, y + 2, "#2a2218", 12, 12);
+          }
+        } else {
+          // Below the tower: the church roof.
+          px(x, y, "#54545e", TILE, TILE);
+        }
+      }
+    }
+    // A shadow along the inside of the north and west walls, for depth.
+    g.fillStyle = "rgba(0,0,0,0.18)";
+    g.fillRect(b.x * TILE + TILE, b.y * TILE + TILE, (b.w - 2) * TILE, 3);
+    g.fillRect(b.x * TILE + TILE, b.y * TILE + TILE, 3, (b.h - 2) * TILE);
+  }
+
+  /** A small button by each house on screen: the floor shown, click to go up a floor. */
+  private drawFloorButtons(w: World, cam: Camera, vw: number, vh: number, views: Map<number, number>): void {
+    this.buttons = [];
+    if (cam.zoom < 1.1) return;
+    const g = this.g;
+    g.font = `bold 9px "Silkscreen", monospace`;
+    for (const b of w.buildings) {
+      const floors = this.floorsOf(w, b.id);
+      const B = buildingBounds(b);
+      const x = Math.round((B.x + B.w - cam.x) * cam.zoom) + 2, y = Math.round((B.y + 6 - cam.y) * cam.zoom);
+      const bw = 16 + floors * 3, bh = 16;
+      if (x > vw || y > vh || x + bw < 0 || y + bh < 0) continue;
+      const v = views.get(b.id) ?? -1;
+      g.fillStyle = "rgba(20,22,14,0.88)";
+      g.fillRect(x, y, bw, bh);
+      g.strokeStyle = v >= 0 ? "#f2c84a" : "#8a8a70";
+      g.lineWidth = 1;
+      g.strokeRect(x + 0.5, y + 0.5, bw - 1, bh - 1);
+      // A little stack of floors, the one shown lit; a roof when none is.
+      for (let f = 0; f < floors; f++) {
+        g.fillStyle = f === v ? "#f2c84a" : "#6a6a5a";
+        g.fillRect(x + 3, y + 11 - f * 3, 8, 2);
+      }
+      g.fillStyle = v < 0 ? "#f2c84a" : "#6a6a5a";
+      g.fillRect(x + 4, y + 11 - floors * 3, 6, 1);
+      g.fillRect(x + 5, y + 10 - floors * 3, 4, 1);
+      g.fillStyle = "#e8e0c8";
+      g.fillText(v < 0 ? "R" : String(v + 1), x + 13, y + 12);
+      this.buttons.push({ id: b.id, x, y, w: bw, h: bh });
+    }
+  }
+
+  /** Rain streaking down, fog drifting, or a grey sky, over the whole view. */
+  private drawWeather(w: World, vw: number, vh: number, time: number): void {
+    const g = this.g;
+    const kind = w.weather.kind;
+    if (kind === "overcast") {
+      g.fillStyle = "rgba(40,48,58,0.12)";
+      g.fillRect(0, 0, vw, vh);
+    } else if (kind === "rain") {
+      g.fillStyle = "rgba(24,36,58,0.2)";
+      g.fillRect(0, 0, vw, vh);
+      const n = Math.round((vw * vh) / 5000);
+      g.fillStyle = "rgba(180,200,225,0.5)";
+      g.beginPath();
+      for (let k = 0; k < n; k++) {
+        const x = Math.floor(((hash2(k, 1) * (vw + 120) + time * 90) % (vw + 120)) - 60) & ~1;
+        const y = Math.floor(((hash2(k, 2) * (vh + 60) + time * (420 + hash2(k, 3) * 160)) % (vh + 60)) - 30) & ~1;
+        g.rect(x, y, 2, 6);
+        g.rect(x + 2, y + 6, 2, 4);
+      }
+      g.fill();
+    } else if (kind === "fog") {
+      g.fillStyle = "rgba(196,202,204,0.34)";
+      g.fillRect(0, 0, vw, vh);
+      // Banks of fog in chunky blocks, drifting slowly east.
+      const P = 12, drift = time * 6;
+      const levels = [0.08, 0.16, 0.24];
+      for (let li = 0; li < levels.length; li++) {
+        g.fillStyle = `rgba(214,218,220,${levels[li]})`;
+        g.beginPath();
+        for (let gy = 0; gy * P < vh; gy++) {
+          for (let gx = 0; gx * P < vw; gx++) {
+            const wx = (gx * P - drift) / 64, wy = (gy * P) / 48;
+            const x0 = Math.floor(wx), y0 = Math.floor(wy), fx = wx - x0, fy = wy - y0;
+            const a = hash2(x0, y0, 9), b = hash2(x0 + 1, y0, 9), c = hash2(x0, y0 + 1, 9), d = hash2(x0 + 1, y0 + 1, 9);
+            const v = a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + d * fx * fy;
+            if (Math.min(2, Math.floor(v * 3.3)) === li) g.rect(gx * P, gy * P, P, P);
+          }
+        }
+        g.fill();
+      }
+    }
   }
 
   private drawFlag(x: number, y: number, color: string): void {
@@ -403,24 +716,18 @@ export class Renderer {
       g.ellipse(p.x, p.y + 5, 8, 4, 0, 0, Math.PI * 2);
       g.stroke();
     }
-    const bob = walking ? (step ? -1 : 0) : 0;
-    const prone = spr.width > spr.height;
-    // Sprites carry a one-pixel outline; place and dress the figure inside it.
-    const iw = spr.width - 2, ih = spr.height - 2;
-    const sx = Math.round(p.x - iw / 2), sy = Math.round(p.y + (prone ? 6 - ih : 7 - ih) + bob);
+    const { sx, sy, iw, prone } = figureBox(spr, p, walking ? (step ? -1 : 0) : 0);
     if (s.status === "captured") g.globalAlpha = 0.75;
     g.drawImage(spr, sx - 1, sy - 1);
     g.globalAlpha = 1;
     // The weapon.
-    if (s.weapon && s.status === "active") {
-      const big = s.weapon === "mg42" || s.weapon === "bar";
+    const gun = weaponShape(s, sx, sy, iw, prone);
+    if (gun) {
       g.fillStyle = "#2a2420";
-      const len = big ? 7 : s.weapon === "thompson" || s.weapon === "mp40" ? 4 : 6;
-      if (prone) g.fillRect(s.dir < 0 ? sx - len + 2 : sx + iw - 2, sy + 1, len, 1);
-      else g.fillRect(s.dir < 0 ? sx - len + 3 : sx + iw - 3, sy + (s.posture === "crouch" ? 4 : 6), len, big ? 2 : 1);
-      if (big && prone) {
+      g.fillRect(gun.x, gun.y, gun.w, gun.h);
+      if (gun.bipod) {
         g.fillStyle = "#3a3430";
-        g.fillRect(s.dir < 0 ? sx - len + 2 : sx + iw + len - 4, sy + 2, 1, 2);
+        g.fillRect(gun.bipod.x, gun.bipod.y, 1, 2);
       }
     }
     // Carrying a wounded man over the shoulder.
@@ -452,13 +759,21 @@ export class Renderer {
     }
   }
 
+  /** Where a man's weapon muzzle is drawn right now, for flashes and tracers. */
+  muzzleOf(s: Soldier, prev: Map<number, { x: number; y: number }>): { x: number; y: number } {
+    const p = this.worldPos(s, prev, this.alpha);
+    const box = figureBox(this.sprite(s, false), p, 0);
+    const gun = weaponShape(s, box.sx, box.sy, box.iw, box.prone);
+    return gun ? gun.muzzle : { x: p.x, y: p.y };
+  }
+
   /** A building at three-quarter view: its south wall and its roof. */
   private drawBuilding(w: World, b: Building): void {
     let c = this.houses.get(b.id);
     if (!c || c.version !== w.map.version || c.world !== w) {
       // Only redraw when a shell has changed this house's own tiles.
-      let look = "";
-      for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) look += w.map.at(x, y)[0];
+      let look = b.destroyed ? "X" : "";
+      for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) look += w.map.at(x, y)[0] + String(Math.min(9, w.map.roofHits[w.map.idx(x, y)]!));
       if (!c || c.world !== w || c.look !== look) c = { version: w.map.version, world: w, look, img: buildingSprite(w, b) };
       c.version = w.map.version;
       this.houses.set(b.id, c);
@@ -502,6 +817,12 @@ export class Renderer {
       if (t < 0) continue;
       switch (e.kind) {
         case "tracer": {
+          const by = e.by !== undefined ? w.maybe(e.by) : null;
+          if (by && by.weapon) {
+            const m = this.muzzleOf(by, prev);
+            e.x0 = m.x;
+            e.y0 = m.y;
+          }
           const a = Math.max(0, t - 0.25), b = Math.min(1, t + 0.1);
           g.strokeStyle = e.color;
           g.globalAlpha = 0.9;
@@ -513,9 +834,13 @@ export class Renderer {
           g.globalAlpha = 1;
           break;
         }
-        case "flash":
-          muzzleFlash(g, e.x, e.y, e.r, t);
+        case "flash": {
+          // From the muzzle as the man is drawn now: he may have dropped prone or turned.
+          const by = e.by !== undefined ? w.maybe(e.by) : null;
+          const m = by && by.weapon ? this.muzzleOf(by, prev) : e;
+          muzzleFlash(g, m.x, m.y, e.r, t);
           break;
+        }
         case "puff":
           dustSpurt(g, e.x, e.y, Math.floor(e.born * 1000 + e.x), t);
           break;
@@ -524,6 +849,12 @@ export class Renderer {
           break;
         case "pop":
           smokePop(g, e.x, e.y, e.seed, t * e.dur, e.dur);
+          break;
+        case "debris":
+          drawDebris(g, e.x, e.y, e.seed, e.stuff, t * e.dur, e.dur);
+          break;
+        case "collapse":
+          drawCollapse(g, e.x, e.y, e.w, e.h, e.seed, t * e.dur, e.dur);
           break;
         case "arc": {
           const x = Math.round(e.x0 + (e.x1 - e.x0) * t), gy = e.y0 + (e.y1 - e.y0) * t;

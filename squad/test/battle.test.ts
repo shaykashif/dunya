@@ -55,9 +55,25 @@ describe("battles", () => {
       const opened = r.events.find((e) => e.type === "open_fire");
       expect(opened).toBeDefined();
       const defender = r.world.attacker === "us" ? "de" : "us";
-      const firstDefenderShot = r.events.find((e) => e.type === "fire" && e.data.side === defender);
+      // A sniper works alone, outside his squad's fire discipline.
+      const firstDefenderShot = r.events.find((e) => e.type === "fire" && e.data.side === defender && r.world.soldier(e.data.by as number).role !== "sniper");
       if (firstDefenderShot) expect(firstDefenderShot.seq).toBeGreaterThan(opened!.seq);
     }
+  });
+
+  it("squads get out from under mortar fire, and snipers find hides", () => {
+    const all = runs.flatMap((r) => r.events);
+    expect(all.some((e) => e.type === "shelled")).toBe(true);
+    expect(all.some((e) => e.type === "squad_state" && e.data.to === "displace")).toBe(true);
+    expect(all.some((e) => e.type === "sniper_hide")).toBe(true);
+  });
+
+  it("squads radio or send runners for help and the platoon sends it; houses are cleared with grenades", () => {
+    const all = runs.flatMap((r) => r.events);
+    expect(all.some((e) => e.type === "help_call")).toBe(true);
+    expect(all.some((e) => e.type === "help_sent" && e.data.squad !== null)).toBe(true);
+    expect(all.some((e) => e.type === "breach" && e.data.stage === "grenades")).toBe(true);
+    expect(all.some((e) => e.type === "decision" && String(e.data.key).startsWith("breach:"))).toBe(true);
   });
 
   it("medics treat the wounded, and men take over a fallen leader's squad", () => {

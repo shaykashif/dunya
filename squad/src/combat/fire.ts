@@ -5,14 +5,14 @@ import { aimFactor, sightFactor } from "../entities/body.ts";
 import { kill } from "../entities/death.ts";
 import { hitWeights, impactHealth, injure, pickPart } from "../entities/injuries.ts";
 import { moraleOnLoss, shakeMorale, suppress } from "../entities/morale.ts";
-import { clamp01, label, note } from "../entities/soldier.ts";
+import { clamp01, label, note, shout } from "../entities/soldier.ts";
 import type { Rng } from "../engine/rng.ts";
 import { r3 } from "../log/events.ts";
 import type { WeaponSpec } from "../scenario/config.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { Point, Soldier } from "../world/types.ts";
 import type { World } from "../world/world.ts";
-import { hearShot } from "./perception.ts";
+import { concealment, hearShot } from "./perception.ts";
 
 export function weaponOf(w: World, s: Soldier): WeaponSpec | null {
   return s.weapon ? w.config.weapons[s.weapon] : null;
@@ -36,6 +36,11 @@ export function hitChance(w: World, shooter: Soldier, target: Soldier, spec: Wea
   const cover = w.map.cover(target, shooter, target.posture);
   let p = spec.accuracy * Math.exp(-d / spec.rangeScale) * skill;
   p *= cfg.posture.steadiness[shooter.posture] * (1 - cfg.suppression.accuracyLoss * shooter.suppression) * aimFactor(shooter);
+  // Blown from running, a man's aim wavers; rain and fog spoil everyone's.
+  p *= (1 - cfg.fatigue.aimLoss * shooter.fatigue) * w.weather.aim;
+  // Firing down from higher ground is a little easier, and up at a man on a crest a little harder.
+  const above = w.map.heightAt(shooter.x, shooter.y, shooter.z) - w.map.heightAt(target.x, target.y, target.z);
+  p *= 1 + Math.max(-cfg.highGround.max, Math.min(cfg.highGround.max, above * cfg.highGround.perMetre));
   p *= Math.pow(vis, 0.7) * cfg.posture.size[target.posture] * (1 - cover);
   if (movedThisTick(w, shooter)) p *= cfg.fire.movingShooter;
   if (movedThisTick(w, target)) p *= cfg.fire.movingTarget;
@@ -88,6 +93,7 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
   shooter.shots += rounds;
   shooter.lastFiredTick = w.tick;
   shooter.dir = at.x < shooter.x ? -1 : at.x > shooter.x ? 1 : shooter.dir;
+  if (shooter.role === "sniper") shooter.cooldowns["hideShots"] = (shooter.cooldowns["hideShots"] ?? 0) + 1;
 
   const target = w.maybe(targetId);
   const hits: number[] = [];
@@ -98,13 +104,13 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
   for (let r = 0; r < rounds; r++) {
     let victim: Soldier | null = null;
     if (target && w.onField(target) && purpose === "aimed") {
-      const vis = w.map.visibility(shooter.x, shooter.y, target.x, target.y, smoke);
+      const vis = w.map.visibility(shooter.x, shooter.y, target.x, target.y, smoke, shooter.z, target.z);
       if (vis > 0 && rng.chance(hitChance(w, shooter, target, spec, vis))) victim = target;
     } else {
       // Fire at a hedge line or window: anyone right there may be hit, at long odds.
       for (const o of near) {
-        if (o.side === shooter.side || cheb(o, at) > 1) continue;
-        const vis = w.map.visibility(shooter.x, shooter.y, o.x, o.y, smoke);
+        if (o.side === shooter.side || cheb(o, at) > 1 || (at.z !== undefined && o.z !== at.z)) continue;
+        const vis = w.map.visibility(shooter.x, shooter.y, o.x, o.y, smoke, shooter.z, o.z);
         if (vis > 0 && rng.chance(hitChance(w, shooter, o, spec, vis) * cfg.fire.blindFactor)) {
           victim = o;
           break;
@@ -135,9 +141,21 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
     const d = dist(o, at);
     const fall = 1 - Math.min(1, d / (cfg.fire.suppressRadius + 0.5));
     suppress(w, o, spec.suppression * rounds * fall);
-    o.underFire = { by: shooter.id, x: shooter.x, y: shooter.y, tick: w.tick };
+    o.underFire = fireBearing(w, o, shooter);
   }
-  if (target && target.status === "active") target.underFire = { by: shooter.id, x: shooter.x, y: shooter.y, tick: w.tick };
+  if (target && target.status === "active") target.underFire = fireBearing(w, target, shooter);
+  // A shot from nowhere, a man dropped or a round cracking past: "Sniper!" The squad goes to ground and hunts for him.
+  if (shooter.role === "sniper" && target) {
+    const felt = target.underFire ?? fireBearing(w, target, shooter);
+    const sq = w.squad(target.squadId);
+    const fresh = !sq.sniperAlert || w.tick - sq.sniperAlert.tick > 20;
+    sq.sniperAlert = { x: felt.x, y: felt.y, tick: w.tick };
+    const witness = hits.length > 0 ? w.friendsNear(target, 8).find((f) => w.able(f) && !f.sees.includes(shooter.id)) : w.able(target) && !target.sees.includes(shooter.id) ? target : null;
+    if (witness && fresh) {
+      shout(w, witness, witness.side === "us" ? "Sniper! Get down!" : "Scharfschütze! Deckung!", "shout-sniper", 30);
+      w.emit("sniper_alert", [witness.id], { squad: sq.id, at: [felt.x, felt.y], by: witness.id });
+    }
+  }
 
   // Machine-gun barrels heat up.
   if (spec.heat > 0) {
@@ -153,6 +171,23 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
   hearShot(w, shooter, spec);
   if (shooter.loaded === 0 && shooter.ammo > 0 && shooter.reloadLeft === 0) startReload(w, shooter);
   return rounds;
+}
+
+/**
+ * Where a man under fire thinks it is coming from. If he can see the shooter
+ * he knows; if not, he judges by the crack and thump, and a man firing from
+ * cover, or a sniper, is hard to place.
+ */
+function fireBearing(w: World, victim: Soldier, shooter: Soldier): { by: number; x: number; y: number; tick: number } {
+  if (victim.sees.includes(shooter.id)) return { by: shooter.id, x: shooter.x, y: shooter.y, tick: w.tick };
+  const cfg = w.config.perception;
+  const rng = w.rng.get("perception");
+  const hidden = concealment(w, shooter, victim);
+  const off = Math.round(dist(victim, shooter) * cfg.fireBearingError * (hidden < 0.5 ? 2 : 1) * (shooter.role === "sniper" ? 3 : 1));
+  const jitter = () => (off > 0 ? rng.int(2 * off + 1) - off : 0);
+  const x = Math.max(0, Math.min(w.map.width - 1, shooter.x + jitter()));
+  const y = Math.max(0, Math.min(w.map.height - 1, shooter.y + jitter()));
+  return { by: shooter.id, x, y, tick: w.tick };
 }
 
 export function startReload(w: World, s: Soldier): void {
@@ -185,7 +220,7 @@ export function hasAmmo(s: Soldier): boolean {
 }
 
 export function sightRange(w: World, s: Soldier): number {
-  return w.config.perception.maxRange * sightFactor(s);
+  return w.config.perception.maxRange * sightFactor(s) * w.weather.sight;
 }
 
 export { r3 };

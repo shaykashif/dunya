@@ -11,6 +11,7 @@ import { isGunner, isLeader } from "../entities/soldier.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { Candidate, ElementOrder, Point, Soldier } from "../world/types.ts";
 import type { World } from "../world/world.ts";
+import { chooseHide, compromised, isSniper, needsHide, sniperPriority, watchingWounded } from "./sniper.ts";
 import { canFireOn, findCover } from "./tactics.ts";
 
 function cand(kind: Candidate["kind"], key: string, description: string, fields: Partial<Candidate>): Candidate {
@@ -91,18 +92,30 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
   const spec = weaponOf(w, s);
   const reloading = s.reloadLeft > 0;
   const fire = order.fire;
-  const myPos = order.positions[s.id];
+  const myPos = isSniper(s) ? undefined : order.positions[s.id];
+
+  // ---- Snipers work alone ----
+  if (isSniper(s)) {
+    sniperCandidates(w, s, out, enemiesSeen, exHere, underFire);
+    return out;
+  }
+
+  // ---- A sniper is working on the squad: get down, look for him, put fire where he might be ----
+  const alert = sq.sniperAlert && w.tick - sq.sniperAlert.tick < 40 ? sq.sniperAlert : null;
+  if (alert) threats.unshift({ x: alert.x, y: alert.y });
+  // ---- Shells landing close ----
+  const shells = w.impacts.filter((i) => w.tick - i.tick <= 4 && cheb(i, s) <= 9 && s.z === 0);
 
   // ---- Fire at men he can see ----
   if (spec && !reloading && s.loaded > 0) {
     const scored = enemiesSeen
       .map((e) => {
         const d = dist(s, e);
-        const vis = w.map.visibility(s.x, s.y, e.x, e.y, w.smoke);
+        const vis = w.map.visibility(s.x, s.y, e.x, e.y, w.smoke, s.z, e.z);
         const p = d <= spec.maxRange ? hitChance(w, s, e, spec, vis) * Math.max(1, spec.rate) : 0;
         const firing = w.tick - e.lastFiredTick <= 3;
         const atMe = e.id === s.underFire?.by && underFire;
-        let threat = (e.weapon === "mg42" || e.weapon === "bar" ? 0.4 : 0) + (firing ? 0.2 : 0) + (atMe ? 0.25 : 0) + 0.3 * Math.max(0, 1 - d / 60) + (isLeader(e) ? 0.08 : 0);
+        let threat = (e.weapon === "mg42" || e.weapon === "bar" ? 0.4 : 0) + (e.role === "sniper" ? 0.5 : 0) + (firing ? 0.2 : 0) + (atMe ? 0.25 : 0) + 0.3 * Math.max(0, 1 - d / 60) + (isLeader(e) ? 0.08 : 0);
         // A medic with a red cross is spared by most men who see it.
         if (e.role === "medic") threat -= 0.6;
         return { e, d, p, threat, firing };
@@ -129,7 +142,8 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
     const points: Point[] = [];
     if (order.kind === "suppress" && order.target) points.push(order.target);
     if (underFire && s.underFire && !s.sees.includes(s.underFire.by)) points.push({ x: s.underFire.x, y: s.underFire.y });
-    if (fire === "free" && contacts.length > 0 && !contacts[0]!.visible) points.push({ x: contacts[0]!.x, y: contacts[0]!.y });
+    if (fire === "free" && contacts.length > 0 && !contacts[0]!.visible) points.push(contacts[0]!.z > 0 ? { x: contacts[0]!.x, y: contacts[0]!.y, z: contacts[0]!.z } : { x: contacts[0]!.x, y: contacts[0]!.y });
+    if (alert) points.push({ x: alert.x, y: alert.y });
     const seen = new Set<string>();
     for (const p of points) {
       const key = `${p.x},${p.y}`;
@@ -138,11 +152,12 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
       if (w.friendsNear({ ...p, side: s.side, id: s.id }, 3).some((f) => w.able(f))) continue;
       seen.add(key);
       const ordered = order.kind === "suppress" && order.target !== null && cheb(order.target, p) <= 2;
+      const atSniper = alert !== null && p.x === alert.x && p.y === alert.y;
       out.push(
-        cand("suppress", `suppress:${key}`, `put fire on ${ordered ? "the enemy position" : "where the fire came from"}`, {
+        cand("suppress", `suppress:${key}`, `put fire on ${ordered ? "the enemy position" : atSniper ? "where the sniper might be" : "where the fire came from"}`, {
           at: p,
           duration: spec.automatic ? 4 : 3,
-          value: (ordered ? 0.8 : 0.35) + (spec.automatic ? 0.3 : 0) + (underFire ? 0.15 : 0),
+          value: (ordered ? 0.8 : atSniper ? 0.5 : 0.35) + (spec.automatic ? 0.3 : 0) + (underFire ? 0.15 : 0),
           ordered,
           danger: 0.12 + 0.2 * exHere,
           offense: 0.4,
@@ -174,27 +189,76 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
         safety: order.kind === "withdraw" ? 0.4 : 0,
       }),
     );
-    // Under fire, a man may rush the next stretch rather than walk it.
-    if (pace !== "rush" && pace !== "crawl" && (underFire || exHere > 0.5) && dist(s, myPos) > 3) {
+    // Under fire, a man may rush the next stretch rather than walk it, if he has the breath for it.
+    if (pace !== "rush" && pace !== "crawl" && (underFire || exHere > 0.5) && dist(s, myPos) > 3 && s.fatigue < cfg.fatigue.winded) {
       out.push(cand("move", `move:${myPos.x},${myPos.y}:rush`, "rush to his position", { dest: myPos, pace: "rush", value: 0.7, ordered: true, danger: Math.min(1, ((exHere + exDest) / 2) * 0.45 + (underFire ? 0.15 : 0)), offense: 0.3 }));
     }
   }
 
+  // ---- In ambush: lie still, wait ----
+  if (sq.state === "ambush") {
+    out.push(cand("hold", "ambush", "lie still in ambush, waiting", { duration: 3, value: 0.7, ordered: true, safety: 0.6 }));
+    return out.filter((c) => c.kind !== "move" && c.kind !== "rifle_grenade" && c.kind !== "suppress");
+  }
+
   // ---- Cover ----
-  const coverHere = threats.length > 0 ? threats.reduce((a, t) => a + w.map.cover(here, t, "crouch"), 0) / threats.length : 0;
-  if (threats.length > 0 && coverHere < 0.55 && (underFire || exHere > 0.3 || s.suppression > 0.25)) {
+  const here3 = s.z > 0 ? { x: s.x, y: s.y, z: s.z } : here;
+  const coverHere = threats.length > 0 ? threats.reduce((a, t) => a + w.map.cover(here3, t, "crouch"), 0) / threats.length : 0;
+  if (threats.length > 0 && coverHere < 0.55 && (underFire || alert || exHere > 0.3 || s.suppression > 0.25)) {
     const fireAt = threats[0] && spec && hasAmmo(s) ? threats[0] : null;
     const spot = findCover(w, s, threats, s.pinned ? 2 : 5, fireAt);
     if (spot) {
-      out.push(cand("take_cover", `cover:${spot.x},${spot.y}`, "get into cover", { dest: spot, pace: s.pinned ? "crawl" : "rush", value: 0.25 + 0.5 * (1 - coverHere) * (underFire ? 1 : 0.5), safety: 0.85, danger: 0.15 * exHere }));
+      const urgency = underFire ? 1 : alert ? 0.8 : 0.5;
+      out.push(cand("take_cover", `cover:${spot.x},${spot.y}`, alert && !underFire ? "get into cover from the sniper" : "get into cover", { dest: spot, pace: s.pinned ? "crawl" : "rush", value: 0.25 + 0.5 * (1 - coverHere) * urgency, safety: 0.85, danger: 0.15 * exHere }));
     }
   }
+
+  // ---- Shelling: into a hole, or flat in the one he is in ----
+  if (shells.length > 0) {
+    const t = w.map.at(s.x, s.y);
+    const inHole = t === "foxhole" || t === "crater" || t === "ditch" || w.map.indoors(s.x, s.y, s.z);
+    if (inHole) out.push(cand("hug", "hug:shells", "stay flat in his hole while the shells come in", { duration: 3, value: 0.85, safety: 1 }));
+    else {
+      const spot = findCover(w, s, shells, 6, null);
+      if (spot) out.push(cand("take_cover", `shellcover:${spot.x},${spot.y}`, "dive for cover from the shells", { dest: spot, pace: "rush", value: 0.9, safety: 1, danger: 0.1 }));
+      else out.push(cand("hug", "hug:shells", "throw himself flat", { duration: 2, value: 0.6, safety: 0.8 }));
+    }
+  }
+
+  // ---- Blown: catch his breath while nobody is shooting at him ----
+  if (s.fatigue > cfg.fatigue.winded * 0.75 && !underFire) out.push(cand("hold", "breathe", "catch his breath", { duration: 3, value: 0.15 + 0.4 * s.fatigue, safety: 0.2 }));
 
   // ---- Hold where he is ----
   out.push(cand("hold", "hold", contacts.length ? "keep watch from cover" : "wait", { duration: 2, value: 0.18 + (atPosition(s, order) ? 0.12 : 0), ordered: atPosition(s, order) && (order.kind === "hold" || order.kind === "overwatch" || order.kind === "suppress"), safety: coverHere * 0.6 }));
 
   // ---- Pinned: hug the dirt ----
   if (s.pinned || s.suppression > 0.45) out.push(cand("hug", "hug", "press himself into the dirt", { duration: 2, value: 0.15 + s.suppression * 0.55, safety: 1 }));
+
+  // ---- Clearing a house: on the word, a grenade through the nearest door or window ----
+  const br = sq.breach;
+  if (br && br.stage === "grenades" && s.grenades > 0 && w.tick - br.tick < cfg.breach.grenadeTicks && s.cooldowns["breachThrow"] !== br.tick && s.element === (sq.orders.B.kind === "move" ? "B" : s.element)) {
+    const b = w.buildings[br.house]!;
+    let best: { inside: Point; door: boolean; d: number } | null = null;
+    for (let y = b.y; y < b.y + b.h; y++) {
+      for (let x = b.x; x < b.x + b.w; x++) {
+        if (!(x === b.x || y === b.y || x === b.x + b.w - 1 || y === b.y + b.h - 1)) continue;
+        const t = w.map.at(x, y);
+        if (t !== "window" && t !== "door" && t !== "rubble") continue;
+        const d = cheb(s, { x, y });
+        if (d > 7 || (best && d >= best.d)) continue;
+        const inner = w.map.neighbors4(x, y).find((p) => w.map.building[w.map.idx(p.x, p.y)] === br.house && w.map.passable(p.x, p.y));
+        if (inner) best = { inside: inner, door: t !== "window", d };
+      }
+    }
+    if (best) {
+      // Upstairs, if that is where they are and this is a window.
+      const up = liveContacts(w, sq, 25).find((c) => c.z > 0 && w.map.building[w.map.idx(c.x, c.y)] === br.house);
+      const z = up && !best.door && w.map.passable(best.inside.x, best.inside.y, up.z) ? up.z : 0;
+      const at = z > 0 ? { ...best.inside, z } : best.inside;
+      s.cooldowns["breachThrow"] = br.tick;
+      out.push(cand("grenade", `breach:${at.x},${at.y},${z}`, z > 0 ? "lob a grenade through the upstairs window" : best.door ? "roll a grenade in through the door" : "post a grenade through the window", { at, duration: 1, value: 1.8, ordered: true, danger: 0.2, offense: 1 }));
+    }
+  }
 
   // ---- Grenades ----
   const assaulting = order.kind === "assault";
@@ -207,7 +271,9 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
       const behind = w.map.cover({ x: c.x, y: c.y }, s, "crouch") >= 0.45 || !c.visible || w.map.at(c.x, c.y) === "foxhole" || w.map.indoors(c.x, c.y);
       // A man in the open is a rifle target; grenades are for men behind cover, or for the final rush.
       if (!behind && !assaulting && d > 6) continue;
-      out.push(cand("grenade", `grenade:${c.x},${c.y}`, "throw a grenade", { at: { x: c.x, y: c.y }, duration: 1, value: 0.4 + (behind ? 0.35 : 0) + (assaulting ? 0.3 : 0) + (c.automatic ? 0.2 : 0), ordered: assaulting, danger: 0.25 + 0.2 * exHere, offense: 0.9 }));
+      // Up through an upstairs window, if that is where he is.
+      const aim = c.z > 0 && d <= 8 ? { x: c.x, y: c.y, z: c.z } : { x: c.x, y: c.y };
+      out.push(cand("grenade", `grenade:${c.x},${c.y}`, c.z > 0 && d <= 8 ? "lob a grenade up through the window" : "throw a grenade", { at: aim, duration: 1, value: 0.4 + (behind ? 0.35 : 0) + (assaulting ? 0.3 : 0) + (c.automatic ? 0.2 : 0), ordered: assaulting, danger: 0.25 + 0.2 * exHere, offense: 0.9 }));
       break;
     }
   }
@@ -268,6 +334,45 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
     if (close.length >= 1 && w.friendsNear(s, 6).filter((f) => w.able(f)).length === 0) out.push(cand("surrender", "surrender", "surrender", { value: 0.4 + (1 - s.morale) * 0.4, safety: 0.6 }));
   }
   return out;
+}
+
+/**
+ * A sniper's options: go to his hide, take the shots worth taking, watch a
+ * wounded man for whoever comes to help him, reload, and move on when found.
+ */
+function sniperCandidates(w: World, s: Soldier, out: Candidate[], enemiesSeen: Soldier[], exHere: number, underFire: boolean): void {
+  const cfg = w.config.sniper;
+  const spec = weaponOf(w, s);
+  if (needsHide(w, s)) {
+    const was = s.hide;
+    s.hide = chooseHide(w, s) ?? was;
+    s.hideTick = w.tick;
+    s.cooldowns["hideShots"] = 0;
+    if (s.hide && (!was || cheb(was, s.hide) > 0 || (was.z ?? 0) !== (s.hide.z ?? 0))) w.emit("sniper_hide", [s.id], { by: s.id, at: [s.hide.x, s.hide.y], z: s.hide.z ?? 0, moving: was !== null });
+  }
+  const hide = s.hide;
+  const atHide = hide !== null && s.x === hide.x && s.y === hide.y && s.z === (hide.z ?? 0);
+  if (spec && s.reloadLeft === 0 && s.loaded > 0) {
+    const shots = enemiesSeen
+      .map((e) => {
+        const vis = w.map.visibility(s.x, s.y, e.x, e.y, w.smoke, s.z, e.z);
+        return { e, p: dist(s, e) <= spec.maxRange ? hitChance(w, s, e, spec, vis) : 0, pr: sniperPriority(w, s, e) };
+      })
+      .filter((x) => x.p >= cfg.minHit || (x.pr >= 0.7 && x.p >= cfg.priorityMinHit))
+      .sort((a, b) => b.pr + b.p * 2 - (a.pr + a.p * 2) || a.e.id - b.e.id)
+      .slice(0, 3);
+    for (const t of shots) {
+      const what = t.e.role === "sniper" ? "the enemy sniper" : t.e.weapon === "mg42" || t.e.weapon === "bar" ? "the machine gunner" : t.e.act?.cand.kind === "aid" || t.e.act?.cand.kind === "carry" ? "the man going to the wounded" : `${t.e.abbr} ${t.e.last}`;
+      out.push(cand("fire", `fire:${t.e.id}`, `take a shot at ${what}`, { targetId: t.e.id, at: { x: t.e.x, y: t.e.y }, duration: 2, value: 0.55 + t.pr * 0.55 + Math.min(0.4, t.p * 2), ordered: true, danger: 0.1 + 0.1 * exHere, offense: 0.7 }));
+    }
+  }
+  if (hide && !atHide && w.map.passable(hide.x, hide.y, hide.z ?? 0)) {
+    out.push(cand("move", `hide:${hide.x},${hide.y},${hide.z ?? 0}`, `${compromised(w, s) ? "slip away to" : "work his way to"} a new hide${(hide.z ?? 0) > 0 ? " upstairs" : ""}`, { dest: hide, pace: underFire || exHere > 0.3 ? "crawl" : "crouch", value: 0.8 + (compromised(w, s) ? 0.3 : 0), ordered: true, safety: 0.3, danger: 0.2 * exHere }));
+  }
+  const wounded = watchingWounded(w, s);
+  out.push(cand("hold", wounded ? `watch:${wounded.id}` : "watch", wounded ? `watch ${wounded.abbr} ${wounded.last} lying wounded, waiting for whoever comes for him` : "watch through the scope", { duration: 3, value: atHide ? 0.5 : 0.15, ordered: atHide, safety: 0.3 }));
+  if (spec && s.reloadLeft === 0 && s.ammo > 0 && s.loaded < spec.capacity) out.push(cand("reload", "reload", "reload", { value: s.loaded === 0 ? 1.1 : 0.3, safety: 0.1 }));
+  if (s.pinned || s.suppression > 0.45) out.push(cand("hug", "hug", "lie still and let it pass", { duration: 2, value: 0.2 + s.suppression * 0.5, safety: 1 }));
 }
 
 /** Medics go to the wounded; anyone may dress a squadmate beside him; the platoon sergeant carries them back. */
