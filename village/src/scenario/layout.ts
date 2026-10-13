@@ -138,10 +138,10 @@ export function buildLayout(cfg: SimConfig, rng: Rng, houses: number): Layout {
     clearDisc(map, { x: 6 + rng.int(mc.width - 30), y: 6 + rng.int(mc.height - 12) }, 2 + rng.int(4), rng);
   }
 
-  // Rocky outcrops in the forest, where stone can be quarried; a couple across the river.
+  // Rocky outcrops in the forest, where stone can be quarried; a couple in the corner beyond the river.
   for (let i = 0; i < mc.rockOutcrops; i++) {
-    const east = i < 2;
-    const c = east ? { x: mc.width - 6 + rng.int(4), y: 8 + rng.int(mc.height - 16) } : { x: 6 + rng.int(mc.width - 30), y: 6 + rng.int(mc.height - 12) };
+    const beyond = i < 2;
+    const c = beyond ? { x: mc.width - 18 + rng.int(14), y: 4 + rng.int(12) } : { x: 6 + rng.int(mc.width - 12), y: 6 + rng.int(mc.height - 12) };
     const r = 1 + rng.int(3);
     for (let y = c.y - r - 1; y <= c.y + r + 1; y++) {
       for (let x = c.x - r - 1; x <= c.x + r + 1; x++) {
@@ -150,28 +150,64 @@ export function buildLayout(cfg: SimConfig, rng: Rng, houses: number): Layout {
     }
   }
 
-  // A meandering river near the east edge, three tiles wide.
-  const riverBase = mc.width - 12;
+  // A meandering river, three tiles wide, that comes in at the top edge and leaves by the right,
+  // bowing toward town: it cuts off only the north-east corner of the woods.
+  const p0 = { x: Math.round(mc.width * (0.58 + rng.next() * 0.08)), y: -2 };
+  const p2 = { x: mc.width + 1, y: Math.round(mc.height * (0.5 + rng.next() * 0.1)) };
+  const ctrl = { x: p0.x + (p2.x - p0.x) * 0.15, y: p2.y * 0.85 };
   const ph = rng.next() * 6;
-  for (let y = 0; y < mc.height; y++) {
-    const cx = Math.round(riverBase + 4 * Math.sin(y / 9 + ph) + 2 * Math.sin(y / 23 + ph * 2));
-    for (let x = cx - 1; x <= cx + 1; x++) if (map.inBounds(x, y)) map.set(x, y, "water");
+  const steps = Math.ceil((Math.hypot(p2.x - p0.x, p2.y - p0.y) + 40) * 3);
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const bx = (1 - t) * (1 - t) * p0.x + 2 * (1 - t) * t * ctrl.x + t * t * p2.x;
+    const by = (1 - t) * (1 - t) * p0.y + 2 * (1 - t) * t * ctrl.y + t * t * p2.y;
+    // Tangent, for a sideways meander.
+    const tx = 2 * (1 - t) * (ctrl.x - p0.x) + 2 * t * (p2.x - ctrl.x), ty = 2 * (1 - t) * (ctrl.y - p0.y) + 2 * t * (p2.y - ctrl.y);
+    const tl = Math.hypot(tx, ty) || 1;
+    const wob = 3 * Math.sin(t * 14 + ph) + 1.5 * Math.sin(t * 37 + ph * 2);
+    const cx = bx - (ty / tl) * wob, cy = by + (tx / tl) * wob;
+    for (let y = Math.floor(cy - 2); y <= Math.ceil(cy + 2); y++) {
+      for (let x = Math.floor(cx - 2); x <= Math.ceil(cx + 2); x++) {
+        if (map.inBounds(x, y) && Math.hypot(x - cx, y - cy) <= 1.5) map.set(x, y, "water");
+      }
+    }
   }
 
   const town = { x: Math.floor(mc.width / 2) - 8, y: Math.floor(mc.height / 2) };
+  /** A compound must sit clear of the river, on the town's side of it. */
+  const blocked = (c: Point): boolean => {
+    for (let y = c.y - mc.compoundRadius - 3; y <= c.y + mc.compoundRadius + 3; y++) {
+      for (let x = c.x - mc.compoundRadius - 3; x <= c.x + mc.compoundRadius + 3; x++) if (map.inBounds(x, y) && map.at(x, y) === "water") return true;
+    }
+    const n = Math.max(Math.abs(c.x - town.x), Math.abs(c.y - town.y));
+    for (let k = 0; k <= n; k++) {
+      const x = Math.round(town.x + ((c.x - town.x) * k) / n), y = Math.round(town.y + ((c.y - town.y) * k) / n);
+      if (map.at(x, y) === "water") return true;
+    }
+    return false;
+  };
   clearDisc(map, town, mc.townRadius, rng);
 
   // Compounds on a ring around town.
   const centers: Point[] = [];
   const start = rng.next() * Math.PI * 2;
   for (let i = 0; i < houses; i++) {
-    const a = start + (i * Math.PI * 2) / houses + (rng.next() - 0.5) * 0.4;
-    const r = mc.compoundDistance + (rng.next() - 0.5) * 8;
+    const a0 = start + (i * Math.PI * 2) / houses + (rng.next() - 0.5) * 0.4;
+    let r = mc.compoundDistance + (rng.next() - 0.5) * 8;
     const margin = mc.compoundRadius + 2;
-    const x = Math.max(margin, Math.min(riverBase - mc.compoundRadius - 6, Math.round(town.x + Math.cos(a) * r * 1.3)));
-    const y = Math.max(margin, Math.min(mc.height - margin - 1, Math.round(town.y + Math.sin(a) * r)));
-    centers.push({ x, y });
-    clearDisc(map, { x, y }, mc.compoundRadius, rng);
+    const at = (a: number, rr: number): Point => ({
+      x: Math.max(margin, Math.min(mc.width - margin - 1, Math.round(town.x + Math.cos(a) * rr * 1.3))),
+      y: Math.max(margin, Math.min(mc.height - margin - 1, Math.round(town.y + Math.sin(a) * rr))),
+    });
+    // Swing round the ring, then draw in toward town, until the spot is clear of the river.
+    let c = at(a0, r);
+    for (let tries = 0; blocked(c) && tries < 60; tries++) {
+      const k = (tries % 20) + 1;
+      c = at(a0 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.12, r);
+      if (tries % 20 === 19) r *= 0.85;
+    }
+    centers.push(c);
+    clearDisc(map, c, mc.compoundRadius, rng);
   }
 
   // Roads first, so buildings and fields placed afterwards are never cut by them.

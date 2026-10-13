@@ -1142,6 +1142,23 @@ function setTab(name: string): void {
 }
 document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) => (b.onclick = () => setTab(b.dataset.tab!)));
 $("book").onclick = openBook;
+
+// The villager list folds away to give the person panel more room; the choice is remembered.
+function setRosterCollapsed(collapsed: boolean): void {
+  $("people").classList.toggle("collapsed", collapsed);
+  $("rostertoggle").textContent = `${collapsed ? "▸" : "▾"} Villagers`;
+  try {
+    localStorage.setItem("village.rosterCollapsed", collapsed ? "1" : "0");
+  } catch {
+    // Preferences are optional.
+  }
+}
+$("rostertoggle").onclick = () => setRosterCollapsed(!$("people").classList.contains("collapsed"));
+try {
+  setRosterCollapsed(localStorage.getItem("village.rosterCollapsed") === "1");
+} catch {
+  setRosterCollapsed(false);
+}
 $("culturebtn").onclick = () => openPanel("culture");
 $("buildbtn").onclick = () => openPanel("building");
 

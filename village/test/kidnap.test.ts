@@ -43,7 +43,8 @@ describe("kidnapping", () => {
       for (const witnessed of [true, false]) {
         const { ev, child } = await stage(seed, witnessed);
         expect(ev.some((e) => e.type === "missing_person" && e.data.person === child)).toBe(true);
-        expect(ev.filter((e) => e.type === "searched").length).toBeGreaterThan(0);
+        // People go looking: a sweep that comes up empty, or one that finds the child (a rescue without a chase).
+        expect(ev.some((e) => e.type === "searched" || (e.type === "rescued" && e.data.child === child && !e.data.chased))).toBe(true);
       }
     }
   });
