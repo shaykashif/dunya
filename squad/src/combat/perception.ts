@@ -77,7 +77,7 @@ export function perceptionStep(w: World): void {
     const prev = new Set(s.sees);
     s.sees = [];
     if (!w.onField(s) || !s.conscious || s.carriedById !== null) continue;
-    const range = cfg.maxRange * sightFactor(s) * w.weather.sight;
+    const range = cfg.maxRange * sightFactor(s) * w.weather.sight * (s.role === "sniper" ? cfg.scope : 1);
     const squad = w.squad(s.squadId);
     const alert = s.status === "active" ? (s.pinned ? 0.35 : 1) * (s.experience === "veteran" ? 1.2 : s.experience === "green" ? 0.85 : 1) : 0.4;
     // Hunting a sniper: every man scans the tree line or windows where they think he is.

@@ -118,7 +118,7 @@ export function pickPositions(w: World, men: readonly Soldier[], center: Point, 
         if (fireAt && !canFireOn(w, p, fireAt)) score -= 0.5;
         if (ex) score -= 0.15 * Math.min(2, ex[w.map.idx(x, y)]!);
         if (t === "foxhole" || t === "ditch") score += 0.25;
-        if (z > 0 && w.map.besideWindow(x, y)) score += 0.35;
+        if (z > 0 && (w.map.besideWindow(x, y) || w.map.isTower(x, y))) score += 0.35;
         cands.push({ p, score });
       }
     }
@@ -130,7 +130,7 @@ export function pickPositions(w: World, men: readonly Soldier[], center: Point, 
   for (const m of order) {
     let pick: Point | null = null;
     // The gunner weighs the best few spots for the view they give him.
-    const pool = keen(m) ? cands.slice(0, 40).map((c) => ({ p: c.p, score: c.score + vantage(w, c.p, look) })).sort((a, b) => b.score - a.score || a.p.y - b.p.y || a.p.x - b.p.x) : cands;
+    const pool = keen(m) ? cands.slice(0, 40).map((c) => ({ p: c.p, score: c.score + vantage(w, c.p, look) + ((c.p.z ?? 0) > 0 && w.map.isTower(c.p.x, c.p.y) ? 0.6 : 0) })).sort((a, b) => b.score - a.score || a.p.y - b.p.y || a.p.x - b.p.x) : cands;
     for (const gap of [spacing, Math.max(1, spacing - 1), 1]) {
       for (const c of pool) {
         if (taken.some((t) => cheb(t, c.p) < gap && (t.z ?? 0) === (c.p.z ?? 0))) continue;

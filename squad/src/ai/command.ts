@@ -199,7 +199,7 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
         holdHere(w, sq, men, "free", { x: sniped.x, y: sniped.y });
         return;
       }
-      if (focus && dist(pos, focus.at) <= 130) {
+      if (focus && dist(pos, focus.at) <= 75) {
         setState(w, sq, "react", "contact! getting down and returning fire");
         shout(w, leader, leader.side === "us" ? (focus.automatic ? "MG! Get down!" : "Contact front!") : focus.automatic ? "MG! Deckung!" : "Feind voraus!", "contact", 40);
         // The drill: get down, get into a spot you can shoot from, return fire.
@@ -494,7 +494,7 @@ function defendStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
       // Fire discipline: wait until the enemy is in the killing ground.
       const live = liveContacts(w, sq, 30);
       const fired = all.some((m) => m.underFire && w.tick - m.underFire.tick < 10) || all.some((m) => w.tick - m.lastFiredTick < 30);
-      const close = live.some((c) => c.visible && dist(c, pos) <= 75);
+      const close = live.some((c) => c.visible && dist(c, pos) <= 35);
       const open = sq.orders.A.fire === "free";
       if (!open && (fired || close)) {
         shout(w, leader, leader.side === "de" ? "Feuer frei!" : "Open fire!", null);

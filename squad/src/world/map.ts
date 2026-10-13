@@ -59,6 +59,12 @@ export class GameMap {
   readonly wallHp: Uint8Array;
   /** Shell hits each tile of a roof has taken. */
   readonly roofHits: Uint8Array;
+  /** Metres per storey on each tile: a church tower's storeys are tall, putting its belfry high above the roofs. */
+  readonly storey: Float32Array;
+  /** Bullet strikes on each stretch of wall. */
+  readonly holes: Uint8Array;
+  /** Bumped when a wall's bullet holes reach a new step, so viewers redraw it. */
+  scars = 0;
 
   constructor(width: number, height: number, rules: TerrainRules) {
     this.width = width;
@@ -72,6 +78,8 @@ export class GameMap {
     this.top = new Float32Array(width * height);
     this.wallHp = new Uint8Array(width * height);
     this.roofHits = new Uint8Array(width * height);
+    this.holes = new Uint8Array(width * height);
+    this.storey = new Float32Array(width * height).fill(rules.floorHeight);
     this.seeAt = new Float32Array(width * height).fill(1);
     this.portAt = new Float32Array(width * height).fill(-1);
   }
@@ -153,7 +161,13 @@ export class GameMap {
 
   /** Height in metres of the floor a man stands on. */
   heightAt(x: number, y: number, z = 0): number {
-    return this.elev[this.idx(x, y)]! + z * this.rules.floorHeight;
+    const i = this.idx(x, y);
+    return this.elev[i]! + z * this.storey[i]!;
+  }
+
+  /** A tower: storeys taller than a house's, with openings on every side at the top. */
+  isTower(x: number, y: number): boolean {
+    return this.storey[this.idx(x, y)]! > this.rules.floorHeight;
   }
 
   /** Indoors: on a building's floor, stairs or doorway, or anywhere upstairs. */
@@ -257,6 +271,15 @@ export class GameMap {
       if (t === "hedge" || t === "wall" || t === "building" || t === "window") return true;
     }
     return false;
+  }
+
+  /** A round strikes a wall: one more pockmark. */
+  scar(x: number, y: number): void {
+    const i = this.idx(x, y);
+    const before = this.holes[i]!;
+    if (before >= 255) return;
+    this.holes[i] = before + 1;
+    if (holeStep(before + 1) !== holeStep(before)) this.scars++;
   }
 
   /** True if a window is right beside the point (a man upstairs can fire from it). */
@@ -438,6 +461,11 @@ export function findPath(map: GameMap, from: number, to: number, opts: { blocked
   for (let c = to; c !== from; c = sc.came[c]!) path.push(c);
   path.reverse();
   return path;
+}
+
+/** Bullet holes counted in steps, for drawing: none, a few, many, riddled. */
+export function holeStep(n: number): number {
+  return n === 0 ? 0 : n < 4 ? 1 : n < 12 ? 2 : n < 30 ? 3 : 4;
 }
 
 export function cheb(a: Point, b: Point): number {

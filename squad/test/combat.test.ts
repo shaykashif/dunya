@@ -64,6 +64,27 @@ describe("sight and cover", () => {
     expect(hitChance(w, de, us, spec, 1)).toBeLessThan(standing * 0.5);
   });
 
+  it("fire loses accuracy with range but can still hit far out; a scope holds up", () => {
+    const { w, us, de } = setup();
+    field(w, 2, 8, 141, 14, null);
+    w.place(us, 4, 10);
+    const garand = w.config.weapons.m1_garand, scoped = w.config.weapons.kar98k_scoped;
+    const at = (x: number, spec = garand) => {
+      w.place(de, x, 10);
+      return hitChance(w, us, de, spec, 1);
+    };
+    const near = at(14), mid = at(44), far = at(104);
+    expect(near).toBeGreaterThan(mid);
+    expect(mid).toBeGreaterThan(far);
+    // Suppressive range: a hit is a long shot, but it happens.
+    expect(far).toBeGreaterThan(0);
+    expect(far).toBeLessThan(near * 0.3);
+    // Out of the rifle's reach altogether.
+    expect(at(4 + garand.maxRange + 5)).toBe(0);
+    // A sniper's scoped rifle stays deadly where an ordinary rifle sprays.
+    expect(at(104, scoped)).toBeGreaterThan(far * 3);
+  });
+
   it("enough fire pins a man", () => {
     const { w, us } = setup();
     for (let i = 0; i < 12; i++) suppress(w, us, 0.07);

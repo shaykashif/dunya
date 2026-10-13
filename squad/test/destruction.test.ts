@@ -1,9 +1,11 @@
 // Shells against houses, trees and hedges; ambushes laid and sprung.
 import { describe, expect, it } from "vitest";
 import { shellDamage } from "../src/combat/destruction.ts";
+import { incoming, ordnanceStep } from "../src/combat/ordnance.ts";
 import { checkInvariants } from "../src/engine/invariants.ts";
 import { EventLog } from "../src/log/events.ts";
 import { createSimulation } from "../src/sim.ts";
+import { holeStep } from "../src/world/map.ts";
 import type { Ordnance } from "../src/world/types.ts";
 import type { World } from "../src/world/world.ts";
 
@@ -58,6 +60,77 @@ describe("shellfire knocks things down", () => {
     expect(smashed).toBeGreaterThan(3);
     expect(w.map.at(45, 45)).not.toBe("hedge");
     expect(w.map.passable(45, 45)).toBe(true);
+  });
+});
+
+describe("rounds in flight and bullets on walls", () => {
+  it("a mortar bomb takes some seconds to land, and men near it hear it coming and go flat", () => {
+    const log = new EventLog({ retain: true });
+    const w = createSimulation({ seed: 5, log, config: { map: { kind: "hamlet" }, weather: { kind: "clear" } } }).world;
+    const men = w.soldiers.filter((s) => s.side === "us" && s.status === "active").slice(0, 5);
+    const spot = { x: 70, y: 100 };
+    for (const m of men) {
+      const at = w.freeTileNear(spot, 4, m.id)!;
+      w.place(m, at.x, at.y, 0);
+      m.posture = "stand";
+      m.experience = "veteran";
+    }
+    const o = incoming(w, "mortar", "de", spot, 0, null);
+    expect(o.burstTick - w.tick).toBe(w.config.mortars.flight.mortar);
+    let burst = -1, flat = -1;
+    for (let k = 0; k < 20 && burst < 0; k++) {
+      w.tick++;
+      ordnanceStep(w);
+      if (flat < 0 && men.some((m) => m.posture === "prone")) flat = w.tick;
+      if (log.retained!.some((e) => e.type === "explosion")) burst = w.tick;
+    }
+    expect(burst).toBe(o.burstTick);
+    expect(flat).toBeGreaterThan(0);
+    expect(flat).toBeLessThan(burst);
+  });
+
+  it("bullets striking a wall leave holes, more of them the more it is shot", () => {
+    const w = world(5);
+    const b = w.buildings[0]!;
+    const x = b.x + 1, y = b.y + b.h - 1;
+    const i = w.map.idx(x, y);
+    expect(w.map.holes[i]).toBe(0);
+    const before = w.map.scars;
+    w.map.scar(x, y);
+    expect(holeStep(w.map.holes[i]!)).toBe(1);
+    expect(w.map.scars).toBe(before + 1);
+    for (let k = 0; k < 40; k++) w.map.scar(x, y);
+    expect(holeStep(w.map.holes[i]!)).toBe(4);
+    // The view is told only when the wall looks different, not on every round.
+    expect(w.map.scars).toBe(before + 4);
+  });
+});
+
+describe("the church tower", () => {
+  it("its belfry stands well above an ordinary upper floor, and an MG crew often climbs it", () => {
+    let towers = 0, mgs = 0;
+    for (let seed = 1; seed <= 14; seed++) {
+      const log = new EventLog({ retain: true });
+      const w = createSimulation({ seed, log }).world;
+      const church = w.buildings.find((b) => b.kind === "church");
+      if (!church) continue;
+      let tower: { x: number; y: number } | null = null;
+      for (let y = church.y; y < church.y + church.h && !tower; y++) for (let x = church.x; x < church.x + church.w && !tower; x++) if (w.map.isTower(x, y)) tower = { x, y };
+      expect(tower).not.toBeNull();
+      const t = tower!;
+      expect(w.map.passable(t.x, t.y, 2)).toBe(true);
+      expect(w.map.heightAt(t.x, t.y, 2) - w.map.heightAt(t.x, t.y, 0)).toBeGreaterThan(2 * w.map.rules.floorHeight);
+      towers++;
+      const e = log.retained!.find((x) => x.type === "belfry_mg");
+      if (e) {
+        mgs++;
+        const gunner = w.soldier(e.actors[0]!);
+        expect(gunner.z).toBe(2);
+        expect(w.map.isTower(gunner.x, gunner.y)).toBe(true);
+      }
+    }
+    expect(towers).toBeGreaterThan(0);
+    expect(mgs).toBeGreaterThan(0);
   });
 });
 

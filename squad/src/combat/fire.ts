@@ -30,11 +30,13 @@ export function movedThisTick(w: World, s: Soldier): boolean {
  */
 export function hitChance(w: World, shooter: Soldier, target: Soldier, spec: WeaponSpec, vis: number): number {
   const d = dist(shooter, target);
-  if (d > spec.maxRange * 1.2) return 0;
+  if (d > spec.maxRange) return 0;
   const cfg = w.config;
   const skill = (0.6 + 0.8 * shooter.traits.marksmanship) * (shooter.experience === "veteran" ? 1.12 : shooter.experience === "green" ? 0.85 : 1);
   const cover = w.map.cover(target, shooter, target.posture);
-  let p = spec.accuracy * Math.exp(-d / spec.rangeScale) * skill;
+  // Falls away quickly with range, but never to nothing within the weapon's reach: wild long-range fire still hits now and then.
+  const floor = cfg.fire.longRangeFloor;
+  let p = spec.accuracy * (floor + (1 - floor) * Math.exp(-d / spec.rangeScale)) * skill;
   p *= cfg.posture.steadiness[shooter.posture] * (1 - cfg.suppression.accuracyLoss * shooter.suppression) * aimFactor(shooter);
   // Blown from running, a man's aim wavers; rain and fog spoil everyone's.
   p *= (1 - cfg.fatigue.aimLoss * shooter.fatigue) * w.weather.aim;
@@ -101,6 +103,8 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
   // Who is actually near the aim point: the target, or whoever happens to be there.
   const near = w.soldiers.filter((o) => o.id !== shooter.id && w.onField(o) && dist(o, at) <= cfg.fire.suppressRadius + 0.5);
   const smoke = w.smoke;
+  // A wall in front of the aim point, or the aim point itself if it is a wall: where the misses strike.
+  const wall = struckWall(w, at, shooter);
   for (let r = 0; r < rounds; r++) {
     let victim: Soldier | null = null;
     if (target && w.onField(target) && purpose === "aimed") {
@@ -132,7 +136,7 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
       hits.push(victim.id);
       shooter.hits++;
       bulletWound(w, rng, shooter, victim, spec, range, `${label(shooter)}'s ${spec.name}`);
-    }
+    } else if (wall && rng.chance(0.55)) w.map.scar(wall.x, wall.y);
   }
 
   // Every round snapping past presses down the men around the aim point.
@@ -171,6 +175,16 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
   hearShot(w, shooter, spec);
   if (shooter.loaded === 0 && shooter.ammo > 0 && shooter.reloadLeft === 0) startReload(w, shooter);
   return rounds;
+}
+
+const WALLS = new Set(["building", "window", "door", "wall"]);
+
+/** The stretch of wall a miss at `at` hits: the one right in front of it on the line of fire, or the aim point itself. */
+function struckWall(w: World, at: Point, shooter: Point): Point | null {
+  if (!w.map.inBounds(at.x, at.y)) return null;
+  if (WALLS.has(w.map.at(at.x, at.y))) return { x: at.x, y: at.y };
+  const front = w.map.stepToward(at, shooter);
+  return w.map.inBounds(front.x, front.y) && WALLS.has(w.map.at(front.x, front.y)) ? front : null;
 }
 
 /**
@@ -220,7 +234,7 @@ export function hasAmmo(s: Soldier): boolean {
 }
 
 export function sightRange(w: World, s: Soldier): number {
-  return w.config.perception.maxRange * sightFactor(s) * w.weather.sight;
+  return w.config.perception.maxRange * sightFactor(s) * w.weather.sight * (s.role === "sniper" ? w.config.perception.scope : 1);
 }
 
 export { r3 };

@@ -98,6 +98,8 @@ export function chooseHide(w: World, s: Soldier): Point | null {
     score += (1 - hidden) * 0.6;
     // Farther up is better: an upper window or a tower.
     score += z * 0.18;
+    // A belfry above everything: the best seat there is.
+    if (z > 0 && w.map.isTower(p.x, p.y)) score += 0.5;
     if (z > 0 && !w.map.besideWindow(p.x, p.y) && t !== "stairs") score -= 0.4;
     // The range band he wants.
     if (d < cfg.minRange) score -= 0.4;
@@ -128,7 +130,7 @@ export function chooseHide(w: World, s: Soldier): Point | null {
       for (let x = b.x + 1; x < b.x + b.w - 1; x++) {
         for (let z = 1; z < MAX_FLOORS; z++) {
           if (!w.map.passable(x, y, z)) continue;
-          if (!w.map.besideWindow(x, y) && w.map.at(x, y) !== "stairs") continue;
+          if (!w.map.besideWindow(x, y) && !w.map.isTower(x, y)) continue;
           consider({ x, y, z });
         }
       }

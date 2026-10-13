@@ -84,7 +84,7 @@ export function fireRifleGrenade(w: World, s: Soldier, aim: Point): void {
 export function incoming(w: World, kind: "mortar" | "artillery" | "smoke_shell", side: Side | null, aim: Point, scatter: number, byId: number | null, spotting = false): Ordnance {
   const rng = w.rng.get("ordnance");
   const at = clampToMap(w, { x: aim.x + (rng.next() * 2 - 1) * scatter, y: aim.y + (rng.next() * 2 - 1) * scatter });
-  const o: Ordnance = { id: w.nextId("ordnance"), kind, side, byId, from: { x: at.x, y: side === "de" ? -20 : side === "us" ? w.map.height + 20 : at.y - 30 }, x: at.x, y: at.y, z: kind === "smoke_shell" ? 0 : burstFloor(w, at, 0, true), burstTick: w.tick + 3, thrownTick: w.tick, spotting };
+  const o: Ordnance = { id: w.nextId("ordnance"), kind, side, byId, from: { x: at.x, y: side === "de" ? -20 : side === "us" ? w.map.height + 20 : at.y - 30 }, x: at.x, y: at.y, z: kind === "smoke_shell" ? 0 : burstFloor(w, at, 0, true), burstTick: w.tick + w.config.mortars.flight[kind], thrownTick: w.tick, spotting };
   w.ordnance.push(o);
   w.emit("incoming", [], { kind, at: [at.x, at.y], side, burst: o.burstTick });
   return o;
@@ -204,11 +204,34 @@ function dive(w: World, o: Ordnance): void {
   }
 }
 
+/**
+ * The rush of a round coming down: men near where it will land hear it and,
+ * if they have the instinct for it, throw themselves flat. Veterans almost
+ * always do; green men often freeze.
+ */
+function whistle(w: World, o: Ordnance): void {
+  const rng = w.rng.get("ordnance");
+  const r = w.config.mortars.whistleRadius;
+  const shouted = new Set<number>();
+  for (const s of w.soldiers) {
+    if (s.status !== "active" || !s.conscious || s.carriedById !== null || cheb(s, o) > r) continue;
+    const chance = s.experience === "veteran" ? 0.9 : s.experience === "green" ? 0.45 : 0.7;
+    if (!rng.chance(chance)) continue;
+    s.posture = "prone";
+    if (s.act && (s.act.cand.kind === "move" || s.act.cand.kind === "hold" || s.act.cand.kind === "fire" || s.act.cand.kind === "suppress")) s.act = null;
+    if (!shouted.has(s.squadId)) {
+      shouted.add(s.squadId);
+      shout(w, s, s.side === "us" ? "Incoming! Hit the dirt!" : "Volle Deckung!", "shout-incoming", 8);
+    }
+  }
+}
+
 /** Engine rule each tick: rounds in flight land, and smoke drifts and thins. */
 export function ordnanceStep(w: World): void {
   const rest: Ordnance[] = [];
   for (const o of w.ordnance) {
     if (o.burstTick === w.tick + 2 && (o.kind === "frag" || o.kind === "stick")) dive(w, o);
+    if (o.burstTick === w.tick + 2 && (o.kind === "mortar" || o.kind === "artillery")) whistle(w, o);
     if (o.burstTick <= w.tick) explode(w, o);
     else rest.push(o);
   }

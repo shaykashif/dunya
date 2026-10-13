@@ -6,6 +6,7 @@ import type { Soldier, Terrain } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
 import { blastShake, drawBlast, drawCollapse, drawDebris, shotShake, drawSmokeCloud, dustSpurt, muzzleFlash, shellShadow, smokePop } from "./fx.ts";
 import { Flora, buildingBounds, buildingShadow, buildingSprite, groundShadow, pick, type Prop } from "./scenery.ts";
+import { holeStep } from "../../src/world/map.ts";
 import { SIDE_COLORS, TILE, hash2, soldierSprite } from "./sprites.ts";
 
 export interface ViewOptions {
@@ -57,6 +58,14 @@ const BASE: Record<Terrain, string> = {
   ditch: "#4a6a30",
   deadfall: "#5a6a3a",
 };
+
+/** Tiles to a side of one grid square: lettered west to east, numbered north to south. */
+export const GRID = 16;
+
+/** The grid square a tile lies in, as a map reference reads it: "C4". */
+export function gridSquare(x: number, y: number): string {
+  return `${String.fromCharCode(65 + Math.floor(x / GRID))}${Math.floor(y / GRID) + 1}`;
+}
 
 /** Colours for the minimap. */
 export const MINI: Record<Terrain, string> = { ...BASE, deadfall: "#4a4a30", hedge: "#24481e", woods: "#2a5022", orchard: "#4a7a30", building: "#4a4038", window: "#4a4038", crater: "#5a4630", foxhole: "#3a2e20", brush: "#3e6a2c", ditch: "#3a5426", marsh: "#4a6e5a" };
@@ -223,6 +232,57 @@ function drawTile(g: CanvasRenderingContext2D, w: World, tx: number, ty: number)
     px(x, y + TILE - 3, "#4e3e26", TILE, 2);
     for (let k = 0; k < 3; k++) px(x + Math.floor(hash2(tx, ty, k + 70) * 15), y + 4 + Math.floor(hash2(tx, ty, k + 80) * 8), "#806a48", 2, 1);
   }
+  terrace(g, w, tx, ty);
+  // Bullet holes pocking a wall.
+  const holes = holeStep(w.map.holes[w.map.idx(tx, ty)]!);
+  if (holes > 0 && (t === "building" || t === "window" || t === "door" || t === "wall")) {
+    for (let k = 0; k < holes * 4; k++) {
+      const hx = x + 1 + Math.floor(hash2(tx, ty, k + 200) * 14), hy = y + (t === "wall" ? 3 : 1) + Math.floor(hash2(tx, ty, k + 230) * (t === "wall" ? 9 : 14));
+      px(hx, hy, "#1e1a16");
+      px(hx + 1, hy, "#d8d0bc");
+    }
+  }
+}
+
+/** Height in steps, for the terraced look. */
+const STEP = 1.25;
+function levelAt(w: World, x: number, y: number): number {
+  return Math.floor(w.map.elev[w.map.idx(x, y)]! / STEP);
+}
+
+/**
+ * Ground drawn as terraces, the way an isometric map shows height: where the
+ * land steps down to the south, the higher ground's earth face shows on the
+ * lower tile, under a lit grass lip, with a shadow at its foot; steps to the
+ * side throw a shadow edge. Houses stand on level ground and get none.
+ */
+function terrace(g: CanvasRenderingContext2D, w: World, tx: number, ty: number): void {
+  const map = w.map;
+  const i = map.idx(tx, ty);
+  if (map.building[i]! >= 0) return;
+  const L = levelAt(w, tx, ty);
+  const x = tx * TILE, y = ty * TILE;
+  const px = (xx: number, yy: number, col: string, ww = 1, hh = 1) => {
+    g.fillStyle = col;
+    g.fillRect(xx, yy, ww, hh);
+  };
+  if (ty > 0 && map.building[i - map.width]! < 0) {
+    const up = levelAt(w, tx, ty - 1) - L;
+    if (up > 0) {
+      // The face of the step above, hanging down over this tile.
+      const h = Math.min(10, 3 * up + 1);
+      const water = map.terrain[i - map.width] === "water";
+      px(x, y, water ? "#2e5478" : "#5e4c32", TILE, h);
+      for (let k = 2; k < h; k += 3) px(x, y + k, water ? "#284a6a" : "#4e3e28", TILE, 1);
+      for (let k = 0; k < 3; k++) px(x + Math.floor(hash2(tx, ty, k + 300) * 15), y + 1 + Math.floor(hash2(tx, ty, k + 310) * Math.max(1, h - 2)), "#7a6444", 2, 1);
+      px(x, y, water ? "#4a7aa8" : "#7aae4a", TILE, 1);
+      px(x, y + h, "rgba(10,16,6,0.35)", TILE, 2);
+    }
+  }
+  if (ty + 1 < map.height && levelAt(w, tx, ty + 1) < L) px(x, y + TILE - 1, "rgba(255,250,210,0.18)", TILE, 1);
+  if (tx > 0 && levelAt(w, tx - 1, ty) > L) px(x, y, "rgba(10,16,6,0.28)", 2, TILE);
+  if (tx + 1 < map.width && levelAt(w, tx + 1, ty) > L) px(x + TILE - 1, y, "rgba(10,16,6,0.16)", 1, TILE);
+  if (tx > 0 && levelAt(w, tx - 1, ty) < L) px(x, y, "rgba(255,250,210,0.14)", 1, TILE);
 }
 
 /** The trees and bushes growing on one tile. */
@@ -294,7 +354,7 @@ function hillShade(w: World): HTMLCanvasElement {
       const lit = (at(x + 0.6, y + 0.6) - at(x - 0.6, y - 0.6)) * 0.5;
       const height = hi > lo ? (at(x, y) - lo) / (hi - lo) - 0.5 : 0;
       // Quantised into a few steps, for the pixel look.
-      const v = Math.round(Math.max(-0.34, Math.min(0.34, lit * 0.8 + height * 0.1)) / 0.04) * 0.04;
+      const v = Math.round(Math.max(-0.26, Math.min(0.26, lit * 0.55 + height * 0.08)) / 0.04) * 0.04;
       const o = (by * W * S + bx) * 4;
       const light = v > 0;
       img.data[o] = light ? 255 : 10;
@@ -315,9 +375,11 @@ class TerrainLayer {
   readonly canvas: HTMLCanvasElement;
   private readonly g: CanvasRenderingContext2D;
   private readonly seen: Terrain[];
+  private readonly seenHoles: Uint8Array;
   private props: Placed[] = [];
   readonly world: World;
   version: number;
+  scars: number;
   private readonly shade: HTMLCanvasElement;
 
   constructor(w: World) {
@@ -334,14 +396,23 @@ class TerrainLayer {
     this.props.sort(backToFront);
     drawProps(this.g, w, this.props);
     this.seen = [...w.map.terrain];
+    this.seenHoles = Uint8Array.from(w.map.holes, holeStep);
     this.version = w.map.version;
+    this.scars = w.map.scars;
   }
 
   update(): void {
     const w = this.world, g = this.g;
     this.version = w.map.version;
+    this.scars = w.map.scars;
     const changed: number[] = [];
-    for (let i = 0; i < this.seen.length; i++) if (this.seen[i] !== w.map.terrain[i]) changed.push(i);
+    for (let i = 0; i < this.seen.length; i++) {
+      const holes = holeStep(w.map.holes[i]!);
+      if (this.seen[i] !== w.map.terrain[i] || this.seenHoles[i] !== holes) {
+        this.seenHoles[i] = holes;
+        changed.push(i);
+      }
+    }
     if (changed.length === 0) return;
     // Whatever grew on a changed tile goes; whatever grows on it now is added.
     const gone = new Set(changed);
@@ -453,7 +524,7 @@ export class Renderer {
     const dpr = window.devicePixelRatio || 1;
     const vw = this.canvas.width / dpr, vh = this.canvas.height / dpr;
     if (!this.terrain || this.terrain.world !== w) this.terrain = new TerrainLayer(w);
-    else if (this.terrain.version !== w.map.version) this.terrain.update();
+    else if (this.terrain.version !== w.map.version || this.terrain.scars !== w.map.scars) this.terrain.update();
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.fillStyle = "#1a1c14";
     g.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -496,6 +567,9 @@ export class Renderer {
       this.drawCorpseStain(s, p);
       this.drawSoldier(w, s, p, prev, time, s === sel);
     }
+
+    // Mist lies on the ground, round the men's legs; the houses stand up out of it.
+    this.drawGroundFog(w, cam, vw, vh, time);
 
     // Roofs, unless looking inside; an upper floor cut away, with the men on it.
     for (const b of w.buildings) {
@@ -661,26 +735,49 @@ export class Renderer {
         g.rect(x + 2, y + 6, 2, 4);
       }
       g.fill();
-    } else if (kind === "fog") {
-      g.fillStyle = "rgba(196,202,204,0.34)";
-      g.fillRect(0, 0, vw, vh);
-      // Banks of fog in chunky blocks, drifting slowly east.
-      const P = 12, drift = time * 6;
-      const levels = [0.08, 0.16, 0.24];
-      for (let li = 0; li < levels.length; li++) {
-        g.fillStyle = `rgba(214,218,220,${levels[li]})`;
-        g.beginPath();
-        for (let gy = 0; gy * P < vh; gy++) {
-          for (let gx = 0; gx * P < vw; gx++) {
-            const wx = (gx * P - drift) / 64, wy = (gy * P) / 48;
-            const x0 = Math.floor(wx), y0 = Math.floor(wy), fx = wx - x0, fy = wy - y0;
-            const a = hash2(x0, y0, 9), b = hash2(x0 + 1, y0, 9), c = hash2(x0, y0 + 1, 9), d = hash2(x0 + 1, y0 + 1, 9);
-            const v = a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + d * fx * fy;
-            if (Math.min(2, Math.floor(v * 3.3)) === li) g.rect(gx * P, gy * P, P, P);
-          }
-        }
-        g.fill();
+    }
+  }
+
+  /**
+   * Fog lying on the ground: banks of it in chunky blocks on the world grid,
+   * thicker in the low ground and thinning over the rises, drifting slowly
+   * east. Drawn over the field and the men, under the houses.
+   */
+  private drawGroundFog(w: World, cam: Camera, vw: number, vh: number, time: number): void {
+    if (w.weather.kind !== "fog") return;
+    const g = this.g;
+    const P = 12;
+    const drift = time * 1.5;
+    const x0 = Math.floor(cam.x / P) - 1, x1 = Math.ceil((cam.x + vw / cam.zoom) / P) + 1;
+    const y0 = Math.floor(cam.y / P) - 1, y1 = Math.ceil((cam.y + vh / cam.zoom) / P) + 1;
+    const W = w.map.width, H = w.map.height;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < W * H; i += 7) {
+      lo = Math.min(lo, w.map.elev[i]!);
+      hi = Math.max(hi, w.map.elev[i]!);
+    }
+    const levels = [0.22, 0.38, 0.55];
+    const lists: number[][] = [[], [], []];
+    for (let gy = y0; gy <= y1; gy++) {
+      for (let gx = x0; gx <= x1; gx++) {
+        const wx = (gx * P - drift) / 96, wy = (gy * P) / 72;
+        const fx0 = Math.floor(wx), fy0 = Math.floor(wy), fx = wx - fx0, fy = wy - fy0;
+        const a = hash2(fx0, fy0, 9), b = hash2(fx0 + 1, fy0, 9), c = hash2(fx0, fy0 + 1, 9), d = hash2(fx0 + 1, fy0 + 1, 9);
+        let v = a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + d * fx * fy;
+        // Fog pools in hollows.
+        const tx = Math.max(0, Math.min(W - 1, Math.floor((gx * P) / TILE))), ty = Math.max(0, Math.min(H - 1, Math.floor((gy * P) / TILE)));
+        const low = hi > lo ? 1 - (w.map.elev[ty * W + tx]! - lo) / (hi - lo) : 0.5;
+        v = v * 0.7 + low * 0.45 + (hash2(gx, gy, Math.floor(time * 0.5)) - 0.5) * 0.06;
+        const li = v > 0.78 ? 2 : v > 0.58 ? 1 : v > 0.4 ? 0 : -1;
+        if (li >= 0) lists[li]!.push(gx * P, gy * P);
       }
+    }
+    for (let li = 0; li < 3; li++) {
+      g.fillStyle = `rgba(222,226,228,${levels[li]})`;
+      g.beginPath();
+      const l = lists[li]!;
+      for (let k = 0; k < l.length; k += 2) g.rect(l[k]!, l[k + 1]!, P, P);
+      g.fill();
     }
   }
 
@@ -770,12 +867,13 @@ export class Renderer {
   /** A building at three-quarter view: its south wall and its roof. */
   private drawBuilding(w: World, b: Building): void {
     let c = this.houses.get(b.id);
-    if (!c || c.version !== w.map.version || c.world !== w) {
+    const stamp = w.map.version * 100000 + w.map.scars;
+    if (!c || c.version !== stamp || c.world !== w) {
       // Only redraw when a shell has changed this house's own tiles.
       let look = b.destroyed ? "X" : "";
-      for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) look += w.map.at(x, y)[0] + String(Math.min(9, w.map.roofHits[w.map.idx(x, y)]!));
-      if (!c || c.world !== w || c.look !== look) c = { version: w.map.version, world: w, look, img: buildingSprite(w, b) };
-      c.version = w.map.version;
+      for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) look += w.map.at(x, y)[0] + String(Math.min(9, w.map.roofHits[w.map.idx(x, y)]!)) + holeStep(w.map.holes[w.map.idx(x, y)]!);
+      if (!c || c.world !== w || c.look !== look) c = { version: stamp, world: w, look, img: buildingSprite(w, b) };
+      c.version = stamp;
       this.houses.set(b.id, c);
     }
     const B = buildingBounds(b);
@@ -1017,6 +1115,9 @@ export function drawMinimap(canvas: HTMLCanvasElement, w: World, cam: Camera, vi
       img.data[i * 4 + 1] = (n >> 8) & 255;
       img.data[i * 4 + 2] = n & 255;
       img.data[i * 4 + 3] = 255;
+      // Dotted grid lines, so a square named under the map can be found on it.
+      const x = i % W, y = (i - x) / W;
+      if ((x % GRID === 0 || y % GRID === 0) && (x + y) % 2 === 0) for (let c = 0; c < 3; c++) img.data[i * 4 + c] = img.data[i * 4 + c]! * 0.55;
     }
     base.img = img;
     base.version = w.map.version;

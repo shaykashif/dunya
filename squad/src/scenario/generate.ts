@@ -418,11 +418,39 @@ function deployDefenders(w: World, side: Side, layout: Layout, rng: Rng): void {
       sq.orders[el] = { kind: "hold", positions: keep, target: null, pace: "crouch", fire: "hold", issued: 0 };
     }
   });
-  // Sometimes one squad goes out in front to lie in wait in the woods beside the enemy's way in.
+  // A machine gun up in the church tower, if it sees more of the enemy's way in than the gun does from the hedge.
+  const church = w.buildings.find((b) => b.kind === "church");
+  let belfrySquad = -1;
+  if (church && rng.chance(0.6)) {
+    const bell = { x: church.x + Math.floor(church.w / 2), y: church.y + church.h - 2 };
+    const toward = w.platoons[enemyOf(side)].rearY > bell.y ? 1 : -1;
+    const look = { x: bell.x, y: Math.max(0, Math.min(w.map.height - 1, bell.y + toward * 50)) };
+    if (w.map.passable(bell.x, bell.y, 2) && w.map.passable(bell.x, bell.y, 1)) {
+      const crews = pl.squadIds
+        .map((id) => w.squad(id).members.map((m) => w.soldier(m)))
+        .map((men) => ({ gunner: men.find((m) => m.role === "machine_gunner" || m.role === "auto_rifleman"), mate: men.find((m) => m.role === "asst_gunner") }))
+        .filter((c) => c.gunner && c.mate && cheb(c.gunner, bell) <= 40)
+        .sort((a, b) => cheb(a.gunner!, bell) - cheb(b.gunner!, bell));
+      const crew = crews[0];
+      if (crew && vantage(w, { ...bell, z: 2 }, look) > vantage(w, crew.gunner!, look) + 0.1) {
+        for (const [m, z] of [[crew.gunner!, 2], [crew.mate!, 1]] as const) {
+          w.place(m, bell.x, bell.y, z);
+          m.posture = "crouch";
+          const o = w.squad(m.squadId).orders[m.element === "B" ? "B" : "A"];
+          o.positions[m.id] = { x: bell.x, y: bell.y, z };
+        }
+        belfrySquad = crew.gunner!.squadId;
+        w.emit("belfry_mg", [crew.gunner!.id], { squad: crew.gunner!.squadId, at: [bell.x, bell.y] });
+      }
+    }
+  }
+  // Sometimes one squad goes out in front to lie in wait in the woods beside the enemy's way in;
+  // never the one whose gun is up the tower.
   if (pl.squadIds.length >= 2 && rng.chance(w.config.ambush.chance)) {
     const site = ambushSite(w, side);
-    if (site) {
-      const sq = pl.squadIds.map((id) => w.squad(id)).sort((a, b) => cheb(a.post ?? site.at, site.at) - cheb(b.post ?? site.at, site.at) || a.id - b.id)[0]!;
+    const free = pl.squadIds.filter((id) => id !== belfrySquad);
+    if (site && free.length > 0) {
+      const sq = free.map((id) => w.squad(id)).sort((a, b) => cheb(a.post ?? site.at, site.at) - cheb(b.post ?? site.at, site.at) || a.id - b.id)[0]!;
       const men = sq.members.map((m) => w.soldier(m));
       const spots = ambushSpots(w, men, site);
       for (const m of men) {
