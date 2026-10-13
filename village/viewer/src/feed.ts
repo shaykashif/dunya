@@ -3,7 +3,7 @@ import type { SimEvent } from "../../src/log/events.ts";
 import type { EntityRef, HolderRef } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
 
-export type Category = "crime" | "justice" | "love" | "life" | "death" | "weather" | "village" | "intrigue" | "danger";
+export type Category = "crime" | "justice" | "love" | "life" | "death" | "weather" | "village" | "intrigue" | "danger" | "health";
 
 export interface FeedLine {
   tick: number;
@@ -190,13 +190,13 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
     case "elder_chosen":
       return e.tick === 0 ? null : line("village", `${first(w, d.elder)} is the new elder.`, [d.elder]);
     case "plot_formed": {
-      const what = d.kind === "murder" ? `to kill ${first(w, d.target)} (${d.motive})` : d.kind === "raid" ? `a raid on the ${w.households[d.targetHousehold as number]?.name} house with ${(d.participants as number[]).length - 1} others` : `to steal from ${holderName(w, d.targetHolder as HolderRef)}`;
+      const what = d.kind === "retribution" ? (d.severity === "kill" ? `to kill ${first(w, d.target)}, whom the council let walk` : d.severity === "maim" ? `to cripple ${first(w, d.target)}, whom the council let walk` : `to frighten ${first(w, d.target)}, whom the council let walk`) : d.kind === "murder" ? `to kill ${first(w, d.target)} (${d.motive})` : d.kind === "raid" ? `a raid on the ${w.households[d.targetHousehold as number]?.name} house with ${(d.participants as number[]).length - 1} others` : `to steal from ${holderName(w, d.targetHolder as HolderRef)}`;
       return line("intrigue", `${first(w, d.planner)} is plotting ${what}.`, [d.planner, d.target]);
     }
     case "plot_executed":
     case "plot_foiled":
     case "plot_abandoned":
-      return line("intrigue", `${d.kind === "murder" ? "Murder" : d.kind === "raid" ? "Raid" : "Theft"} plot by ${first(w, d.planner)} ${e.type.slice(5)}: ${d.outcome}.`, [d.planner, d.target]);
+      return line("intrigue", `${d.kind === "murder" ? "Murder" : d.kind === "raid" ? "Raid" : d.kind === "retribution" ? "Retribution" : "Theft"} plot by ${first(w, d.planner)} ${e.type.slice(5)}: ${d.outcome}.`, [d.planner, d.target]);
     case "plot_learned":
       return line("intrigue", `${first(w, d.stalker)} noted that ${first(w, d.target)} is alone around ${String(d.hour).padStart(2, "0")}:00${d.task && d.task !== "child" ? ` while working as ${d.task}` : ""}.`, [d.stalker, d.target]);
     case "raid_mustered":
@@ -215,6 +215,46 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
       return d.purpose === "hunting" || d.forest ? null : line("danger", `A gunshot rings out${d.purpose === "fight" ? "" : ` (${d.purpose})`}.`, [d.shooter]);
     case "investigated_shot":
       return line("danger", `${first(w, e.actors[0])} went to see where the shot came from${d.found ? ` and found something` : ""}.`, [e.actors[0]]);
+    case "injustice_felt":
+      return line("justice", `${first(w, d.person)} cannot forgive the council for letting ${first(w, d.against)} go.`, [d.person, d.against]);
+    case "intimidation":
+      return line("crime", `${first(w, d.by)} threatened ${first(w, d.target)} to their face.`, [d.by, d.target]);
+    case "injured": {
+      const sev = Number(d.severity);
+      if (sev < 0.3 && d.kind !== "lost") return null;
+      const part = String(d.part);
+      const verb: Record<string, string> = { fracture: "broke their", sprain: "twisted their", bite: "was bitten on the", gunshot: "was shot in the", gash: "was gashed on the", cut: "was cut on the", bruise: "was bruised on the", lost: "lost their" };
+      const grave = sev >= 0.75 ? "gravely: " : sev >= 0.5 ? "badly: " : "";
+      return line("health", `${first(w, d.person)} ${verb[String(d.kind)] ?? "was hurt on the"} ${part.replace("foot", "ankle")} (${grave}${d.cause}).`, [d.person, d.by]);
+    }
+    case "accident":
+      return d.canWalk ? null : line("health", `${first(w, d.person)} ${d.cause} and cannot walk!`, [d.person]);
+    case "cry_for_help":
+      return line("health", `${first(w, d.person)} cries out for help.`, [d.person]);
+    case "found_injured":
+      return line("health", `${first(w, d.finder)} found ${first(w, d.person)} hurt.`, [d.finder, d.person]);
+    case "picked_up":
+      return line("health", `${first(w, d.carrier)} picked up ${first(w, d.person)} to carry them to safety.`, [d.carrier, d.person]);
+    case "carried_to":
+      return line("health", `${first(w, d.carrier)} carried ${first(w, d.person)} ${d.place === "town" ? "to the infirmary in the courthouse" : "home"}.`, [d.carrier, d.person]);
+    case "set_down":
+      return d.reason === "dropped" ? line("health", `${first(w, d.person)} was left where they lay.`, [d.person]) : null;
+    case "wounds_treated":
+      return d.by === d.person || (Number(d.tended) === 0 && Number(d.cured) === 0) ? null : line("health", `${first(w, d.by)} tended ${first(w, d.person)}'s wounds${Number(d.cured) > 0 ? " and cleared a festering" : ""}.`, [d.by, d.person]);
+    case "infection":
+      return line("health", `${first(w, d.person)}'s ${d.part} wound is festering.`, [d.person]);
+    case "injury_lasting":
+      return line("health", `${first(w, d.person)}'s ${d.part} healed badly: ${String(d.lasting ?? "it will never be the same")}.`, [d.person]);
+    case "crutch_made":
+      return line("village", `${first(w, d.by)} carved a crutch for ${first(w, d.for)}.`, [d.by, d.for]);
+    case "headstone_carved":
+      return line("village", `${first(w, d.by)} carved a headstone for ${first(w, d.person)}.`, [d.by, d.person]);
+    case "masonry":
+      return null;
+    case "patrolled":
+      return Number(d.found) > 0 || Number(d.scared) > 0 ? line("village", `${first(w, d.by)} on the night watch ${Number(d.found) > 0 ? "found someone fallen" : ""}${Number(d.found) > 0 && Number(d.scared) > 0 ? " and " : ""}${Number(d.scared) > 0 ? "scared off wolves" : ""}.`, [d.by]) : null;
+    case "animal_died":
+      return line("danger", `A ${d.kind} died (${d.cause}).`, []);
     case "went_mad":
       return line("danger", `${first(w, d.person)} has gone mad (${d.kind}): ${d.cause}.`, [d.person]);
     case "recovered":

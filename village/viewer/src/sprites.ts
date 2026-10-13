@@ -123,6 +123,8 @@ export const GRAVE = fromRows(
   { G: "#9aa0a8", L: "#c8ccd2", D: "#5a4632" },
 );
 
+export const MOUND = fromRows(["........", "..DDDD..", ".DDEDDD.", "DDDDDDDD", "........"], { D: "#6a4a30", E: "#8a6a48" });
+
 /** 7x7 activity icons shown above villagers. */
 const ICON_ROWS: Record<string, readonly string[]> = {
   eat: ["...WW..", "..WWWW.", "..WMMW.", "...MM..", "..BB...", ".BB....", "B......"],
@@ -259,3 +261,156 @@ export const SEASON_PALETTES: SeasonPalette[] = [
   { grass: ["#9aa845", "#8c9a3c", "#a8b452", "#7f8e36"], canopy: ["#d0782a", "#e0a03a", "#b5552a", "#c8a02a"], trunk: "#5e3c20", ground: "#7d5c3a", snow: false },
   { grass: ["#e8eef2", "#dce4ea", "#f2f6f8", "#cfd8e0"], canopy: ["#2a5a3a", "#356a45", "#20482e", "#e8eef2"], trunk: "#4e3420", ground: "#b8b0a8", snow: true },
 ];
+
+// ---------- Faces, body diagram and descriptions (for the person panel) ----------
+
+const SKIN_NAMES = ["fair", "light", "tanned", "brown", "dark brown"];
+const HAIR_NAMES = ["black", "dark brown", "brown", "golden", "grey", "red", "jet black"];
+
+export function appearance(id: number, age: number): { skin: string; hair: string } {
+  const skin = SKIN_NAMES[Math.floor(hash2(id, 3) * SKINS.length)]!;
+  const hair = age >= 58 ? "white" : HAIR_NAMES[Math.floor(hash2(id, 7) * (HAIRS.length - 1))]!;
+  return { skin, hair };
+}
+
+export interface FaceInfo {
+  id: number;
+  sex: "f" | "m";
+  age: number;
+  household: number;
+  /** Mood in [-1, 1]. */
+  mood: number;
+  pain: number;
+  lostEyes: ("left" | "right")[];
+  /** Fresh wounds to the face or eyes: bruises, cuts. */
+  bruised: boolean;
+  cut: boolean;
+  /** Healed-badly marks. */
+  scar: boolean;
+  deepScar: boolean;
+  ruined: boolean;
+  dead: boolean;
+}
+
+/** A 16x16 pixel portrait, scaled up by CSS. */
+export function faceCanvas(f: FaceInfo): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = 16;
+  c.height = 16;
+  const g = c.getContext("2d")!;
+  const look = lookFor(f.id, f.household, f.age);
+  const px = (x: number, y: number, col: string, w = 1, h = 1) => {
+    g.fillStyle = col;
+    g.fillRect(x, y, w, h);
+  };
+  const rect = (x: number, y: number, w: number, h: number, col: string) => px(x, y, col, w, h);
+  px(0, 0, f.dead ? "#2a2a2e" : "#3a3028", 16, 16);
+  // Shoulders in the house colour.
+  rect(2, 13, 12, 3, look.shirt);
+  rect(2, 13, 12, 1, look.shirtDark);
+  // Neck and head.
+  rect(6, 11, 4, 3, look.skin);
+  const child = f.age < 12;
+  const top = child ? 4 : 2;
+  rect(4, top + 1, 8, 9 - (child ? 1 : 0), look.skin);
+  rect(5, top, 6, 1, look.skin);
+  // Hair.
+  if (f.sex === "f") {
+    rect(3, top - 0, 10, 3, look.hair);
+    rect(3, top + 2, 1, 9, look.hair);
+    rect(12, top + 2, 1, 9, look.hair);
+    rect(4, top + 3, 8, 1, look.skin);
+  } else {
+    rect(3, top, 10, 2, look.hair);
+    rect(3, top + 2, 1, 3, look.hair);
+    rect(12, top + 2, 1, 3, look.hair);
+    if (f.age >= 18 && hash2(f.id, 19) < 0.55) {
+      rect(4, top + 7, 8, 2, look.hair);
+      rect(6, top + 6, 4, 1, look.skin);
+    }
+  }
+  if (f.age >= 58) rect(4, top + 1, 8, 1, "#d8d0c0");
+  // Eyes.
+  const ey = top + 4;
+  const eyeAt = (x: number, lost: boolean) => {
+    if (lost) {
+      px(x, ey, "#6a2020", 2, 2);
+      px(x, ey, "#1a0c0c");
+    } else {
+      px(x, ey, "#f4f0e8", 2, 1);
+      px(x + (hash2(f.id, 23) < 0.5 ? 0 : 1), ey, f.dead ? "#444" : "#2a1a10");
+    }
+  };
+  // The portrait faces us: its left is the person's right.
+  eyeAt(5, f.lostEyes.includes("right"));
+  eyeAt(9, f.lostEyes.includes("left"));
+  if (f.lostEyes.length === 1) {
+    // A scar through the lost eye.
+    const x = f.lostEyes[0] === "right" ? 5 : 9;
+    px(x + 1, ey - 1, "#8a3a30", 1, 4);
+  }
+  // Brows.
+  px(5, ey - 1, "#2a1a10", 2);
+  px(9, ey - 1, "#2a1a10", 2);
+  // Nose and mouth.
+  px(7, ey + 1, shade(look.skin, 0.85), 2, 2);
+  const my = ey + 4;
+  const sad = f.mood < -0.25 || f.pain > 0.5;
+  const happy = f.mood > 0.3 && f.pain < 0.3;
+  if (f.dead) rect(6, my, 4, 1, "#5a3a30");
+  else if (happy) {
+    rect(6, my, 4, 1, "#7a3a30");
+    px(5, my - 1, "#7a3a30");
+    px(10, my - 1, "#7a3a30");
+  } else if (sad) {
+    rect(6, my, 4, 1, "#7a3a30");
+    px(5, my + 1, "#7a3a30");
+    px(10, my + 1, "#7a3a30");
+  } else rect(6, my, 4, 1, "#7a3a30");
+  if (f.age >= 50) {
+    px(4, ey + 2, shade(look.skin, 0.8), 1, 2);
+    px(11, ey + 2, shade(look.skin, 0.8), 1, 2);
+  }
+  // Marks.
+  if (f.ruined) {
+    rect(4, top + 2, 4, 6, "#b05a58");
+    rect(5, top + 3, 1, 5, "#7a2020");
+    rect(7, top + 6, 3, 1, "#7a2020");
+  } else if (f.deepScar) {
+    for (let i = 0; i < 6; i++) px(4 + i, top + 2 + i, "#c88a80");
+  } else if (f.scar) {
+    px(10, top + 5, "#d09a90", 1, 3);
+  }
+  if (f.bruised) {
+    px(4, ey + 1, "#6a4a8a", 2, 2);
+    px(10, top + 5, "#6a4a8a", 2, 2);
+  }
+  if (f.cut) {
+    px(6, top + 1, "#b02020", 1, 4);
+    px(7, top + 4, "#b02020");
+  }
+  return c;
+}
+
+function shade(hex: string, f: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.round(((n >> 16) & 255) * f), gg = Math.round(((n >> 8) & 255) * f), b = Math.round((n & 255) * f);
+  return `rgb(${r},${gg},${b})`;
+}
+
+/** Rectangles of a 40x84 body diagram, front view: the person's left is on the viewer's right. */
+export const BODY_RECTS: Record<string, [number, number, number, number]> = {
+  head: [14, 0, 12, 7],
+  face: [15, 7, 10, 7],
+  "left eye": [21, 8, 3, 2],
+  "right eye": [16, 8, 3, 2],
+  torso: [12, 16, 16, 24],
+  "left arm": [29, 17, 5, 18],
+  "right arm": [6, 17, 5, 18],
+  "left hand": [29, 36, 5, 6],
+  "right hand": [6, 36, 5, 6],
+  "left leg": [21, 41, 7, 24],
+  "right leg": [12, 41, 7, 24],
+  "left foot": [21, 66, 8, 6],
+  "right foot": [11, 66, 8, 6],
+};

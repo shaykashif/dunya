@@ -283,8 +283,8 @@ function stumble(w: World, p: Person, rng: Rng, where: string): void {
   const side = rng.chance(0.5) ? "left" : "right";
   const roll = rng.next();
   const cause = `fell ${where}`;
-  if (roll < 0.6) injure(w, p, `${side} foot`, "sprain", 0.25 + rng.next() * 0.35, cause, null, 0.02);
-  else if (roll < 0.9) injure(w, p, `${side} foot`, "sprain", 0.72 + rng.next() * 0.23, cause, null, 0.04);
+  if (roll < 0.75) injure(w, p, `${side} foot`, "sprain", 0.25 + rng.next() * 0.35, cause, null, 0.02);
+  else if (roll < 0.94) injure(w, p, `${side} foot`, "sprain", 0.72 + rng.next() * 0.23, cause, null, 0.04);
   else injure(w, p, rng.chance(0.5) ? `${side} leg` : `${side} foot`, "fracture", 0.7 + rng.next() * 0.25, cause, null, 0.1);
   afterAccident(w, p, cause);
 }

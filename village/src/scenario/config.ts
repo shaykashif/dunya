@@ -379,7 +379,7 @@ export const DEFAULT_CONFIG = {
       horseFallPerTick: 0.0015,
       woodcutting: 0.02,
       stormWoodcutting: 0.09,
-      hunting: 0.015,
+      hunting: 0.004,
     },
     /** Carrying someone slows the carrier to this fraction. */
     carrySpeed: 0.6,

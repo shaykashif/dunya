@@ -331,14 +331,17 @@ export class Engine {
   /** Gives everyone who stands in the world a tile of their own (after births, growing up, or being moved). */
   private settleOccupancy(): void {
     const w = this.world;
+    // Drop the carried first, then the carriers, so the result does not depend on who comes first in the list.
     for (const p of w.people) {
-      // A carrier who died, left or put them down no longer carries anyone.
-      if (p.carryingId !== null && (!p.alive || p.exiled || w.maybePerson(p.carryingId)?.carriedById !== p.id)) p.carryingId = null;
       if (p.carriedById !== null && (!p.alive || p.exiled || !w.isActive(p.carriedById) || w.person(p.carriedById).carryingId !== p.id)) {
         const by = p.carriedById;
         p.carriedById = null;
         if (p.alive && !p.exiled) w.emit("set_down", [p.id], { carrier: by, person: p.id, reason: "dropped", at: [p.x, p.y] });
       }
+    }
+    for (const p of w.people) {
+      // A carrier who died, left or put them down no longer carries anyone.
+      if (p.carryingId !== null && (!p.alive || p.exiled || w.maybePerson(p.carryingId)?.carriedById !== p.id)) p.carryingId = null;
     }
     for (const p of w.people) {
       if (!p.alive || p.exiled) continue;

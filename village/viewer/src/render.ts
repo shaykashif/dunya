@@ -1,3 +1,4 @@
+import { cannotWalk, mobility } from "../../src/entities/body.ts";
 import type { Animal, Building, Person, Trace } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
 import {
@@ -5,6 +6,7 @@ import {
   GRAVE,
   HOUSEHOLD_COLORS,
   HOUSEHOLD_DARK,
+  MOUND,
   SEASON_PALETTES,
   TILE,
   animalSprite,
@@ -20,6 +22,7 @@ export interface ViewOptions {
   roofs: boolean;
   traces: boolean;
   names: boolean;
+  chronicle: boolean;
 }
 
 export interface Camera {
@@ -167,7 +170,9 @@ export class Renderer {
   private flash = 0;
   effects: Effect[] = [];
   hoverBuilding = -1;
-  graves: { x: number; y: number }[] = [];
+  selectedAnimal: number | null = null;
+  /** Progress through the current tick, for hit-testing moving creatures. */
+  alpha = 1;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -177,7 +182,6 @@ export class Renderer {
   reset(): void {
     this.terrain = null;
     this.terrainKey = "";
-    this.graves = [];
     this.effects = [];
     this.waterTiles = [];
   }
@@ -216,6 +220,11 @@ export class Renderer {
     return { x: x * TILE + 8, y: y * TILE + 14 };
   }
 
+  animalWorld(a: Animal, alpha: number): { x: number; y: number } {
+    const from = this.prevAnimals.get(a.id) ?? a;
+    return { x: (from.x + (a.x - from.x) * alpha) * TILE + 8, y: (from.y + (a.y - from.y) * alpha) * TILE + 13 };
+  }
+
   personScreen(p: Person, cam: Camera, prev: Map<number, { x: number; y: number }>, alpha: number): { x: number; y: number } {
     const wp = this.worldPos(p, prev, alpha);
     return { x: (wp.x - cam.x) * cam.zoom, y: (wp.y - cam.y) * cam.zoom };
@@ -244,6 +253,7 @@ export class Renderer {
 
   draw(w: World, cam: Camera, opts: ViewOptions, prev: Map<number, { x: number; y: number }>, alpha: number, selected: number | null, time: number): void {
     const g = this.g;
+    this.alpha = alpha;
     const dpr = window.devicePixelRatio || 1;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.imageSmoothingEnabled = false;
@@ -260,7 +270,7 @@ export class Renderer {
     }
     g.drawImage(this.terrain, 0, 0);
     this.drawWater(w, time);
-    for (const gr of this.graves) g.drawImage(GRAVE, gr.x, gr.y);
+    for (const gr of w.graves) g.drawImage(gr.marked ? GRAVE : MOUND, gr.x * TILE + 4, gr.y * TILE + 4);
     if (opts.traces) for (const t of w.traces) this.drawTrace(t, w);
 
     // Visible region, for culling.
@@ -269,9 +279,7 @@ export class Renderer {
 
     for (const a of w.animals) {
       if (!a.alive || a.riderId !== null) continue;
-      const from = this.prevAnimals.get(a.id) ?? a;
-      const ax = from.x + (a.x - from.x) * alpha, ay = from.y + (a.y - from.y) * alpha;
-      const px = ax * TILE + 8, py = ay * TILE + 13;
+      const { x: px, y: py } = this.animalWorld(a, alpha);
       if (!inView(px, py)) continue;
       this.drawAnimal(a, px, py, time);
     }
@@ -318,6 +326,12 @@ export class Renderer {
 
   private drawAnimal(a: Animal, px: number, py: number, time: number): void {
     const g = this.g;
+    if (a.id === this.selectedAnimal) {
+      g.fillStyle = "#ffe14a";
+      g.fillRect(Math.round(px) - 7, Math.round(py) + 1, 15, 1);
+      g.fillRect(Math.round(px) - 6, Math.round(py) - 1, 1, 2);
+      g.fillRect(Math.round(px) + 6, Math.round(py) - 1, 1, 2);
+    }
     const flip = hash2(a.id, Math.floor(time * 0.5 + a.id), 3) < 0.5;
     const spr = animalSprite(a.kind, flip);
     g.fillStyle = "rgba(0,0,0,0.25)";
@@ -402,15 +416,22 @@ export class Renderer {
       const horse = animalSprite("horse", from ? p.x < from.x : false);
       g.drawImage(horse, x - Math.floor(horse.width / 2), y - horse.height + 1);
     }
-    if (p.asleep) {
+    const downed = !p.asleep && cannotWalk(p) && p.carriedById === null;
+    if (p.asleep || downed) {
       g.save();
       g.translate(x, y);
       g.rotate(-Math.PI / 2);
       g.drawImage(spr, -spr.width / 2, -spr.height + 3);
       g.restore();
     } else {
-      const bob = moving ? (walking ? 0 : -1) : 0;
+      const limp = moving && mobility(p) < 0.75;
+      const bob = moving ? (walking ? 0 : -1) - (limp && !walking ? 1 : 0) : 0;
       g.drawImage(spr, x - Math.floor(spr.width / 2), y - spr.height + bob - lift);
+      if (p.crutch) {
+        g.fillStyle = "#8a6a3a";
+        g.fillRect(x - 5, y - Math.round(spr.height * 0.55) - lift, 1, Math.round(spr.height * 0.55));
+        g.fillRect(x - 6, y - Math.round(spr.height * 0.55) - lift, 3, 1);
+      }
       if (p.bloodyClothes) {
         g.fillStyle = "#b01818";
         g.fillRect(x - 2, y - spr.height + 6 - lift, 2, 2);
@@ -425,8 +446,18 @@ export class Renderer {
         }
       }
     }
+    // Someone carried over the shoulder: laid across the carrier's back.
+    const burden = p.carryingId !== null ? w.maybePerson(p.carryingId) : null;
+    if (burden && !p.asleep) {
+      const bs = this.sprite(burden, w, false);
+      g.save();
+      g.translate(x + 2, y - Math.round(spr.height * 0.6) - lift);
+      g.rotate(-Math.PI / 2 + 0.25);
+      g.drawImage(bs, -bs.width / 2, -bs.height + 2);
+      g.restore();
+    }
     // Carried infant.
-    const baby = w.people.find((c) => c.alive && !c.exiled && w.carriedBy(c)?.id === p.id);
+    const baby = burden ? null : w.people.find((c) => c.alive && !c.exiled && w.carriedBy(c)?.id === p.id);
     if (baby && !p.asleep) {
       g.fillStyle = "#f2c9a0";
       g.fillRect(x - 5, y - 8 - lift, 3, 3);
@@ -437,7 +468,12 @@ export class Renderer {
     if (p.mad) kind = plan && ["attack", "kidnap", "hide"].includes(plan.cand.kind) ? plan.cand.kind : "mad";
     if (p.captorId !== null) kind = "captive";
     const ic = kind === "sleep" ? (p.asleep ? icon("sleep") : null) : icon(kind);
-    if (ic) {
+    if (downed && Math.floor(time * 2) % 2 === 0) {
+      g.fillStyle = "#e03030";
+      g.fillRect(x - 1, y - spr.height - 14, 2, 5);
+      g.fillRect(x - 1, y - spr.height - 8, 2, 2);
+    }
+    if (ic && !downed) {
       const floatY = Math.round(Math.sin(time * 3 + p.id) * 1.5);
       const ix = x - 3, iy = y - spr.height - 9 + floatY - lift;
       g.globalAlpha = plan?.phase === "travel" && !p.mad ? 0.55 : 1;
