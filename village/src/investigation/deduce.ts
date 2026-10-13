@@ -57,6 +57,7 @@ export function deduce(caseFile: Readonly<CaseFile>, beliefs: readonly Readonly<
           // Someone saw them do it. What the investigator saw themself counts fully; what others claim they saw counts for half.
           s.eyewitness = Math.max(s.eyewitness, conf * (b.source === "saw" ? EYEWITNESS_WEIGHT : EYEWITNESS_WEIGHT / 2));
           s.accounts.add(b.source === "saw" ? "self" : `from:${b.fromId ?? "?"}`);
+          for (const t of b.tellers ?? []) s.accounts.add(`from:${t}`);
         }
       } else if (b.subject.kind === "unknown" && b.subject.sizeClass) {
         sizes.push({ size: b.subject.sizeClass, conf: b.confidence });
@@ -121,7 +122,7 @@ export function deduce(caseFile: Readonly<CaseFile>, beliefs: readonly Readonly<
     if (victimHousehold !== null && c.householdId === victimHousehold) continue;
     const s = scores[id]!;
     // Several independent accounts of the same act back each other up.
-    const corroboration = Math.min(0.45, 0.2 * Math.max(0, s.accounts.size - 1));
+    const corroboration = Math.min(0.6, 0.25 * Math.max(0, s.accounts.size - 1));
     const score = s.means + s.motive + s.opportunity + s.eyewitness + corroboration;
     if (score <= 0) continue;
     out.push({ personId: id, means: round(s.means), motive: round(s.motive), opportunity: round(s.opportunity), score: round(score) });

@@ -30,7 +30,8 @@ describe("14.6 belief isolation", () => {
     const k: AgentKnowledge = { selfId: 99, now: 200, ticksPerDay: 144, ticksPerYear: 144 * 360, census: w.census, trust: {}, opportunityRadius: 5, meansRadius: 8 };
     const out = deduce(c, beliefs, k);
     expect(out[0]!.personId).toBe(b.id);
-    expect(out[0]!.score).toBeCloseTo(0.9 + 0.9 + 0.7, 5);
+    // means 0.9 + opportunity 0.9 + motive 0.7, plus half weight (0.9 x 0.9 / 2) because this is what someone else claims to have seen.
+    expect(out[0]!.score).toBeCloseTo(0.9 + 0.9 + 0.7 + (0.9 * 0.9) / 2, 5);
     expect(deduce(c, [], k)).toEqual([]);
   });
 

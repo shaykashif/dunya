@@ -30,6 +30,11 @@ export function addBelief(
   const idx = indexOf(p);
   const existing = idx.get(key);
   if (existing) {
+    if (b.fromId !== undefined && b.fromId !== existing.fromId && !(existing.tellers ?? []).includes(b.fromId)) {
+      const tellers = new Set(existing.tellers ?? (existing.fromId !== undefined ? [existing.fromId] : []));
+      tellers.add(b.fromId);
+      existing.tellers = [...tellers];
+    }
     if (b.confidence > existing.confidence + 0.05) {
       existing.confidence = r3(b.confidence);
       w.emit("belief_updated", [p.id], { holder: p.id, belief: existing.id, confidence: existing.confidence, sourceSeq });

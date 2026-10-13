@@ -13,6 +13,8 @@ export interface Belief {
   confidence: number; // [0, 1]
   source: BeliefSource;
   fromId?: number; // who told them, if heard
+  /** Everyone who has told this same claim (including `fromId`): independent accounts back each other up. */
+  tellers?: number[];
   /** Seq of the event that produced this belief (perception, statement or deduction). */
   sourceSeq: number;
   /** Where the claim happened, if it has a place. */
