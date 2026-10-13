@@ -1,0 +1,25 @@
+{
+  "name": "village-sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic headless village simulation (milestone 1)",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "simulate": "node --no-warnings src/cli/simulate.ts",
+    "replay": "node --no-warnings src/cli/replay.ts",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p viewer",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test",
+    "viewer:build": "node --no-warnings viewer/build.ts",
+    "viewer": "node --no-warnings viewer/build.ts && node --no-warnings viewer/serve.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.4"
+  }
+}

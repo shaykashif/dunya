@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Village Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #1b1712; --panel: #2a231b; --panel2: #352c22; --edge: #5a4a36; --ink: #f2e6cc; --dim: #b8a888;
+    --gold: #f2c84a; --red: #e05a4a; --pink: #e878a8; --purple: #b08ae8; --blue: #6ab0f0; --green: #7ac860; --orange: #f0963a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 18px/1.15 "VT323", monospace; }
+  body { display: grid; grid-template-columns: 1fr 380px; grid-template-rows: 100vh; overflow: hidden; }
+  #stage { position: relative; min-width: 0; }
+  #world { width: 100%; height: 100%; display: block; image-rendering: pixelated; cursor: grab; touch-action: none; }
+  #world.power-smite { cursor: crosshair; }
+  #world.power-madden { cursor: help; }
+  #topbar { position: absolute; left: 12px; top: 12px; right: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; pointer-events: none; }
+  #topbar > * { pointer-events: auto; }
+  .chip { background: rgba(27,23,18,.9); border: 2px solid var(--edge); padding: 4px 10px; box-shadow: 0 3px 0 #000a; }
+  #clock { font-family: "Silkscreen", monospace; font-size: 13px; letter-spacing: .5px; }
+  #clock.paused { color: var(--orange); }
+  button { font: 16px "VT323", monospace; color: var(--ink); background: var(--panel2); border: 2px solid var(--edge); padding: 2px 8px; cursor: pointer; box-shadow: 0 2px 0 #000a; }
+  button:hover { border-color: var(--gold); }
+  button.on { background: #6a4a1e; border-color: var(--gold); color: #fff6d8; }
+  button.danger.on { background: #6a1e1e; border-color: var(--red); }
+  #controls, #powers { display: flex; gap: 4px; align-items: center; }
+  #help { position: absolute; left: 12px; bottom: 12px; font-size: 15px; color: var(--dim); max-width: calc(100% - 230px); }
+  #minimap { position: absolute; right: 12px; bottom: 12px; width: 200px; height: 150px; image-rendering: pixelated; border: 2px solid var(--edge); box-shadow: 0 3px 0 #000a; cursor: pointer; background: #000; }
+  #toasts { position: absolute; right: 12px; top: 104px; width: 330px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+  .toast { pointer-events: auto; background: rgba(32,24,18,.96); border: 2px solid var(--gold); padding: 8px 10px; box-shadow: 0 4px 0 #000c; animation: pop .2s ease-out; }
+  .toast.fight, .toast.death, .toast.raid, .toast.wolf, .toast.kidnap { border-color: var(--red); }
+  .toast.madness { border-color: var(--purple); }
+  .toast.council { border-color: var(--gold); }
+  .toast.love { border-color: var(--pink); }
+  .toast b { font: 13px "Silkscreen", monospace; display: block; margin-bottom: 3px; }
+  .toast .row { display: flex; gap: 6px; margin-top: 6px; }
+  @keyframes pop { from { transform: translateX(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+  #settings { position: absolute; top: 56px; left: 12px; display: none; z-index: 5; }
+  #settings.open { display: block; }
+  #settings label { display: block; }
+  aside { background: var(--panel); border-left: 3px solid var(--edge); display: flex; flex-direction: column; min-height: 0; }
+  section { padding: 8px 12px; border-bottom: 2px solid #1b1712; }
+  h1 { font: 15px "Silkscreen", monospace; margin: 0 0 6px; color: var(--gold); letter-spacing: 1px; }
+  h3 { font: 12px "Silkscreen", monospace; margin: 0 0 6px; color: var(--dim); letter-spacing: 1px; text-transform: uppercase; }
+  h4 { font: 12px "Silkscreen", monospace; margin: 8px 0 2px; color: var(--dim); }
+  form { display: flex; gap: 4px; }
+  input[type=number] { width: 90px; font: 16px "VT323", monospace; background: #15110d; color: var(--ink); border: 2px solid var(--edge); padding: 2px 6px; }
+  #stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  #stats div { display: flex; justify-content: space-between; }
+  #stats span, .store small { color: var(--dim); }
+  .bad { color: var(--red); }
+  .store { display: flex; align-items: center; gap: 6px; }
+  .store span { margin-left: auto; }
+  em { display: inline-block; width: 10px; height: 10px; border: 1px solid #0008; vertical-align: middle; }
+  #inspector .who { display: flex; gap: 8px; align-items: center; }
+  #inspector .who em { width: 16px; height: 16px; }
+  #inspector .who small { display: block; color: var(--dim); }
+  .doing { margin: 4px 0; color: var(--gold); }
+  .tags span { display: inline-block; font-size: 14px; padding: 0 5px; margin: 0 3px 3px 0; border: 1px solid var(--edge); }
+  .tags .mad { border-color: var(--purple); color: var(--purple); }
+  .tags .blood { border-color: var(--red); color: var(--red); }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+  .bar { display: grid; grid-template-columns: 62px 1fr; align-items: center; font-size: 15px; }
+  .bar i { height: 8px; background: #15110d; border: 1px solid #000; display: block; }
+  .bar b { display: block; height: 100%; }
+  .traits { font-size: 15px; color: var(--dim); margin-top: 3px; }
+  ul { margin: 0; padding-left: 16px; }
+  li { margin: 1px 0; }
+  li small { color: var(--dim); }
+  a { color: var(--ink); text-decoration: none; border-bottom: 1px dotted var(--dim); }
+  a:hover { color: var(--gold); }
+  .plink em { width: 8px; height: 8px; margin-right: 3px; }
+  .hint { color: var(--dim); margin: 0; }
+  .follow { display: block; margin-top: 6px; color: var(--dim); }
+  .feelings li, .recent li { font-size: 15px; list-style: none; margin-left: -16px; }
+  .feelings .pos { color: var(--green); }
+  .feelings .neg { color: #e8a090; }
+  .recent .fail { color: var(--dim); text-decoration: line-through; }
+  #inspector { max-height: 44vh; overflow-y: auto; }
+  #tabs { display: flex; gap: 2px; padding: 6px 12px 0; }
+  #tabs button { flex: 1; font-size: 15px; padding: 2px 4px; }
+  #tabwrap { flex: 1; min-height: 120px; display: flex; flex-direction: column; padding: 6px 12px; overflow: hidden; }
+  .tab { list-style: none; padding: 0; margin: 0; overflow-y: auto; flex: 1; font-size: 16px; display: none; }
+  .tab.show { display: block; }
+  .tab li { padding: 2px 0 2px 8px; border-left: 3px solid var(--edge); margin-bottom: 3px; }
+  .tab time { color: var(--dim); font-size: 14px; }
+  .crime { border-color: var(--red) !important; }
+  .justice { border-color: var(--purple) !important; }
+  .love { border-color: var(--pink) !important; }
+  .life { border-color: var(--green) !important; }
+  .death { border-color: #888 !important; }
+  .weather { border-color: var(--blue) !important; }
+  .village { border-color: var(--gold) !important; }
+  .intrigue { border-color: #9a6ad8 !important; }
+  .danger { border-color: var(--orange) !important; }
+  mark { background: var(--red); color: #fff; padding: 0 4px; font-size: 13px; }
+  .plot { cursor: default; }
+  .plot b { font-weight: normal; color: var(--gold); }
+  .status { font-size: 13px; padding: 0 4px; border: 1px solid var(--edge); }
+  .status.planning { color: var(--orange); border-color: var(--orange); }
+  .status.executed { color: var(--red); border-color: var(--red); }
+  .status.foiled { color: var(--green); border-color: var(--green); }
+  .status.abandoned { color: var(--dim); }
+  .session { cursor: pointer; }
+  .session:hover { background: #3a3024; }
+  #roster.show { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 2px 8px; font-size: 15px; }
+  #roster a { border: 0; }
+  #roster a.gone { color: #7a6a58; }
+  #roster a.sel { color: var(--gold); }
+  #roster a.mad { color: var(--purple); }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10; }
+  #modal.open { display: flex; }
+  #modal .box { background: var(--panel); border: 3px solid var(--gold); width: min(760px, 92vw); max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 6px 0 #000c; }
+  #modal header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 2px solid var(--edge); }
+  #modal header h2 { font: 16px "Silkscreen", monospace; color: var(--gold); margin: 0; }
+  #modal .body { overflow-y: auto; padding: 10px 14px; font-size: 18px; }
+  .tline { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--edge); }
+  .tline.accusation { border-color: var(--orange); }
+  .tline.testimony { border-color: var(--blue); }
+  .tline.withheld, .tline.denial { border-color: #888; }
+  .tline.confession { border-color: var(--green); }
+  .tline.vote { border-color: var(--purple); }
+  .tline.verdict { border-color: var(--gold); font-size: 20px; color: var(--gold); }
+  .tline.truth { border-color: var(--red); color: #e8c0b0; }
+  .liebadge { color: #ff8a7a; font-size: 14px; margin-left: 6px; }
+  @media (max-width: 900px) {
+    body { grid-template-columns: 1fr; grid-template-rows: 60vh auto; overflow: auto; }
+    aside { border-left: 0; border-top: 3px solid var(--edge); }
+  }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="world"></canvas>
+    <div id="topbar">
+      <div class="chip" id="clock">loading</div>
+      <div class="chip" id="controls">
+        <button id="pause" title="Pause (space)">⏸</button>
+        <button id="step" title="Step one hour">⏭</button>
+        <span id="speeds"></span>
+      </div>
+      <div class="chip" id="toggles">
+        <button data-toggle="roofs" title="Roofs (R)">Roofs</button>
+        <button data-toggle="traces" title="Traces (T)">Traces</button>
+        <button data-toggle="names" title="Names (N)">Names</button>
+        <button id="gear" title="Which events pause the game">⚙ Alerts</button>
+      </div>
+      <div class="chip" id="powers">
+        <button data-power="inspect" title="Inspect (I)">🔍</button>
+        <button data-power="smite" class="danger" title="Strike down a person or creature (S)">⚡ Smite</button>
+        <button data-power="madden" class="danger" title="Drive someone mad (M)">🌀 Madden</button>
+      </div>
+    </div>
+    <div class="chip" id="settings"><h3>Pause the game on</h3><div id="alertprefs"></div></div>
+    <div id="toasts"></div>
+    <canvas id="minimap" title="Click to look there"></canvas>
+    <div id="help" class="chip">drag to pan · wheel to zoom · click a villager · space pause · 1–6 speed · hover a house to look inside</div>
+  </div>
+  <aside>
+    <section>
+      <h1>⌂ VILLAGE</h1>
+      <form id="seedform"><input id="seed" type="number" min="1" value="42"><button type="submit">New village</button><button type="button" id="random" title="Random seed">🎲</button></form>
+    </section>
+    <section><div id="stats"></div><div id="stores" style="margin-top:6px"></div></section>
+    <section><h3>Villager</h3><div id="inspector"></div></section>
+    <div id="tabs">
+      <button data-tab="feed" class="on">Chronicle</button>
+      <button data-tab="intrigue">Intrigue</button>
+      <button data-tab="council">Council</button>
+      <button data-tab="roster">People</button>
+    </div>
+    <div id="tabwrap">
+      <ul class="tab show" id="feed"></ul>
+      <ul class="tab" id="intrigue"></ul>
+      <ul class="tab" id="council"></ul>
+      <div class="tab" id="roster"></div>
+    </div>
+  </aside>
+  <div id="modal"><div class="box"><header><h2 id="mtitle">Council</h2><button id="mclose">✕ close</button></header><div class="body" id="mbody"></div></div></div>
+  <script src="dist/viewer.js"></script>
+</body>
+</html>
