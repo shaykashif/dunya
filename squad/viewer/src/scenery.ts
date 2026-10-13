@@ -3,6 +3,7 @@
 // angle, with their south wall facing the viewer and the roof above it.
 import type { Building } from "../../src/world/layout.ts";
 import type { World } from "../../src/world/world.ts";
+import { holeStep } from "../../src/world/map.ts";
 import { TILE, hash2 } from "./sprites.ts";
 
 /** A sprite with its anchor: where its foot meets the ground. */
@@ -260,7 +261,7 @@ export function wallHeight(b: Building): number {
 /** Pixel bounds of a building's three-quarter sprite, in world pixels. */
 export function buildingBounds(b: Building): { x: number; y: number; w: number; h: number } {
   const WH = wallHeight(b);
-  const extra = b.kind === "church" ? 44 : 12;
+  const extra = b.kind === "church" ? 64 : 12;
   return { x: b.x * TILE - 3, y: b.y * TILE - WH - extra, w: b.w * TILE + 6, h: b.h * TILE + WH + extra + 1 };
 }
 
@@ -317,6 +318,16 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
     const ay = bandTop(0) + 1;
     for (let x = 0; x < FW; x++) px(ox + x, ay, Math.floor(x / 4) % 2 ? "#e8e0d0" : "#a83a2a", 1, 3);
     px(ox, ay + 3, "rgba(0,0,0,0.25)", FW, 1);
+  }
+  // Bullet holes across the front, where rounds struck it.
+  for (let tx = b.x; tx < b.x + b.w; tx++) {
+    const n = holeStep(w.map.holes[w.map.idx(tx, south)]!) + holeStep(w.map.holes[w.map.idx(tx, south - 1)]!);
+    for (let k = 0; k < n * 5; k++) {
+      const hx = ox + (tx - b.x) * TILE + 1 + Math.floor(hash2(tx, k, b.id + 40) * 14), hy = wallTop + 2 + Math.floor(hash2(k, tx, b.id + 41) * (WH - 5));
+      px(hx, hy, "#1e1a16");
+      px(hx + 1, hy, "#f0e8d4");
+      if (k % 4 === 0) px(hx, hy + 1, L.wallDark);
+    }
   }
   // Shade under the eaves and at the right-hand corner; a plinth along the foot.
   px(ox, wallTop, "rgba(0,0,0,0.28)", FW, 2);
@@ -461,15 +472,21 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
 
   // The chapel's tower and spire at the front.
   if (b.kind === "church") {
-    const TW = 22, TX = RX + Math.round(RW / 2 - TW / 2), base = oy + FH, TH = L.wallH + 26;
+    const TW = 22, TX = RX + Math.round(RW / 2 - TW / 2), base = oy + FH, TH = L.wallH + 46;
     const top = base - TH;
     px(TX - 1, top - 1, "#2a2a2e", TW + 2, TH + 1);
     px(TX, top, "#c0bcae", TW, TH);
     for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) if (y % 4 === 3 || (x + Math.floor(y / 4) * 4) % 8 === 0) px(TX + x, top + y, "#9a968a");
     px(TX + TW - 4, top, "rgba(0,0,0,0.2)", 4, TH);
-    // Belfry opening, and a door at its foot.
-    px(TX + 8, top + 4, "#1a1a20", 6, 8);
-    px(TX + 8, top + 4, "#3a3a44", 6, 2);
+    // The belfry high up: a pair of louvred openings under a string course, a slit window halfway, a door at its foot.
+    px(TX, top + 15, "#8a8678", TW, 2);
+    for (const ox2 of [4, 13]) {
+      px(TX + ox2 - 1, top + 2, "#8a8678", 7, 12);
+      px(TX + ox2, top + 3, "#1a1a20", 5, 11);
+      px(TX + ox2, top + 3, "#3a3a44", 5, 1);
+      for (let k = 5; k < 13; k += 3) px(TX + ox2, top + k, "#4a4a52", 5, 1);
+    }
+    px(TX + 10, top + 26, "#1a1a20", 2, 7);
     px(TX + 7, base - 13, "#3a2a1a", 8, 12);
     px(TX + 8, base - 12, "#6a4426", 6, 11);
     px(TX + 8, base - 12, "#4a2e18", 6, 1);

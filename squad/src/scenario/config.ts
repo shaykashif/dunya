@@ -29,16 +29,16 @@ export interface WeaponSpec {
 }
 
 const weapons: Record<WeaponId, WeaponSpec> = {
-  m1_garand: { name: "M1 Garand", capacity: 8, reload: 3, rate: 0.55, accuracy: 0.5, rangeScale: 70, maxRange: 150, severity: [0.45, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
-  m1_carbine: { name: "M1 carbine", capacity: 15, reload: 3, rate: 0.6, accuracy: 0.45, rangeScale: 40, maxRange: 90, severity: [0.35, 0.8], suppression: 0.04, noise: 110, automatic: false, heat: 0 },
-  thompson: { name: "Thompson submachine gun", capacity: 30, reload: 4, rate: 3, accuracy: 0.28, rangeScale: 18, maxRange: 50, severity: [0.3, 0.75], suppression: 0.035, noise: 110, automatic: true, heat: 0 },
-  bar: { name: "Browning Automatic Rifle", capacity: 20, reload: 4, rate: 3.5, accuracy: 0.22, rangeScale: 55, maxRange: 150, severity: [0.45, 1], suppression: 0.06, noise: 150, automatic: true, heat: 0 },
-  kar98k: { name: "Karabiner 98k", capacity: 5, reload: 4, rate: 0.4, accuracy: 0.55, rangeScale: 80, maxRange: 160, severity: [0.45, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
-  kar98k_scoped: { name: "scoped Karabiner 98k", capacity: 5, reload: 4, rate: 0.25, accuracy: 0.75, rangeScale: 170, maxRange: 200, severity: [0.5, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
-  m1903_scoped: { name: "scoped M1903A4 Springfield", capacity: 5, reload: 4, rate: 0.25, accuracy: 0.75, rangeScale: 165, maxRange: 200, severity: [0.5, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
-  mp40: { name: "MP 40", capacity: 32, reload: 4, rate: 3, accuracy: 0.26, rangeScale: 18, maxRange: 50, severity: [0.3, 0.75], suppression: 0.035, noise: 110, automatic: true, heat: 0 },
-  mg42: { name: "MG 42", capacity: 50, reload: 6, rate: 8, accuracy: 0.17, rangeScale: 85, maxRange: 200, severity: [0.45, 1], suppression: 0.07, noise: 200, automatic: true, heat: 0.0045 },
-  pistol: { name: "pistol", capacity: 8, reload: 3, rate: 0.6, accuracy: 0.35, rangeScale: 8, maxRange: 15, severity: [0.3, 0.7], suppression: 0.02, noise: 80, automatic: false, heat: 0 },
+  m1_garand: { name: "M1 Garand", capacity: 8, reload: 3, rate: 0.55, accuracy: 0.5, rangeScale: 35, maxRange: 110, severity: [0.45, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
+  m1_carbine: { name: "M1 carbine", capacity: 15, reload: 3, rate: 0.6, accuracy: 0.45, rangeScale: 22, maxRange: 70, severity: [0.35, 0.8], suppression: 0.04, noise: 110, automatic: false, heat: 0 },
+  thompson: { name: "Thompson submachine gun", capacity: 30, reload: 4, rate: 3, accuracy: 0.28, rangeScale: 12, maxRange: 40, severity: [0.3, 0.75], suppression: 0.035, noise: 110, automatic: true, heat: 0 },
+  bar: { name: "Browning Automatic Rifle", capacity: 20, reload: 4, rate: 3.5, accuracy: 0.22, rangeScale: 32, maxRange: 120, severity: [0.45, 1], suppression: 0.06, noise: 150, automatic: true, heat: 0 },
+  kar98k: { name: "Karabiner 98k", capacity: 5, reload: 4, rate: 0.4, accuracy: 0.55, rangeScale: 38, maxRange: 115, severity: [0.45, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
+  kar98k_scoped: { name: "scoped Karabiner 98k", capacity: 5, reload: 4, rate: 0.25, accuracy: 0.75, rangeScale: 220, maxRange: 150, severity: [0.5, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
+  m1903_scoped: { name: "scoped M1903A4 Springfield", capacity: 5, reload: 4, rate: 0.25, accuracy: 0.75, rangeScale: 220, maxRange: 150, severity: [0.5, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
+  mp40: { name: "MP 40", capacity: 32, reload: 4, rate: 3, accuracy: 0.26, rangeScale: 12, maxRange: 40, severity: [0.3, 0.75], suppression: 0.035, noise: 110, automatic: true, heat: 0 },
+  mg42: { name: "MG 42", capacity: 50, reload: 6, rate: 8, accuracy: 0.17, rangeScale: 45, maxRange: 150, severity: [0.45, 1], suppression: 0.07, noise: 200, automatic: true, heat: 0.0045 },
+  pistol: { name: "pistol", capacity: 8, reload: 3, rate: 0.6, accuracy: 0.35, rangeScale: 6, maxRange: 15, severity: [0.3, 0.7], suppression: 0.02, noise: 80, automatic: false, heat: 0 },
 };
 
 const moveCost: Record<Terrain, number> = {
@@ -77,7 +77,8 @@ export const DEFAULT_CONFIG = {
   },
   map: {
     width: 144,
-    height: 104,
+    /** Deep enough that the attackers form up out of sight and range of the defended hedge. */
+    height: 128,
     fieldWidth: [24, 40] as [number, number],
     fieldHeight: [13, 19] as [number, number],
     mergeChance: 0.14,
@@ -139,8 +140,8 @@ export const DEFAULT_CONFIG = {
   sniper: {
     /** How far from where he is a sniper looks for a hide, and the range band he wants to shoot over. */
     hideRadius: 26,
-    minRange: 30,
-    maxRange: 130,
+    minRange: 25,
+    maxRange: 100,
     /** He moves on after this many shots from one hide, or when he is fired on. */
     shotsPerHide: 3,
     rethinkTicks: 150,
@@ -227,6 +228,8 @@ export const DEFAULT_CONFIG = {
     steadiness: { stand: 0.8, crouch: 0.95, prone: 1.1 },
   },
   fire: {
+    /** However far out, a round still has this share of its close-range chance: long-range fire is wild, but not harmless. */
+    longRangeFloor: 0.1,
     /** Accuracy multiplier when firing at a remembered position rather than a seen man. */
     blindFactor: 0.12,
     /** Accuracy for a man who moved this tick. */
@@ -271,6 +274,9 @@ export const DEFAULT_CONFIG = {
     rounds: 6,
     spotDelay: 35,
     effectDelay: 22,
+    /** Seconds a round is in the air after it is fired; men within earshot hear it coming for the last two. */
+    flight: { mortar: 9, artillery: 12, smoke_shell: 9 },
+    whistleRadius: 10,
     roundInterval: 2,
     spotScatter: 7,
     effectScatter: 4,
@@ -280,7 +286,10 @@ export const DEFAULT_CONFIG = {
     radioReach: 3,
   },
   perception: {
-    maxRange: 170,
+    /** Furthest a man can make out another, in tiles (about 210 m), before weather. */
+    maxRange: 70,
+    /** A sniper's scope lets him pick men out this much further. */
+    scope: 1.7,
     /** Spotting chance per tick of an unconcealed, standing, still man at close range. */
     spotBase: 0.55,
     /** Firing gives a man away. */

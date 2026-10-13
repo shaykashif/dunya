@@ -372,6 +372,8 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
       const t = { x: x + Math.floor(w / 2), y: y + h - 2 };
       set(t.x, t.y, "stairs");
       map.levels[map.idx(t.x, t.y)] = 3;
+      // Tall storeys: the belfry is some ten metres up.
+      map.storey[map.idx(t.x, t.y)] = 5;
     }
     return b;
   };
@@ -502,6 +504,8 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
       if (map.at(xx, b.y + b.h - 1) !== "window") continue;
       for (let z = 0; z < b.floors; z++) hamletPositions.push(z > 0 ? { x: xx, y: b.y + b.h - 2, z } : { x: xx, y: b.y + b.h - 2 });
     }
+    // The belfry, looking out every way.
+    if (b.kind === "church") hamletPositions.push({ x: b.x + Math.floor(b.w / 2), y: b.y + b.h - 2, z: 2 });
   }
 
   // ---- Old shell holes ----

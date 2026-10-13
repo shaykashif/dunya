@@ -7,7 +7,7 @@ import type { BodyPart, Injury, Side, Soldier, Squad } from "../../src/world/typ
 import type { World } from "../../src/world/world.ts";
 import { clock, describe, label, roleName, worstWound, type FeedLine } from "./feed.ts";
 import { BLAST_SECONDS } from "./fx.ts";
-import { Renderer, drawMinimap, type Camera, type ViewOptions } from "./render.ts";
+import { Renderer, drawMinimap, gridSquare, type Camera, type ViewOptions } from "./render.ts";
 import { BODY_RECTS, SIDE_COLORS, TILE, appearance, faceCanvas, hash2, skinOf } from "./sprites.ts";
 
 // Ticks (seconds of battle) per real second.
@@ -25,6 +25,9 @@ const MAX_ZOOM = 7;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>("world");
 const minimap = $<HTMLCanvasElement>("minimap");
+const gridref = $("gridref");
+/** Where the pointer is over the battlefield, in screen pixels; null when it is off it. */
+let hover: { sx: number; sy: number } | null = null;
 const renderer = new Renderer(canvas);
 const miniBase: { img: ImageData | null; version: number; world: World | null } = { img: null, version: -1, world: null };
 
@@ -145,9 +148,14 @@ function effectsFor(e: SimEvent): void {
   }
 }
 
-function toast(kind: string, title: string, text: string, people: number[] = [], accent: string | null = null): void {
+function toast(kind: string, title: string, text: string, people: number[] = [], accent: string | null = null, squad: number | null = null): void {
   const el = document.createElement("div");
   el.className = `toast ${kind}`;
+  // A squad's alert takes the camera to that squad when clicked.
+  if (squad !== null) {
+    el.dataset.squad = String(squad);
+    el.title = "Click to look at this squad";
+  }
   if (accent) el.style.borderLeft = `6px solid ${accent}`;
   el.innerHTML = `<b>${esc(title)}</b>${linkNames(esc(text), people)}`;
   const box = $("toasts");
@@ -184,7 +192,7 @@ function squadAlert(e: SimEvent): void {
   const last = lastSquadAlert.get(sq.id);
   if (last && last.state === to && e.tick - last.tick < 30) return;
   lastSquadAlert.set(sq.id, { state: to, tick: e.tick });
-  toast("squad", `${words[0]} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} ${words[1]}.`, [], sq.color);
+  toast("squad", `${words[0]} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} ${words[1]}.`, [], sq.color, sq.id);
 }
 
 function toastFor(e: SimEvent): void {
@@ -196,25 +204,25 @@ function toastFor(e: SimEvent): void {
       break;
     case "help_call": {
       const sq = world.squads[d.squad as number]!;
-      toast("squad", `${d.by === "radio" ? "Radio" : "Runner"} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} is ${d.why as string} and ${d.by === "radio" ? "radios" : "sends a runner"} for help.`, [], sq.color);
+      toast("squad", `${d.by === "radio" ? "Radio" : "Runner"} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} is ${d.why as string} and ${d.by === "radio" ? "radios" : "sends a runner"} for help.`, [], sq.color, sq.id);
       break;
     }
     case "help_sent": {
       const to = world.squads[d.to as number]!;
       const sent = d.squad !== null ? world.squads[d.squad as number]! : null;
-      toast("squad", `Support · ${to.side === "us" ? "US" : "German"}`, sent ? `${sent.name} is sent to help ${to.name}.` : `No squad to spare for ${to.name}${d.mortars ? "; the mortars will be told" : ""}.`, [], (sent ?? to).color);
+      toast("squad", `Support · ${to.side === "us" ? "US" : "German"}`, sent ? `${sent.name} is sent to help ${to.name}.` : `No squad to spare for ${to.name}${d.mortars ? "; the mortars will be told" : ""}.`, [], (sent ?? to).color, (sent ?? to).id);
       break;
     }
     case "ambush_sprung": {
       const sq = world.squads[d.squad as number]!;
-      toast("fire", `Ambush · ${sq.side === "us" ? "US" : "German"}`, d.found ? `${sq.name}'s ambush is found; they open fire.` : `${sq.name} springs its ambush on ${d.enemies as number} men in the open!`, [], sq.color);
+      toast("fire", `Ambush · ${sq.side === "us" ? "US" : "German"}`, d.found ? `${sq.name}'s ambush is found; they open fire.` : `${sq.name} springs its ambush on ${d.enemies as number} men in the open!`, [], sq.color, sq.id);
       break;
     }
     case "breach": {
       const sq = world.squads[d.squad as number]!;
       const b = world.buildings[d.house as number]!;
       const what = d.stage === "stack" ? `is stacking up on ${b.name}` : d.stage === "grenades" ? `posts grenades through the windows of ${b.name}` : `storms into ${b.name}`;
-      toast("squad", `Clearing a house · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} ${what}.`, [], sq.color);
+      toast("squad", `Clearing a house · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} ${what}.`, [], sq.color, sq.id);
       break;
     }
     case "building_collapse":
@@ -234,7 +242,7 @@ function toastFor(e: SimEvent): void {
       toast("battle", "Withdrawal", `${world.platoons[d.side as Side].name} is pulling back.`);
       break;
     case "position_taken":
-      toast("battle", "Position taken", `${world.squads[d.squad as number]!.name} has overrun the enemy position.`);
+      toast("battle", "Position taken", `${world.squads[d.squad as number]!.name} has overrun the enemy position.`, [], null, d.squad as number);
       break;
     case "surrender": {
       const p = s("person");
@@ -363,11 +371,28 @@ function frame(t: number): void {
   easeZoom(dt);
   renderer.draw(world, cam, opts, prev, alpha, selected, t / 1000);
   drawMinimap(minimap, world, cam, rect.width, rect.height, miniBase);
+  updateGridRef();
   updateHud();
   requestAnimationFrame(frame);
 }
 
 // ---------- HUD and panels ----------
+
+/** The map reference of the tile under the pointer, shown under the minimap. Kept current as the camera moves too. */
+function updateGridRef(): void {
+  let text = "Grid —";
+  if (hover) {
+    const x = Math.floor((hover.sx / cam.zoom + cam.x) / TILE), y = Math.floor((hover.sy / cam.zoom + cam.y) / TILE);
+    const map = world.map;
+    if (map.inBounds(x, y)) {
+      const i = map.idx(x, y);
+      const b = map.building[i]!;
+      const what = b >= 0 ? world.buildings[b]!.name : map.at(x, y).replace(/_/g, " ");
+      text = `${gridSquare(x, y)} · ${String(x).padStart(3, "0")},${String(y).padStart(3, "0")} · ${Math.round(map.elev[i]!)}m · ${what}`;
+    }
+  }
+  if (gridref.textContent !== text) gridref.textContent = text;
+}
 
 function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -809,6 +834,7 @@ canvas.addEventListener("pointermove", (ev) => {
     return;
   }
   const rect = canvas.getBoundingClientRect();
+  hover = { sx: ev.clientX - rect.left, sy: ev.clientY - rect.top };
   const tx = Math.floor(((ev.clientX - rect.left) / cam.zoom + cam.x) / TILE), ty = Math.floor(((ev.clientY - rect.top) / cam.zoom + cam.y) / TILE);
   renderer.hoverBuilding = world.map.inBounds(tx, ty) ? world.map.building[world.map.idx(tx, ty)]! : -1;
   if (!dragging) return;
@@ -871,6 +897,7 @@ canvas.addEventListener("pointercancel", (ev) => {
 });
 canvas.addEventListener("pointerleave", () => {
   renderer.hoverBuilding = -1;
+  hover = null;
 });
 canvas.addEventListener(
   "wheel",
@@ -878,7 +905,8 @@ canvas.addEventListener(
     ev.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const px = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? rect.height : 1);
-    zoomToward((zoomGoal?.zoom ?? cam.zoom) * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.004), ev.clientX - rect.left, ev.clientY - rect.top);
+    const from = zoomGoal?.zoom ?? cam.zoom;
+    zoomToward(from * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.004 * zoomRate(from)), ev.clientX - rect.left, ev.clientY - rect.top);
   },
   { passive: false },
 );
@@ -892,6 +920,14 @@ minimap.addEventListener("click", (ev) => {
   userCamera = true;
   follow = false;
 });
+
+/**
+ * How hard a notch of the wheel (or a held Q/E) pulls the zoom: big strides
+ * when looking at the whole field, fine steps when close in on a few men.
+ */
+function zoomRate(zoom: number): number {
+  return Math.max(0.45, Math.min(1.8, 1.1 / Math.sqrt(zoom)));
+}
 
 function zoomToward(zoom: number, sx: number, sy: number): void {
   zoomGoal = { zoom: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom)), sx, sy };
@@ -949,7 +985,7 @@ function panCamera(dt: number): void {
   if (keys.has("d") || keys.has("arrowright")) { cam.x += v; moved = true; }
   if (keys.has("q") || keys.has("e")) {
     const rect = canvas.getBoundingClientRect();
-    const f = Math.exp((keys.has("e") ? 1 : -1) * dt * 3.5);
+    const f = Math.exp((keys.has("e") ? 1 : -1) * dt * 3.5 * zoomRate(cam.zoom));
     zoomToward(cam.zoom * f, rect.width / 2, rect.height / 2);
   }
   if (moved) {
@@ -968,6 +1004,25 @@ function setSpeed(i: number): void {
   speed = i;
   paused = false;
   syncControls();
+}
+
+/** Bring a squad into view: the middle of its men still in the fight, or of all of them if none are. */
+function lookAtSquad(id: number): void {
+  const sq = world.squads[id];
+  if (!sq) return;
+  const all = sq.members.map((m) => world.soldier(m));
+  const able = all.filter((m) => world.onField(m) && m.status === "active");
+  const men = able.length > 0 ? able : all.filter((m) => world.onField(m));
+  if (men.length === 0) return;
+  const x = men.reduce((a, m) => a + m.x, 0) / men.length, y = men.reduce((a, m) => a + m.y, 0) / men.length;
+  const rect = canvas.getBoundingClientRect();
+  cam.x = (x + 0.5) * TILE - rect.width / cam.zoom / 2;
+  cam.y = (y + 0.5) * TILE - rect.height / cam.zoom / 2;
+  userCamera = true;
+  follow = false;
+  // A marker over each man for a moment, so the eye finds them.
+  const t = now();
+  for (const m of men) renderer.addEffect({ kind: "text", x: m.x * TILE + 8, y: m.y * TILE - 6, text: "▼", color: sq.color, born: t, dur: 1.6, delay: 0, follow: m.id });
 }
 
 function syncControls(): void {
@@ -993,6 +1048,8 @@ document.addEventListener("click", (ev) => {
     if (t.closest("#modal")) $("modal").classList.remove("open");
     return;
   }
+  const alert = t.closest<HTMLElement>("[data-squad]");
+  if (alert) return lookAtSquad(Number(alert.dataset.squad));
   const sp = t.closest<HTMLElement>("[data-speed]");
   if (sp) return setSpeed(Number(sp.dataset.speed));
   const tg = t.closest<HTMLElement>("[data-toggle]");
