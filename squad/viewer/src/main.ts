@@ -1,0 +1,960 @@
+import type { Engine } from "../../src/engine/engine.ts";
+import { aimFactor, armFactor, bleedingOf, cannotWalk, disfigurement, fightingPain, mobility, severityWord, sightFactor } from "../../src/entities/body.ts";
+import { describeInjury } from "../../src/entities/injuries.ts";
+import { EventLog, type SimEvent } from "../../src/log/events.ts";
+import { createSimulation } from "../../src/sim.ts";
+import type { BodyPart, Injury, Side, Soldier, Squad } from "../../src/world/types.ts";
+import type { World } from "../../src/world/world.ts";
+import { clock, describe, label, roleName, worstWound, type FeedLine } from "./feed.ts";
+import { Renderer, drawMinimap, type Camera, type ViewOptions } from "./render.ts";
+import { BODY_RECTS, SIDE_COLORS, TILE, appearance, faceCanvas, hash2, skinOf } from "./sprites.ts";
+
+// Ticks (seconds of battle) per real second.
+const SPEEDS = [
+  { label: "1x", tps: 1 },
+  { label: "2x", tps: 2 },
+  { label: "5x", tps: 5 },
+  { label: "10x", tps: 10 },
+  { label: "20x", tps: 20 },
+  { label: "40x", tps: 40 },
+];
+const MIN_ZOOM = 0.3;
+const MAX_ZOOM = 7;
+
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const canvas = $<HTMLCanvasElement>("world");
+const minimap = $<HTMLCanvasElement>("minimap");
+const renderer = new Renderer(canvas);
+const miniBase: { img: ImageData | null; version: number; world: World | null } = { img: null, version: -1, world: null };
+
+let engine: Engine;
+let world: World;
+let feed: FeedLine[] = [];
+let speed = 2;
+let paused = false;
+let busy = false;
+let acc = 0;
+let lastTime = performance.now();
+let prev = new Map<number, { x: number; y: number }>();
+let selected: number | null = null;
+let follow = false;
+let userCamera = false;
+let lastSize = "";
+let power: "inspect" | "artillery" | "smoke" | "sniper" = "inspect";
+let tab = "men";
+let dirty = { feed: true, events: true };
+let reportShown = false;
+let zoomGoal: { zoom: number; sx: number; sy: number } | null = null;
+const opts: ViewOptions = { roofs: true, names: false, orders: true, sight: true, chronicle: true };
+const cam: Camera = { x: 0, y: 0, zoom: 1.6 };
+
+const now = () => performance.now() / 1000;
+const tickSeconds = () => 1 / SPEEDS[speed]!.tps;
+
+// ---------- Events from the engine ----------
+
+function onEvent(e: SimEvent): void {
+  if (!world) return;
+  effectsFor(e);
+  const line = describe(e, world);
+  if (line) {
+    feed.push(line);
+    if (feed.length > 1500) feed.shift();
+    dirty.feed = true;
+    if (line.major) dirty.events = true;
+  }
+  toastFor(e);
+}
+
+function effectsFor(e: SimEvent): void {
+  const d = e.data;
+  const t = now();
+  const span = Math.min(0.9, tickSeconds());
+  switch (e.type) {
+    case "fire": {
+      const [fx, fy] = d.from as [number, number];
+      const [ax, ay] = d.at as [number, number];
+      const rounds = d.rounds as number;
+      const shooter = world.maybe(e.actors[0]);
+      const color = SIDE_COLORS[(d.side as Side) ?? shooter?.side ?? "us"].tracer;
+      const hits = new Set(d.hits as number[]);
+      const shown = Math.min(rounds, 8);
+      for (let k = 0; k < shown; k++) {
+        const delay = (k / shown) * span;
+        const jx = (hash2(e.seq, k, 1) - 0.5) * (hits.size > 0 && k === 0 ? 2 : 22);
+        const jy = (hash2(e.seq, k, 2) - 0.5) * (hits.size > 0 && k === 0 ? 2 : 22);
+        const x0 = fx * TILE + 8, y0 = fy * TILE + 6, x1 = ax * TILE + 8 + jx, y1 = ay * TILE + 6 + jy;
+        // Every fourth round of a belt is a tracer; rifles show a faint streak.
+        const automatic = rounds > 1;
+        if (!automatic || k % 2 === 0) renderer.addEffect({ kind: "tracer", x0, y0, x1, y1, color: automatic ? color : "rgba(255,240,200,0.55)", born: t, dur: 0.14, delay });
+        renderer.addEffect({ kind: "flash", x: x0 + (ax > fx ? 4 : -4), y: y0, r: automatic ? 3 : 2.5, born: t, dur: 0.07, delay });
+        renderer.addEffect({ kind: "puff", x: x1, y: y1 + 2, color: "rgba(200,180,140,A)", born: t, dur: 0.35, delay: delay + 0.1 });
+      }
+      break;
+    }
+    case "grenade_thrown": {
+      const [fx, fy] = d.from as [number, number];
+      const [ax, ay] = d.at as [number, number];
+      const flight = Math.max(1, (d.burst as number) - world.tick) * tickSeconds();
+      renderer.addEffect({ kind: "arc", x0: fx * TILE + 8, y0: fy * TILE + 4, x1: ax * TILE + 8, y1: ay * TILE + 8, born: t, dur: Math.min(1.2, flight * (d.kind === "rifle_grenade" ? 0.9 : 0.35)), delay: 0, smoke: d.kind === "smoke_grenade" });
+      break;
+    }
+    case "incoming": {
+      const [x, y] = d.at as [number, number];
+      const dur = Math.max(0.2, ((d.burst as number) - world.tick) * tickSeconds());
+      renderer.addEffect({ kind: "shell", x: x * TILE + 8, y: y * TILE + 8, born: t, dur, delay: 0 });
+      break;
+    }
+    case "explosion": {
+      const [x, y] = d.at as [number, number];
+      const r = d.kind === "artillery" ? 34 : d.kind === "mortar" ? 24 : 14;
+      renderer.addEffect({ kind: "boom", x: x * TILE + 8, y: y * TILE + 8, r, born: t, dur: 0.9, delay: 0 });
+      break;
+    }
+    case "callout": {
+      const s = world.maybe(d.by as number);
+      if (!s) break;
+      renderer.addEffect({ kind: "text", x: s.x * TILE + 8, y: s.y * TILE - 6, text: d.text as string, color: s.side === "us" ? "#fff0b0" : "#d8f0c8", born: t, dur: Math.max(1.6, Math.min(3, 2.4)), delay: 0, follow: s.id });
+      break;
+    }
+    case "casualty": {
+      const s = world.maybe(d.person as number);
+      if (s) renderer.addEffect({ kind: "text", x: s.x * TILE + 8, y: s.y * TILE - 4, text: "hit!", color: "#ff7a6a", born: t, dur: 1.2, delay: 0, follow: s.id });
+      break;
+    }
+  }
+}
+
+function toast(kind: string, title: string, text: string, people: number[] = []): void {
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.innerHTML = `<b>${esc(title)}</b>${linkNames(esc(text), people)}`;
+  const box = $("toasts");
+  box.prepend(el);
+  while (box.children.length > 5) box.lastElementChild?.remove();
+  setTimeout(() => el.remove(), 9000);
+}
+
+function toastFor(e: SimEvent): void {
+  const d = e.data;
+  const s = (k: string) => world.maybe(d[k] as number);
+  switch (e.type) {
+    case "death": {
+      const p = s("person");
+      if (p && (p.role === "squad_leader" || p.role === "platoon_leader" || p.role === "medic" || p.role === "machine_gunner" || p.role === "auto_rifleman")) toast("death", "Killed", `${label(p)}, ${roleName(p)}, is dead.`, [p.id]);
+      break;
+    }
+    case "fire_mission": {
+      const r = s("by");
+      if (r) toast("fire", "Fire mission", `${label(r)} is calling in mortars.`, [r.id]);
+      break;
+    }
+    case "platoon_withdraws":
+      toast("battle", "Withdrawal", `${world.platoons[d.side as Side].name} is pulling back.`);
+      break;
+    case "position_taken":
+      toast("battle", "Position taken", `${world.squads[d.squad as number]!.name} has overrun the enemy position.`);
+      break;
+    case "surrender": {
+      const p = s("person");
+      if (p) toast("battle", "Surrender", `${label(p)} gives himself up.`, [p.id]);
+      break;
+    }
+    case "takes_command": {
+      const p = s("by");
+      if (p) toast("battle", "Command", `${label(p)} takes over ${world.squads[d.squad as number]!.name}.`, [p.id]);
+      break;
+    }
+    case "battle_end":
+      toast("battle", "The fighting ends", d.reason as string);
+      paused = true;
+      syncControls();
+      setTimeout(() => {
+        if (!reportShown) {
+          reportShown = true;
+          openReport();
+        }
+      }, 600);
+      break;
+  }
+}
+
+// ---------- Battles ----------
+
+function newBattle(seed: number): void {
+  const log = new EventLog({ hash: false });
+  feed = [];
+  reportShown = false;
+  renderer.reset();
+  miniBase.img = null;
+  $("toasts").innerHTML = "";
+  log.addSink((e) => onEvent(e));
+  world = undefined as unknown as World;
+  engine = createSimulation({ seed, log, config: { checkInvariants: false } });
+  world = engine.world;
+  // The opening event fired before the sink saw the world; describe it now.
+  const start = describe({ seq: 0, tick: 0, type: "battle_start", actors: [], data: {} }, world);
+  if (start) feed.push(start);
+  prev = new Map(world.soldiers.map((s) => [s.id, { x: s.x, y: s.y }]));
+  selected = null;
+  follow = false;
+  userCamera = false;
+  acc = 0;
+  paused = false;
+  dirty = { feed: true, events: true };
+  $("date").textContent = world.config.time.date.toUpperCase();
+  fitCamera();
+  renderRoster();
+  syncControls();
+  try {
+    history.replaceState(null, "", `?seed=${seed}`);
+  } catch {
+    // Not important.
+  }
+}
+
+function fitCamera(): void {
+  const rect = canvas.getBoundingClientRect();
+  if (!world || rect.width === 0) return;
+  // Start looking at the attackers' line of departure, with the defended hedge in view.
+  zoomGoal = null;
+  cam.zoom = Math.max(1, Math.min(1.6, rect.height / ((world.map.height * 0.5) * TILE)));
+  const att = world.side(world.attacker);
+  const cx = att.reduce((a, s) => a + s.x, 0) / att.length;
+  const cy = (att.reduce((a, s) => a + s.y, 0) / att.length + world.layout.line.y) / 2;
+  cam.x = cx * TILE - rect.width / cam.zoom / 2;
+  cam.y = cy * TILE - rect.height / cam.zoom / 2;
+}
+
+function resize(): void {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const size = `${rect.width}x${rect.height}@${dpr}`;
+  if (size === lastSize) return;
+  lastSize = size;
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+  if (!userCamera) fitCamera();
+}
+
+async function advance(n: number): Promise<void> {
+  busy = true;
+  for (let i = 0; i < n; i++) {
+    prev = new Map(world.soldiers.map((s) => [s.id, { x: s.x, y: s.y }]));
+    await engine.step();
+  }
+  busy = false;
+}
+
+const FRAME_BUDGET_MS = 14;
+
+async function advanceWithin(budget: number): Promise<void> {
+  busy = true;
+  const start = performance.now();
+  while (acc >= 1 && performance.now() - start < budget && !paused) {
+    prev = new Map(world.soldiers.map((s) => [s.id, { x: s.x, y: s.y }]));
+    await engine.step();
+    acc -= 1;
+  }
+  if (acc > 2) acc = 1.99;
+  busy = false;
+}
+
+function frame(t: number): void {
+  resize();
+  const dt = Math.min(0.25, (t - lastTime) / 1000);
+  lastTime = t;
+  if (!paused && !busy) {
+    acc += dt * SPEEDS[speed]!.tps;
+    if (acc >= 1) void advanceWithin(FRAME_BUDGET_MS);
+  }
+  const alpha = Math.min(1, acc);
+  const sel = world.maybe(selected);
+  const rect = canvas.getBoundingClientRect();
+  if (follow && sel && sel.status !== "routed") {
+    const p = renderer.worldPos(sel, prev, alpha);
+    cam.x += (p.x - rect.width / cam.zoom / 2 - cam.x) * 0.15;
+    cam.y += (p.y - rect.height / cam.zoom / 2 - cam.y) * 0.15;
+  }
+  panCamera(dt);
+  easeZoom(dt);
+  renderer.draw(world, cam, opts, prev, alpha, selected, t / 1000);
+  drawMinimap(minimap, world, cam, rect.width, rect.height, miniBase);
+  updateHud();
+  requestAnimationFrame(frame);
+}
+
+// ---------- HUD and panels ----------
+
+function esc(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+}
+
+function personLink(s: Soldier): string {
+  return `<a data-person="${s.id}">${esc(label(s))}</a>`;
+}
+
+function linkNames(html: string, people: number[]): string {
+  for (const id of people) {
+    const s = world.maybe(id);
+    if (!s) continue;
+    const name = esc(label(s));
+    const i = html.indexOf(name);
+    if (i >= 0) html = html.slice(0, i) + personLink(s) + html.slice(i + name.length);
+  }
+  return html;
+}
+
+function bar(name: string, v: number, color: string, text = ""): string {
+  const pct = Math.round(Math.max(0, Math.min(1, v)) * 100);
+  return `<div class="bar"><span>${name}${text ? ` <small>${text}</small>` : ""}</span><i><b style="width:${pct}%;background:${color}"></b></i></div>`;
+}
+
+let hudThrottle = 0;
+
+function updateHud(): void {
+  const clockEl = $("clock");
+  const pl = world.platoons;
+  const state = world.phase === "over" ? `OVER — ${world.result?.winner === null ? "no decision" : world.result?.winner === "us" ? "US victory" : "German victory"}` : `${pl[world.attacker].role === "attack" ? "attack" : ""}: ${pl[world.attacker].phase}`;
+  clockEl.textContent = `${world.clock()} · ${state}${paused ? " · PAUSED" : ""}`;
+  clockEl.classList.toggle("paused", paused);
+  if (++hudThrottle % 10 !== 0) return;
+  renderForces();
+  if (dirty.feed) {
+    renderFeed();
+    dirty.feed = false;
+  }
+  if (tab === "men") {
+    renderRoster();
+    renderInspector();
+  } else if (tab === "squads") renderSquads();
+  else if (tab === "events" && dirty.events) {
+    renderEvents();
+    dirty.events = false;
+  }
+}
+
+function renderForces(): void {
+  const rows: string[] = [];
+  for (const side of [world.attacker, world.attacker === "us" ? "de" : "us"] as Side[]) {
+    const pl = world.platoons[side];
+    const all = world.side(side);
+    const n = all.length;
+    const able = all.filter((s) => world.able(s) && !s.pinned).length;
+    const pinned = all.filter((s) => world.able(s) && s.pinned).length;
+    const hurt = all.filter((s) => s.status === "casualty").length;
+    const dead = all.filter((s) => s.status === "dead").length;
+    const pow = all.filter((s) => s.status === "captured" || s.status === "surrendered").length;
+    const gone = all.filter((s) => s.status === "routed").length;
+    const seg = (k: number, c: string) => (k > 0 ? `<i style="width:${(k / n) * 100}%;background:${c}"></i>` : "");
+    rows.push(`<div class="force"><div class="name"><span style="color:${SIDE_COLORS[side].name}">${side === "us" ? "🇺🇸" : "✠"} ${esc(pl.name)}</span><small>${pl.role === "attack" ? "attacking" : "defending"} · ${esc(pl.phase)}</small></div>
+      <div class="stack">${seg(able, "#7ac860")}${seg(pinned, "#f0963a")}${seg(hurt, "#e05a4a")}${seg(dead, "#3a3a3a")}${seg(pow, "#b0b0b0")}${seg(gone, "#6a5a8a")}</div>
+      <div class="legend"><span><i style="background:#7ac860"></i>${able} fighting</span><span><i style="background:#f0963a"></i>${pinned} pinned</span><span><i style="background:#e05a4a"></i>${hurt} wounded</span><span><i style="background:#3a3a3a"></i>${dead} dead</span>${pow ? `<span><i style="background:#b0b0b0"></i>${pow} prisoners</span>` : ""}${gone ? `<span><i style="background:#6a5a8a"></i>${gone} gone</span>` : ""}<span>· ${pl.fireMissionsLeft} mortar missions</span></div></div>`);
+  }
+  $("forces").innerHTML = rows.join("");
+}
+
+function feedHtml(lines: FeedLine[]): string {
+  return lines.map((l) => `<li class="l-${l.cat}"><time>${clock(world, l.tick)}</time> ${linkNames(esc(l.text), l.people)}</li>`).join("");
+}
+
+function renderFeed(): void {
+  $("chronicle").classList.toggle("hidden", !opts.chronicle);
+  $("feed").innerHTML = feedHtml(feed.slice(-10));
+}
+
+function renderEvents(): void {
+  $("events").innerHTML = feedHtml(feed.filter((l) => l.major).slice(-200).reverse());
+}
+
+function statusIcon(s: Soldier): string {
+  if (s.status === "dead") return "✝";
+  if (s.status === "casualty") return "✚";
+  if (s.status === "captured" || s.status === "surrendered") return "⚐";
+  if (s.status === "routed") return "↩";
+  if (s.broken) return "!";
+  if (s.pinned) return "▼";
+  return "";
+}
+
+function renderRoster(): void {
+  if (!world) return;
+  const parts: string[] = [];
+  for (const sq of world.squads) {
+    const men = sq.members.map((id) => world.soldier(id));
+    parts.push(
+      `<div class="sq"><em class="sw" style="background:${sq.color}"></em><b style="color:${SIDE_COLORS[sq.side].name}">${esc(sq.name)}</b> ` +
+        men
+          .map((s) => {
+            const cls = s.id === selected ? "sel" : s.status === "dead" || s.status === "routed" || s.status === "captured" ? "gone" : s.status === "casualty" || s.injuries.some((i) => !i.permanent && i.severity > 0.2) ? "hurt" : "";
+            return `<a data-person="${s.id}" class="${cls}" title="${esc(roleName(s))}">${esc(s.last)}${statusIcon(s)}</a>`;
+          })
+          .join(" ") +
+        `</div>`,
+    );
+  }
+  const html = parts.join("");
+  const el = $("roster");
+  if (el.innerHTML !== html) el.innerHTML = html;
+}
+
+function isEye(part: BodyPart): boolean {
+  return part === "left eye" || part === "right eye";
+}
+
+function injuryColor(inj: Injury): string {
+  if (inj.kind === "lost" || inj.lasting === "lost eye") return "#0c0c0c";
+  if (inj.permanent) return "#8a5ab0";
+  if (inj.infected) return "#a0c020";
+  return inj.severity >= 0.75 ? "#c01818" : inj.severity >= 0.5 ? "#e05a2a" : inj.severity >= 0.25 ? "#e0a03a" : "#e8d060";
+}
+
+function paintPanel(s: Soldier): void {
+  const face = document.getElementById("face") as HTMLCanvasElement | null;
+  if (face) {
+    face.width = 16;
+    face.height = 16;
+    const lostEyes: ("left" | "right")[] = [];
+    let bruised = false, cut = false, scar = false, deepScar = false, ruined = false;
+    for (const i of s.injuries) {
+      if (isEye(i.part) && (i.kind === "lost" || i.lasting === "lost eye")) lostEyes.push(i.part === "left eye" ? "left" : "right");
+      if (!(i.part === "face" || isEye(i.part) || i.part === "head")) continue;
+      if (i.permanent) {
+        if (i.lasting === "ruined face") ruined = true;
+        else if (i.lasting === "disfiguring scar") deepScar = true;
+        else scar = true;
+      } else if (i.kind === "bruise" || i.kind === "fracture") bruised = true;
+      else cut = true;
+    }
+    face.getContext("2d")!.drawImage(faceCanvas({ id: s.id, side: s.side, medic: s.role === "medic", pain: fightingPain(s), morale: s.morale, lostEyes, bruised, cut, scar, deepScar, ruined, bloody: s.bloodied, dead: s.status === "dead" }), 0, 0);
+  }
+  const body = document.getElementById("bodydiag") as HTMLCanvasElement | null;
+  if (!body) return;
+  body.width = 40;
+  body.height = 74;
+  const g = body.getContext("2d")!;
+  const skin = skinOf(s.id);
+  for (const part of Object.keys(BODY_RECTS)) {
+    const [x, y, w, h] = BODY_RECTS[part]!;
+    if (isEye(part as BodyPart)) continue;
+    let col = part === "torso" || part.endsWith("arm") ? SIDE_COLORS[s.side].coat : part.endsWith("leg") ? SIDE_COLORS[s.side].trousers : part.endsWith("foot") ? SIDE_COLORS[s.side].boots : part === "head" ? SIDE_COLORS[s.side].helmet : skin;
+    let worst = -1;
+    for (const i of s.injuries) {
+      if (i.part !== part) continue;
+      const rank = (i.kind === "lost" ? 3 : i.permanent ? 1 : 0) + i.severity + (i.infected ? 0.5 : 0);
+      if (rank > worst) {
+        worst = rank;
+        col = injuryColor(i);
+      }
+    }
+    g.fillStyle = "#000";
+    g.fillRect(x - 1, y - 1, w + 2, h + 2);
+    g.fillStyle = col;
+    g.fillRect(x, y, w, h);
+    // Blood still running.
+    if (s.injuries.some((i) => i.part === part && i.bleeding > 0.05)) {
+      g.fillStyle = "#ff2a1a";
+      g.fillRect(x + Math.floor(w / 2), y + h, 1, 3);
+    }
+  }
+  for (const part of ["left eye", "right eye"] as const) {
+    const [x, y, w, h] = BODY_RECTS[part]!;
+    const lost = s.injuries.some((i) => i.part === part && (i.kind === "lost" || i.lasting === "lost eye"));
+    g.fillStyle = lost ? "#000" : "#f4f0e8";
+    g.fillRect(x, y, w, h);
+  }
+}
+
+function traitWords(s: Soldier): string {
+  const t = s.traits;
+  const w: string[] = [];
+  w.push(t.nerve > 0.7 ? "cool under fire" : t.nerve < 0.35 ? "jumpy" : "steady enough");
+  if (t.aggression > 0.66) w.push("aggressive");
+  else if (t.aggression < 0.3) w.push("cautious");
+  if (t.marksmanship > 0.7) w.push("a crack shot");
+  else if (t.marksmanship < 0.3) w.push("a poor shot");
+  if (t.discipline > 0.75) w.push("follows orders to the letter");
+  else if (t.discipline < 0.35) w.push("a law unto himself");
+  if (t.empathy > 0.72) w.push("looks after his buddies");
+  if (t.leadership > 0.7) w.push("a natural leader");
+  return w.join(", ");
+}
+
+function doingText(s: Soldier): string {
+  if (s.status === "dead") return `Killed at ${clock(world, s.deathTick ?? 0)}`;
+  if (s.status === "routed") return "Gone from the field";
+  if (s.status === "captured") return `A prisoner of ${world.maybe(s.capturedBy) ? label(world.soldier(s.capturedBy!)) : "the enemy"}`;
+  if (s.status === "surrendered") return "Hands up, waiting to be taken prisoner";
+  if (s.carriedById !== null) return `Being carried back by ${label(world.soldier(s.carriedById))}`;
+  if (!s.conscious) return "Unconscious";
+  if (s.status === "casualty") {
+    const near = world.soldiers.find((o) => o.act?.cand.kind === "aid" && o.act.cand.targetId === s.id);
+    return near ? `Wounded — ${label(near)} is coming to him` : bleedingOf(s) > 0.05 ? "Wounded and bleeding, calling for a medic" : "Wounded, lying low";
+  }
+  const parts: string[] = [];
+  if (s.reloadLeft > 0) parts.push(s.heat === 0.3 ? "changing the barrel" : "reloading");
+  if (s.act) parts.push(s.act.cand.description);
+  else parts.push("taking stock");
+  if (s.broken) parts.unshift("nerve broken —");
+  else if (s.pinned) parts.unshift("pinned down —");
+  return parts.join(" ").replace(/^./, (c) => c.toUpperCase());
+}
+
+function describeBody(s: Soldier): string {
+  const he = "He", his = "his";
+  const looks = appearance(s.id);
+  const parts: string[] = [];
+  const exp = s.experience === "veteran" ? (s.side === "de" ? "a veteran of the Eastern Front" : "a veteran of North Africa and Sicily") : s.experience === "green" ? "a green replacement" : "a trained but untried soldier";
+  parts.push(`<p>${esc(s.first)} is ${s.age}, from ${esc(s.hometown)}: ${exp}, with ${looks.skin} skin and ${looks.hair} hair.</p>`);
+  const pain = fightingPain(s);
+  if (s.status !== "dead") {
+    const look = !s.conscious ? `${he} lies senseless.` : pain > 0.6 ? `${he} is grey-faced, gasping with pain${s.morphineTick >= 0 ? " even through the morphine" : ""}.` : pain > 0.3 ? `${he} grits ${his} teeth against the pain.` : s.morale < 0.25 ? `${he} is shaking.` : s.pinned ? `${he} presses himself into the dirt.` : `${he} looks ${s.morale > 0.7 ? "determined" : "tense"}.`;
+    const body: string[] = [];
+    if (cannotWalk(s)) body.push(`${he} cannot walk.`);
+    else if (mobility(s) < 0.6) body.push(`${he} drags a leg, moving at ${Math.round(mobility(s) * 100)}% of his pace.`);
+    else if (mobility(s) < 0.92) body.push(`${he} limps.`);
+    if (armFactor(s) < 0.6) body.push(`${his[0]!.toUpperCase()}${his.slice(1)} hands and arms are too hurt to shoot straight.`);
+    if (sightFactor(s) < 0.85) body.push(`${he} sees poorly.`);
+    if (disfigurement(s) >= 0.4) body.push(`${his[0]!.toUpperCase()}${his.slice(1)} face is badly scarred.`);
+    parts.push(`<p>${look} ${body.join(" ")}</p>`);
+  }
+  const fresh = s.injuries.filter((i) => !i.permanent && (i.severity >= 0.05 || i.infected));
+  const lasting = s.injuries.filter((i) => i.permanent);
+  const wounds = [
+    ...lasting.map((i) => `<li class="lasting">◆ ${esc(i.lasting ?? describeInjury(i))} <small>(${esc(i.part)})</small></li>`),
+    ...fresh.map((i) => {
+      const care = i.care < 0.1 ? "undressed" : i.care < 0.6 ? "field dressing" : "dressed by the medic";
+      const bleed = i.bleeding > 0.3 ? ", <b>bleeding badly</b>" : i.bleeding > 0.05 ? ", bleeding" : "";
+      return `<li class="${i.severity >= 0.5 ? "grave" : "wound"}">● ${esc(describeInjury(i))} — ${severityWord(i)}, ${care}${bleed} <small>(${esc(i.cause)}, ${clock(world, i.tick)})</small></li>`;
+    }),
+  ];
+  parts.push(wounds.length ? `<ul class="wounds">${wounds.join("")}</ul>` : `<p class="hint">Not a scratch.</p>`);
+  return parts.join("");
+}
+
+function renderInspector(): void {
+  const el = $("inspector");
+  const s = world.maybe(selected);
+  if (!s) {
+    el.innerHTML = `<p class="hint">Click a soldier on the map or a name above. Squads show as coloured bars under their men; ▼ pinned, ! broken, ✚ wounded, ⚐ surrendered.</p>`;
+    return;
+  }
+  const sq = world.squad(s.squadId);
+  const spec = s.weapon ? world.config.weapons[s.weapon] : null;
+  const ammo = spec ? `${spec.name}: ${s.loaded} loaded, ${s.ammo} spare${s.teamAmmo ? `, ${s.teamAmmo} for the ${s.side === "us" ? "BAR" : "MG"}` : ""}` : "unarmed";
+  const kit = [s.grenades ? `${s.grenades} grenade${s.grenades > 1 ? "s" : ""}` : "", s.smokes ? `${s.smokes} smoke` : "", s.rifleGrenades ? `${s.rifleGrenades} rifle grenades` : ""].filter(Boolean).join(", ");
+  const after = world.aftermath?.[s.id];
+  const bleeding = bleedingOf(s);
+  el.innerHTML = `
+    <div class="pp-head"><canvas id="face" class="face"></canvas><div><b>${esc(s.name)}</b><small>${esc(s.rank)} · ${esc(roleName(s))}</small><small><em class="sw" style="background:${sq.color}"></em>${esc(sq.name)}${sq.leaderId === s.id ? " (leading)" : ""}</small><small>${esc(traitWords(s))}</small></div></div>
+    <div class="doing">${esc(doingText(s))}</div>
+    ${bar("Health", s.survival.health, s.survival.health > 0.5 ? "#7ac860" : s.survival.health > 0.25 ? "#e0a03a" : "#e05a4a")}
+    ${bar("Morale", s.morale, "#6ab0f0")}
+    ${bar("Suppressed", s.suppression, "#f0963a")}
+    ${bar("Pain", fightingPain(s), "#e07a9a", s.morphineTick >= 0 ? "morphine" : "")}
+    ${bleeding > 0 ? bar("Bleeding", Math.min(1, bleeding), "#c01818") : ""}
+    <div class="traits">${esc(ammo)}${kit ? ` · ${esc(kit)}` : ""} · aim ${Math.round(aimFactor(s) * 100)}%</div>
+    <div class="pp-mid"><canvas id="bodydiag" class="bodydiag"></canvas><div class="desc">${describeBody(s)}</div></div>
+    ${after ? `<h4>A MONTH LATER</h4><p>${esc(after.outcome)}.</p>` : ""}
+    <div class="traits">${s.shots} rounds fired · ${s.hits} hits · ${s.kills} killed${s.treated ? ` · ${s.treated} men treated` : ""}</div>
+    <h4>RECENTLY</h4><ul class="plain">${s.recent.slice(-8).reverse().map((r) => `<li><time>${clock(world, r.tick)}</time> ${esc(r.text)}</li>`).join("")}</ul>
+    <button id="followbtn" style="margin-top:6px">${follow ? "◉ Following" : "○ Follow (F)"}</button>`;
+  paintPanel(s);
+  $("followbtn").addEventListener("click", () => {
+    follow = !follow;
+  });
+}
+
+const STATE_NAMES: Record<string, string> = { deploy: "forming up", advance: "advancing", react: "contact", fix: "fixing", flank: "flanking", assault: "assault", consolidate: "consolidating", hold: "holding", fall_back: "falling back", withdraw: "withdrawing", broken: "broken", support: "support" };
+
+function renderSquads(): void {
+  const out: string[] = [];
+  for (const side of [world.attacker, world.attacker === "us" ? "de" : "us"] as Side[]) {
+    const pl = world.platoons[side];
+    out.push(`<div class="side-h" style="color:${SIDE_COLORS[side].name}">${esc(pl.name.toUpperCase())} — ${pl.role === "attack" ? "ATTACKING" : "DEFENDING"}</div>`);
+    for (const id of [...pl.squadIds, pl.hqSquadId]) {
+      const sq = world.squad(id);
+      const leader = world.maybe(sq.leaderId);
+      const men = sq.members.map((m) => world.soldier(m));
+      const able = men.filter((m) => world.able(m)).length;
+      const teams = sq.isHQ
+        ? ""
+        : (["A", "B"] as const)
+            .map((el) => {
+              const o = sq.orders[el];
+              const n = men.filter((m) => m.element === el && world.able(m)).length;
+              return `<div class="men">${el === "A" ? (side === "us" ? "Base team (BAR)" : "MG-Trupp") : side === "us" ? "Rifle team" : "Schützentrupp"}: ${o.kind}${o.kind === "suppress" ? "ing" : ""}, ${o.pace}, fire ${o.fire} · ${n} men</div>`;
+            })
+            .join("");
+      out.push(`<div class="squad" data-squad="${sq.id}"><em class="sw" style="background:${sq.color}"></em><b>${esc(sq.name)}</b><span class="st">${STATE_NAMES[sq.state] ?? sq.state}</span>
+        <div class="intent">${esc(sq.intent)}</div>
+        <div class="men">Led by ${leader ? personLink(leader) : "nobody"} · ${able}/${men.length} able · ${Object.values(sq.contacts).filter((c) => !c.down && world.tick - c.tick < 40).length} known enemies</div>${teams}
+        <div class="men">${men.map((m) => `<a data-person="${m.id}" title="${esc(roleName(m))}">${esc(m.last)}${statusIcon(m)}</a>`).join(" ")}</div></div>`);
+    }
+  }
+  const html = out.join("");
+  const el = $("squads");
+  if (el.innerHTML !== html) el.innerHTML = html;
+}
+
+function select(id: number | null): void {
+  selected = id;
+  if (id !== null && tab !== "men") setTab("men");
+  renderRoster();
+  renderInspector();
+}
+
+function setTab(name: string): void {
+  tab = name;
+  document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll<HTMLElement>(".tab").forEach((t) => t.classList.toggle("show", t.id === name));
+  if (name === "events") {
+    renderEvents();
+    dirty.events = false;
+  }
+  if (name === "squads") renderSquads();
+}
+
+// ---------- The after-action report ----------
+
+function openModal(title: string, html: string): void {
+  $("mtitle").textContent = title;
+  $("mbody").innerHTML = html;
+  $("modal").classList.add("open");
+}
+
+function openReport(): void {
+  const r = world.result;
+  const head = r
+    ? `<div class="verdict">${r.winner === null ? "No decision" : r.winner === "us" ? "American victory" : "German victory"}</div><p>${esc(r.reason[0]!.toUpperCase() + r.reason.slice(1))}, at ${clock(world, r.tick)} after ${Math.round(r.tick / 60)} minutes of fighting.</p>`
+    : `<p class="hint">The battle is still going on (${world.clock()}). This is how it stands.</p>`;
+  const rows = (["us", "de"] as Side[]).map((side) => {
+    const all = world.side(side);
+    const c = (f: (s: Soldier) => boolean) => all.filter(f).length;
+    const shots = all.reduce((a, s) => a + s.shots, 0), hits = all.reduce((a, s) => a + s.hits, 0);
+    return `<tr><td style="color:${SIDE_COLORS[side].name}">${esc(world.platoons[side].name)}</td><td>${all.length}</td><td>${c((s) => s.status === "dead")}</td><td>${c((s) => s.status !== "dead" && s.injuries.some((i) => !i.permanent && i.severity >= 0.1))}</td><td>${c((s) => s.status === "captured" || s.status === "surrendered")}</td><td>${c((s) => s.status === "routed")}</td><td>${shots} / ${hits}</td></tr>`;
+  });
+  const fallen = world.soldiers.filter((s) => s.status === "dead").sort((a, b) => (a.deathTick ?? 0) - (b.deathTick ?? 0));
+  const hurt = world.soldiers.filter((s) => s.status !== "dead" && s.injuries.some((i) => !i.permanent && i.severity >= 0.1));
+  const deeds: string[] = [];
+  const topKiller = [...world.soldiers].sort((a, b) => b.kills - a.kills || b.hits - a.hits)[0];
+  if (topKiller && topKiller.kills > 0) deeds.push(`${personLink(topKiller)} (${esc(roleName(topKiller))}) killed ${topKiller.kills}.`);
+  for (const m of world.soldiers.filter((s) => s.role === "medic")) deeds.push(`${personLink(m)}, ${esc(roleName(m))}, treated ${m.treated} men${m.status === "dead" ? " before he was killed" : ""}.`);
+  const gun = world.soldiers.filter((s) => s.weapon === "mg42" || s.role === "machine_gunner").sort((a, b) => b.shots - a.shots)[0];
+  if (gun && gun.shots > 0) deeds.push(`${personLink(gun)} fired ${gun.shots} rounds from the MG 42.`);
+  const after = world.aftermath ?? {};
+  const html = `${head}
+    <table class="aar"><tr><th></th><th>men</th><th>killed</th><th>wounded</th><th>prisoners</th><th>left field</th><th>rounds / hits</th></tr>${rows.join("")}</table>
+    ${deeds.length ? `<h3>Notable</h3><p>${deeds.join("<br>")}</p>` : ""}
+    <h3>The fallen</h3>
+    <ul class="plain">${fallen.map((s) => `<li class="l-death"><time>${clock(world, s.deathTick ?? 0)}</time> ${personLink(s)}, ${esc(roleName(s))} of ${esc(world.squad(s.squadId).name)}, ${s.age}, ${esc(s.hometown)} — ${s.causeOfDeath === "wounds" ? "died of wounds" : "killed"}${worstWound(s) || s.injuries.length ? `: ${esc(describeInjury(s.injuries.slice().sort((a, b) => b.severity - a.severity)[0]!))}` : ""}</li>`).join("") || "<li>None.</li>"}</ul>
+    <h3>The wounded, and a month later</h3>
+    <ul class="plain">${hurt.map((s) => `<li class="l-wound">${personLink(s)} (${esc(world.squad(s.squadId).name)}): ${s.injuries.filter((i) => !i.permanent && i.severity >= 0.1).map((i) => esc(describeInjury(i))).join("; ")}${after[s.id] ? ` — <i>${esc(after[s.id]!.outcome)}</i>` : ""}</li>`).join("") || "<li>None.</li>"}</ul>`;
+  openModal(`After-action report · ${world.config.time.date}`, html);
+}
+
+// ---------- Input ----------
+
+function setPower(p: typeof power): void {
+  power = p;
+  canvas.className = p === "inspect" ? "" : `power-${p}`;
+  document.querySelectorAll<HTMLButtonElement>("[data-power]").forEach((b) => b.classList.toggle("on", b.dataset.power === p));
+}
+
+function pickAt(sx: number, sy: number): number | null {
+  let best: number | null = null, bd = Math.max(22, 10 * cam.zoom);
+  for (const s of world.soldiers) {
+    if (s.status === "routed" || s.carriedById !== null) continue;
+    const p = renderer.screenOf(s, cam, prev);
+    const d = Math.hypot(p.x - sx, p.y - 2 * cam.zoom - sy) + (s.status === "dead" ? 6 : 0);
+    if (d < bd) {
+      bd = d;
+      best = s.id;
+    }
+  }
+  return best;
+}
+
+let dragging = false, dragMoved = false, dragX = 0, dragY = 0;
+const touches = new Map<number, { x: number; y: number }>();
+let pinch: { d: number; zoom: number; wx: number; wy: number } | null = null;
+
+function pinchFrame(): { d: number; mx: number; my: number } {
+  const [a, b] = [...touches.values()] as [{ x: number; y: number }, { x: number; y: number }];
+  const rect = canvas.getBoundingClientRect();
+  return { d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), mx: (a.x + b.x) / 2 - rect.left, my: (a.y + b.y) / 2 - rect.top };
+}
+
+canvas.addEventListener("pointerdown", (ev) => {
+  touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  canvas.setPointerCapture(ev.pointerId);
+  if (touches.size === 2) {
+    const f = pinchFrame();
+    pinch = { d: f.d, zoom: cam.zoom, wx: f.mx / cam.zoom + cam.x, wy: f.my / cam.zoom + cam.y };
+    zoomGoal = null;
+    dragMoved = true;
+    return;
+  }
+  dragging = true;
+  dragMoved = false;
+  dragX = ev.clientX;
+  dragY = ev.clientY;
+});
+canvas.addEventListener("pointermove", (ev) => {
+  if (touches.has(ev.pointerId)) touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (pinch && touches.size >= 2) {
+    const f = pinchFrame();
+    cam.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, (pinch.zoom * f.d) / pinch.d));
+    cam.x = pinch.wx - f.mx / cam.zoom;
+    cam.y = pinch.wy - f.my / cam.zoom;
+    follow = false;
+    userCamera = true;
+    return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  const tx = Math.floor(((ev.clientX - rect.left) / cam.zoom + cam.x) / TILE), ty = Math.floor(((ev.clientY - rect.top) / cam.zoom + cam.y) / TILE);
+  renderer.hoverBuilding = world.map.inBounds(tx, ty) ? world.map.building[world.map.idx(tx, ty)]! : -1;
+  if (!dragging) return;
+  const dx = ev.clientX - dragX, dy = ev.clientY - dragY;
+  if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
+  if (dragMoved) {
+    cam.x -= dx / cam.zoom;
+    cam.y -= dy / cam.zoom;
+    dragX = ev.clientX;
+    dragY = ev.clientY;
+    follow = false;
+    userCamera = true;
+  }
+});
+canvas.addEventListener("pointerup", (ev) => {
+  touches.delete(ev.pointerId);
+  if (pinch) {
+    if (touches.size < 2) pinch = null;
+    const rest = [...touches.values()][0];
+    dragging = rest !== undefined;
+    if (rest) {
+      dragX = rest.x;
+      dragY = rest.y;
+    }
+    return;
+  }
+  dragging = false;
+  if (dragMoved) return;
+  const rect = canvas.getBoundingClientRect();
+  const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
+  const tx = Math.floor((sx / cam.zoom + cam.x) / TILE), ty = Math.floor((sy / cam.zoom + cam.y) / TILE);
+  if (power === "artillery" || power === "smoke") {
+    if (world.map.inBounds(tx, ty)) engine.intervene({ kind: power, x: tx, y: ty });
+    setPower("inspect");
+    if (paused && !busy) void advance(1);
+    return;
+  }
+  const hit = pickAt(sx, sy);
+  if (power === "sniper") {
+    if (hit !== null) {
+      engine.intervene({ kind: "sniper", personId: hit });
+      select(hit);
+    }
+    setPower("inspect");
+    if (paused && !busy) void advance(1);
+    return;
+  }
+  select(hit);
+});
+canvas.addEventListener("pointercancel", (ev) => {
+  dragging = false;
+  touches.delete(ev.pointerId);
+  if (touches.size < 2) pinch = null;
+});
+canvas.addEventListener("pointerleave", () => {
+  renderer.hoverBuilding = -1;
+});
+canvas.addEventListener(
+  "wheel",
+  (ev) => {
+    ev.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const px = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? rect.height : 1);
+    zoomToward((zoomGoal?.zoom ?? cam.zoom) * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.0018), ev.clientX - rect.left, ev.clientY - rect.top);
+  },
+  { passive: false },
+);
+
+minimap.addEventListener("click", (ev) => {
+  const r = minimap.getBoundingClientRect();
+  const tx = ((ev.clientX - r.left) / r.width) * world.map.width, ty = ((ev.clientY - r.top) / r.height) * world.map.height;
+  const rect = canvas.getBoundingClientRect();
+  cam.x = tx * TILE - rect.width / cam.zoom / 2;
+  cam.y = ty * TILE - rect.height / cam.zoom / 2;
+  userCamera = true;
+  follow = false;
+});
+
+function zoomToward(zoom: number, sx: number, sy: number): void {
+  zoomGoal = { zoom: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom)), sx, sy };
+  userCamera = true;
+}
+
+function easeZoom(dt: number): void {
+  if (!zoomGoal) return;
+  const { sx, sy } = zoomGoal;
+  // The world point under the cursor stays put while the zoom eases in.
+  const wx = sx / cam.zoom + cam.x, wy = sy / cam.zoom + cam.y;
+  cam.zoom += (zoomGoal.zoom - cam.zoom) * (1 - Math.exp(-dt * 14));
+  if (Math.abs(cam.zoom - zoomGoal.zoom) < 0.002) {
+    cam.zoom = zoomGoal.zoom;
+    zoomGoal = null;
+  }
+  cam.x = wx - sx / cam.zoom;
+  cam.y = wy - sy / cam.zoom;
+}
+
+const keys = new Set<string>();
+window.addEventListener("keydown", (ev) => {
+  if ((ev.target as HTMLElement).tagName === "INPUT") return;
+  const k = ev.key.toLowerCase();
+  keys.add(k);
+  if (k === " ") {
+    paused = !paused;
+    syncControls();
+    ev.preventDefault();
+  } else if (k >= "1" && k <= "6") setSpeed(Number(k) - 1);
+  else if (k === "r") toggle("roofs");
+  else if (k === "n") toggle("names");
+  else if (k === "o") toggle("orders");
+  else if (k === "v") toggle("sight");
+  else if (k === "c") toggle("chronicle");
+  else if (k === "b") openModal("Battle log", `<ul class="plain">${feedHtml(feed)}</ul>`);
+  else if (k === "f") follow = !follow;
+  else if (k === "x") setPower(power === "artillery" ? "inspect" : "artillery");
+  else if (k === "z") setPower(power === "smoke" ? "inspect" : "smoke");
+  else if (k === "k") setPower(power === "sniper" ? "inspect" : "sniper");
+  else if (k === "i") setPower("inspect");
+  else if (k === "escape") {
+    $("modal").classList.remove("open");
+    setPower("inspect");
+  }
+});
+window.addEventListener("keyup", (ev) => keys.delete(ev.key.toLowerCase()));
+
+function panCamera(dt: number): void {
+  const v = (keys.has("shift") ? 1400 : 600) * dt / cam.zoom;
+  let moved = false;
+  if (keys.has("w") || keys.has("arrowup")) { cam.y -= v; moved = true; }
+  if (keys.has("s") || keys.has("arrowdown")) { cam.y += v; moved = true; }
+  if (keys.has("a") || keys.has("arrowleft")) { cam.x -= v; moved = true; }
+  if (keys.has("d") || keys.has("arrowright")) { cam.x += v; moved = true; }
+  if (keys.has("q") || keys.has("e")) {
+    const rect = canvas.getBoundingClientRect();
+    const f = Math.exp((keys.has("e") ? 1 : -1) * dt * 1.6);
+    zoomToward(cam.zoom * f, rect.width / 2, rect.height / 2);
+  }
+  if (moved) {
+    follow = false;
+    userCamera = true;
+  }
+}
+
+function toggle(name: keyof ViewOptions): void {
+  opts[name] = !opts[name];
+  syncControls();
+  if (name === "chronicle") renderFeed();
+}
+
+function setSpeed(i: number): void {
+  speed = i;
+  paused = false;
+  syncControls();
+}
+
+function syncControls(): void {
+  $("pause").textContent = paused ? "▶" : "⏸";
+  $("speeds").innerHTML = SPEEDS.map((s, i) => `<button data-speed="${i}" class="${i === speed ? "on" : ""}">${s.label}</button>`).join("");
+  document.querySelectorAll<HTMLButtonElement>("[data-toggle]").forEach((b) => b.classList.toggle("on", opts[b.dataset.toggle as keyof ViewOptions]));
+}
+
+document.addEventListener("click", (ev) => {
+  const t = ev.target as HTMLElement;
+  const person = t.closest<HTMLElement>("[data-person]");
+  if (person) {
+    ev.preventDefault();
+    const id = Number(person.dataset.person);
+    select(id);
+    const s = world.maybe(id);
+    if (s) {
+      const rect = canvas.getBoundingClientRect();
+      cam.x = s.x * TILE - rect.width / cam.zoom / 2;
+      cam.y = s.y * TILE - rect.height / cam.zoom / 2;
+      userCamera = true;
+    }
+    if (t.closest("#modal")) $("modal").classList.remove("open");
+    return;
+  }
+  const sp = t.closest<HTMLElement>("[data-speed]");
+  if (sp) return setSpeed(Number(sp.dataset.speed));
+  const tg = t.closest<HTMLElement>("[data-toggle]");
+  if (tg) return toggle(tg.dataset.toggle as keyof ViewOptions);
+  const pw = t.closest<HTMLElement>("[data-power]");
+  if (pw) return setPower(pw.dataset.power as typeof power);
+  const tb = t.closest<HTMLElement>("[data-tab]");
+  if (tb) return setTab(tb.dataset.tab!);
+  const sq = t.closest<HTMLElement>("[data-squad]");
+  if (sq) {
+    const squad: Squad = world.squad(Number(sq.dataset.squad));
+    const men = squad.members.map((id) => world.soldier(id)).filter((m) => world.onField(m));
+    if (men.length) {
+      const rect = canvas.getBoundingClientRect();
+      cam.x = (men.reduce((a, m) => a + m.x, 0) / men.length) * TILE - rect.width / cam.zoom / 2;
+      cam.y = (men.reduce((a, m) => a + m.y, 0) / men.length) * TILE - rect.height / cam.zoom / 2;
+      userCamera = true;
+      follow = false;
+    }
+  }
+});
+
+$("pause").addEventListener("click", () => {
+  paused = !paused;
+  syncControls();
+});
+$("step").addEventListener("click", () => {
+  paused = true;
+  syncControls();
+  if (!busy) void advance(10);
+});
+$("book").addEventListener("click", () => openModal("Battle log", `<ul class="plain">${feedHtml(feed)}</ul>`));
+$("reportbtn").addEventListener("click", () => openReport());
+$("mclose").addEventListener("click", () => $("modal").classList.remove("open"));
+$("modal").addEventListener("click", (ev) => {
+  if (ev.target === $("modal")) $("modal").classList.remove("open");
+});
+$<HTMLFormElement>("seedform").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  newBattle(Number($<HTMLInputElement>("seed").value) || 1);
+});
+$("random").addEventListener("click", () => {
+  const seed = 1 + Math.floor(Math.random() * 99999);
+  $<HTMLInputElement>("seed").value = String(seed);
+  newBattle(seed);
+});
+
+const params = new URLSearchParams(location.search);
+const startSeed = Number(params.get("seed") ?? 42) || 42;
+$<HTMLInputElement>("seed").value = String(startSeed);
+newBattle(startSeed);
+requestAnimationFrame(frame);
+
+// For the console: squad.advance(60) runs a minute.
+(window as unknown as { squad: unknown }).squad = {
+  advance,
+  world: () => world,
+  /** Looks at a tile at a zoom: squad.look(70, 50, 3). */
+  look(x: number, y: number, zoom = 3) {
+    const rect = canvas.getBoundingClientRect();
+    cam.zoom = zoom;
+    cam.x = x * TILE - rect.width / zoom / 2;
+    cam.y = y * TILE - rect.height / zoom / 2;
+    userCamera = true;
+    follow = false;
+  },
+  select,
+};

@@ -4,4 +4,8 @@
     <loc>https://sim.shaykas.com/</loc>
     <changefreq>monthly</changefreq>
   </url>
+  <url>
+    <loc>https://sim.shaykas.com/squad/</loc>
+    <changefreq>monthly</changefreq>
+  </url>
 </urlset>

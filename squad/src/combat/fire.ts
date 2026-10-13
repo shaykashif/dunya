@@ -1,0 +1,191 @@
+// Small-arms fire. Each tick of firing puts a few rounds downrange; each round
+// may hit, and every round snapping past presses down the men near where it
+// lands. Most fire misses: its real work is suppression.
+import { aimFactor, sightFactor } from "../entities/body.ts";
+import { kill } from "../entities/death.ts";
+import { hitWeights, impactHealth, injure, pickPart } from "../entities/injuries.ts";
+import { moraleOnLoss, shakeMorale, suppress } from "../entities/morale.ts";
+import { clamp01, label, note } from "../entities/soldier.ts";
+import type { Rng } from "../engine/rng.ts";
+import { r3 } from "../log/events.ts";
+import type { WeaponSpec } from "../scenario/config.ts";
+import { cheb, dist } from "../world/map.ts";
+import type { Point, Soldier } from "../world/types.ts";
+import type { World } from "../world/world.ts";
+import { hearShot } from "./perception.ts";
+
+export function weaponOf(w: World, s: Soldier): WeaponSpec | null {
+  return s.weapon ? w.config.weapons[s.weapon] : null;
+}
+
+/** True if the man moved this tick (spoils his aim, and makes him easier to spot). */
+export function movedThisTick(w: World, s: Soldier): boolean {
+  const t = w.trails.get(s.id);
+  return t !== undefined && t.length > 0;
+}
+
+/**
+ * Chance one round hits `target`, as the engine judges it. Shooter skill,
+ * wounds, suppression and posture; range; the target's size and cover.
+ */
+export function hitChance(w: World, shooter: Soldier, target: Soldier, spec: WeaponSpec, vis: number): number {
+  const d = dist(shooter, target);
+  if (d > spec.maxRange * 1.2) return 0;
+  const cfg = w.config;
+  const skill = (0.6 + 0.8 * shooter.traits.marksmanship) * (shooter.experience === "veteran" ? 1.12 : shooter.experience === "green" ? 0.85 : 1);
+  const cover = w.map.cover(target, shooter, target.posture);
+  let p = spec.accuracy * Math.exp(-d / spec.rangeScale) * skill;
+  p *= cfg.posture.steadiness[shooter.posture] * (1 - cfg.suppression.accuracyLoss * shooter.suppression) * aimFactor(shooter);
+  p *= Math.pow(vis, 0.7) * cfg.posture.size[target.posture] * (1 - cover);
+  if (movedThisTick(w, shooter)) p *= cfg.fire.movingShooter;
+  if (movedThisTick(w, target)) p *= cfg.fire.movingTarget;
+  return clamp01(p);
+}
+
+/** What a bullet does to a man: a wound to some part, the health it costs, perhaps death. */
+export function bulletWound(w: World, rng: Rng, shooter: Soldier | null, target: Soldier, spec: WeaponSpec, range: number, cause: string): void {
+  const cover = shooter ? w.map.cover(target, shooter, target.posture) : 0;
+  const part = pickPart(rng, hitWeights(target.posture, cover));
+  const sev = Math.min(1, (spec.severity[0] + rng.next() * (spec.severity[1] - spec.severity[0])) * (1 - 0.3 * Math.min(1, range / spec.maxRange)));
+  const health = impactHealth(w, part, sev);
+  injure(w, target, part, "gunshot", sev, cause, shooter?.id ?? null, health);
+  // A heavy round can break the bone it passes through.
+  const limb = part.endsWith("arm") || part.endsWith("leg");
+  if (limb && sev > 0.65 && rng.chance(0.35)) injure(w, target, part, "fracture", sev * 0.9, cause, shooter?.id ?? null);
+  target.act = null;
+  target.lastHitTick = w.tick;
+  target.posture = "prone";
+  suppress(w, target, 0.35);
+  if (target.survival.health <= 0) {
+    kill(w, target, "killed", shooter?.id ?? null);
+    return;
+  }
+  shakeMorale(w, target, w.config.morale.selfHit);
+  moraleOnLoss(w, target, false);
+}
+
+/**
+ * One tick of fire at a seen man (`targetId`) or at a remembered position
+ * (`at` only). Returns the number of rounds fired.
+ */
+export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number | null, purpose: "aimed" | "suppress"): number {
+  const spec = weaponOf(w, shooter);
+  if (!spec || shooter.reloadLeft > 0 || shooter.loaded <= 0) return 0;
+  const cfg = w.config;
+  const rng = w.rng.get("fire");
+  let rate = spec.rate;
+  if (shooter.weapon === "mg42") {
+    // Someone has to feed the belt.
+    const fed = w.friendsNear(shooter, 2).some((f) => w.able(f) && (f.role === "asst_gunner" || f.role === "ammo_bearer"));
+    if (!fed) rate *= cfg.fire.unfedFactor;
+  }
+  if (shooter.pinned) rate *= 0.5;
+  shooter.fireAcc += rate;
+  let rounds = Math.min(Math.floor(shooter.fireAcc), shooter.loaded);
+  shooter.fireAcc -= Math.floor(shooter.fireAcc);
+  if (rounds <= 0) return 0;
+  shooter.loaded -= rounds;
+  shooter.shots += rounds;
+  shooter.lastFiredTick = w.tick;
+  shooter.dir = at.x < shooter.x ? -1 : at.x > shooter.x ? 1 : shooter.dir;
+
+  const target = w.maybe(targetId);
+  const hits: number[] = [];
+  const range = dist(shooter, at);
+  // Who is actually near the aim point: the target, or whoever happens to be there.
+  const near = w.soldiers.filter((o) => o.id !== shooter.id && w.onField(o) && dist(o, at) <= cfg.fire.suppressRadius + 0.5);
+  const smoke = w.smoke;
+  for (let r = 0; r < rounds; r++) {
+    let victim: Soldier | null = null;
+    if (target && w.onField(target) && purpose === "aimed") {
+      const vis = w.map.visibility(shooter.x, shooter.y, target.x, target.y, smoke);
+      if (vis > 0 && rng.chance(hitChance(w, shooter, target, spec, vis))) victim = target;
+    } else {
+      // Fire at a hedge line or window: anyone right there may be hit, at long odds.
+      for (const o of near) {
+        if (o.side === shooter.side || cheb(o, at) > 1) continue;
+        const vis = w.map.visibility(shooter.x, shooter.y, o.x, o.y, smoke);
+        if (vis > 0 && rng.chance(hitChance(w, shooter, o, spec, vis) * cfg.fire.blindFactor)) {
+          victim = o;
+          break;
+        }
+      }
+    }
+    // A stray round may find a friend standing right by the aim point.
+    if (!victim) {
+      for (const o of near) {
+        if (o.side !== shooter.side || cheb(o, at) > 1 || o.posture === "prone") continue;
+        if (rng.chance(cfg.fire.friendlyFireChance)) {
+          victim = o;
+          w.emit("friendly_fire", [shooter.id, o.id], { by: shooter.id, victim: o.id });
+          break;
+        }
+      }
+    }
+    if (victim && victim.status !== "dead") {
+      hits.push(victim.id);
+      shooter.hits++;
+      bulletWound(w, rng, shooter, victim, spec, range, `${label(shooter)}'s ${spec.name}`);
+    }
+  }
+
+  // Every round snapping past presses down the men around the aim point.
+  for (const o of near) {
+    if (o.status !== "active" || o.side === shooter.side) continue;
+    const d = dist(o, at);
+    const fall = 1 - Math.min(1, d / (cfg.fire.suppressRadius + 0.5));
+    suppress(w, o, spec.suppression * rounds * fall);
+    o.underFire = { by: shooter.id, x: shooter.x, y: shooter.y, tick: w.tick };
+  }
+  if (target && target.status === "active") target.underFire = { by: shooter.id, x: shooter.x, y: shooter.y, tick: w.tick };
+
+  // Machine-gun barrels heat up.
+  if (spec.heat > 0) {
+    shooter.heat = clamp01(shooter.heat + spec.heat * rounds);
+    if (shooter.heat >= 1) {
+      shooter.reloadLeft = cfg.fire.barrelChangeTicks;
+      shooter.heat = 0.3;
+      w.emit("barrel_change", [shooter.id], { by: shooter.id });
+      note(w, shooter, "changed the hot barrel");
+    }
+  }
+  w.emit("fire", [shooter.id], { by: shooter.id, weapon: shooter.weapon, from: [shooter.x, shooter.y], at: [at.x, at.y], target: targetId, rounds, hits, purpose, side: shooter.side });
+  hearShot(w, shooter, spec);
+  if (shooter.loaded === 0 && shooter.ammo > 0 && shooter.reloadLeft === 0) startReload(w, shooter);
+  return rounds;
+}
+
+export function startReload(w: World, s: Soldier): void {
+  const spec = weaponOf(w, s);
+  if (!spec || s.ammo <= 0 || s.loaded >= spec.capacity) return;
+  s.reloadLeft = Math.max(1, Math.round(spec.reload * (1.6 - 0.6 * aimFactor(s)) * (s.experience === "green" ? 1.2 : 1)));
+  w.emit("reload", [s.id], { by: s.id, weapon: s.weapon });
+}
+
+/** Called each tick: reloads and barrel changes come to an end; barrels cool. */
+export function weaponStep(w: World): void {
+  for (const s of w.soldiers) {
+    if (s.status !== "active" && s.status !== "casualty") continue;
+    if (s.heat > 0) s.heat = Math.max(0, s.heat - w.config.fire.coolPerTick);
+    if (s.reloadLeft <= 0) continue;
+    s.reloadLeft--;
+    if (s.reloadLeft === 0) {
+      const spec = weaponOf(w, s);
+      if (!spec) continue;
+      const take = Math.min(spec.capacity - s.loaded, s.ammo);
+      s.loaded += take;
+      s.ammo -= take;
+    }
+  }
+}
+
+/** True if a man still has anything to shoot with. */
+export function hasAmmo(s: Soldier): boolean {
+  return s.weapon !== null && s.loaded + s.ammo > 0;
+}
+
+export function sightRange(w: World, s: Soldier): number {
+  return w.config.perception.maxRange * sightFactor(s);
+}
+
+export { r3 };
