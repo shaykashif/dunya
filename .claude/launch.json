@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "village-viewer",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--no-warnings", "village/viewer/serve.ts", "5173"],
+      "port": 5173
+    }
+  ]
+}
