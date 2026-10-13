@@ -259,6 +259,11 @@ export const elope: ActionDef = {
         feel(w, m, (m.relationships[lover.id]?.bond ?? 0) > 0.6 ? "heartbroken" : "angry", `${firstName(lover)} ran away with ${firstName(lover === p ? o : p)}`, 0.6);
       }
     }
+    // Those who hold to the old ways are scandalised; romantics are not.
+    for (const m of w.active()) {
+      if (m.id === p.id || m.id === o.id || w.ageYears(m) < 14) continue;
+      if (m.values.tradition > 0.45 && m.values.romance < 0.3) feel(w, m, "scandalized", `${firstName(p)} and ${firstName(o)} eloped against their elders`, 0.2 + 0.2 * m.values.tradition);
+    }
     w.addFeud(p.householdId, o.householdId, w.config.feud.elopement, "elopement");
     w.addFeud(o.householdId, p.householdId, w.config.feud.elopement, "elopement");
     for (const lover of [p, o]) {

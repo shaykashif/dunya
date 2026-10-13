@@ -96,9 +96,16 @@ const WEATHER_TEXT: Record<string, string> = {
 };
 let lastWeatherLine = -Infinity;
 
+const lastPalisade: Record<number, number> = {};
+
 export function resetFeed(): void {
   lastWeatherLine = -Infinity;
+  for (const k of Object.keys(lastPalisade)) delete lastPalisade[Number(k)];
 }
+
+const PROJECT_TEXT: Record<string, string> = { bed: "a bed", table: "a table", chair: "a chair", chest: "a chest", altar: "a household altar", well: "a new well", pump: "a pump on the well", bridge: "a bridge over the river", extension: "new rooms", fence: "a palisade round the animal pen", temple: "a temple" };
+const QUALITY = ["", "well-crafted", "finely-crafted", "superior", "exceptional", "masterful"];
+const CAUSES: Record<string, string> = { starvation: "hunger", exposure: "the cold", dehydration: "thirst", exhaustion: "exhaustion", infection: "a festering wound", wounds: "their wounds" };
 
 export function describe(e: SimEvent, w: World): FeedLine | null {
   const d = e.data;
@@ -209,6 +216,53 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
       return line("danger", `${first(w, d.by)} killed a wolf.`, [d.by]);
     case "wolves_driven_off":
       return line("danger", `A group drove the wolves off.`, d.by as number[]);
+    case "project_planned": {
+      const who = d.household === null ? "The village" : `The ${w.households[d.household as number]?.name} house`;
+      return line("village", `${who} sets out to build ${PROJECT_TEXT[String(d.kind)] ?? d.kind}.`, [e.actors[0]]);
+    }
+    case "project_completed": {
+      const q = Number(d.quality ?? 0);
+      const k = String(d.kind);
+      const fine = q > 0 ? `${QUALITY[q]} ` : "";
+      const text =
+        k === "bridge" ? `A bridge now spans the river, built by ${first(w, d.by)} and others.`
+        : k === "temple" ? `The temple is finished; ${first(w, d.by)} set the last stone.`
+        : k === "extension" ? `${first(w, d.by)} finished new rooms on the ${w.households[d.household as number]?.name} house.`
+        : k === "well" ? `${first(w, d.by)} finished digging a new well.`
+        : k === "pump" ? `${first(w, d.by)} fitted a pump to the well.`
+        : k === "fence" ? `${first(w, d.by)} finished a palisade round the ${w.households[d.household as number]?.name} pen.`
+        : `${first(w, d.by)} made a ${fine}${k}.`;
+      return line("village", text, [d.by]);
+    }
+    case "project_abandoned":
+      return line("village", `Work on ${PROJECT_TEXT[String(d.kind)] ?? d.kind} was given up.`);
+    case "festival_began":
+      return line("love", `${String(d.name).charAt(0).toUpperCase()}${String(d.name).slice(1)} begins in the square: music, food and dancing.`);
+    case "festival_ended":
+      return line("love", `${String(d.name).charAt(0).toUpperCase()}${String(d.name).slice(1)} is over; ${d.attended} came.`);
+    case "inquest_called":
+      return line("justice", `The council is called to examine ${first(w, d.person)}'s body.`, [d.person, ...(d.judges as number[])]);
+    case "inquest_held": {
+      const f = String(d.finding);
+      const text = f === "murder" ? `The council rules that ${first(w, d.person)} was murdered, and opens an investigation.` : f === "wolves" ? `The council rules that wolves killed ${first(w, d.person)}; the hunters are sent after the pack.` : `The council rules that ${first(w, d.person)} died of ${CAUSES[String(d.cause)] ?? d.cause}; they are to be buried.`;
+      return line("justice", text, [d.person]);
+    }
+    case "game_arrived":
+      return line("life", `A small herd of deer has wandered in from beyond the woods.`);
+    case "palisade_held":
+      if (e.tick - (lastPalisade[d.household as number] ?? -Infinity) < 72) return null;
+      lastPalisade[d.household as number] = e.tick;
+      return line("danger", `A wolf prowled the ${w.households[d.household as number]?.name} pen but could not get through the palisade.`);
+    case "wolf_hunt":
+      return (d.killed as number) > 0 ? line("danger", `${first(w, d.hunter)} hunted the wolves at their den and killed ${d.killed}.`, [d.hunter]) : null;
+    case "coat_sewn":
+      return line("life", `${first(w, d.by)} sewed ${d.by === d.for ? "themselves" : first(w, d.for)} a fur coat.`, [d.by, d.for]);
+    case "argument":
+      return line("village", `${first(w, d.a)} and ${first(w, d.b)} argued about ${String(d.over).replace("_", " ")}.`, [d.a, d.b]);
+    case "skill_up":
+      return (d.level as number) >= 12 ? line("life", `${first(w, d.person)} has become a ${d.title}.`, [d.person]) : null;
+    case "hunted":
+      return d.kind === "wolf" && d.killed ? line("danger", `${first(w, e.actors[0])} shot a wolf while hunting.`, [e.actors[0]]) : null;
     case "livestock_killed":
       return line("danger", `Wolves killed one of the ${w.households[d.household as number]?.name} house's ${d.kind === "sheep" ? "sheep" : `${d.kind}s`}.`, []);
     case "gunshot":

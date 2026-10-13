@@ -127,6 +127,24 @@ export const MOUND = fromRows(["........", "..DDDD..", ".DDEDDD.", "DDDDDDDD", "
 
 /** 7x7 activity icons shown above villagers. */
 const ICON_ROWS: Record<string, readonly string[]> = {
+  rescue: ["...R...", "...R...", ".RRRRR.", "...R...", "...R...", ".......", "......."],
+  carry: ["..MM...", ".MMMM..", "MMMMMMM", ".WWWW..", ".W..W..", ".W..W..", "......."],
+  tend_wounded: ["WWWWWWW", "WWWRWWW", "WWRRRWW", "WWWRWWW", "WWWWWWW", ".......", "......."],
+  seek_care: ["WWWWWWW", "WWWRWWW", "WWRRRWW", "WWWRWWW", "WWWWWWW", ".......", "......."],
+  craft: ["....DD.", "...DD..", "..DD...", ".SDD...", "SSS....", ".S.....", "......."],
+  masonry: [".SSSSS.", ".SSSSS.", "...D...", "...D...", "...D...", ".......", "SSSSSSS"],
+  patrol: ["...Y...", "..YOY..", "...D...", "...D...", "...D...", "...D...", "......."],
+  intimidate: ["RRR.RRR", "R.R.R.R", "RRR.RRR", ".......", "..RRR..", ".R...R.", "......."],
+  commission: [".WWWWW.", ".WKKKW.", ".WWWWW.", ".WKKKW.", ".WWWWW.", ".WKKKW.", ".WWWWW."],
+  haul: ["DDDDDDD", "DYDDYDD", "DDDDDDD", ".......", "..WWW..", ".W...W.", "......."],
+  construct: ["SSS....", "SSS....", ".D.....", "..D....", "...D.SS", "....DSS", "......."],
+  quarry: ["...S...", "..SSS..", ".SSSSS.", "...D...", "...D...", "SSSSSSS", "SKSKSKS"],
+  pray: ["...Y...", "..YYY..", "...Y...", ".WWWWW.", ".W...W.", ".WWWWW.", "......."],
+  celebrate: ["Y.R.B.Y", ".......", "R.Y.R.B", ".......", "B.R.Y.R", ".......", "Y.B.R.Y"],
+  wolf_hunt: ["G.....G", "GG...GG", "GGGGGGG", "GKGGGKG", ".GGGGG.", "..GGG..", "...R..."],
+  skin: ["...SS..", "..SS...", ".SS....", "DDDDD..", "DDDDDD.", ".DDDD..", "......."],
+  sew: ["......S", ".....S.", "....S..", "...S...", "..S....", "WWW....", "W......"],
+  inquest: [".KKK...", "KWWWK..", "KWLWK..", "KWWWK..", ".KKKS..", "....SS.", ".....SS"],
   eat: ["...WW..", "..WWWW.", "..WMMW.", "...MM..", "..BB...", ".BB....", "B......"],
   sleep: ["ZZZZ...", "...Z...", "..Z....", ".Z.....", "ZZZZ...", ".....zz", "......z"],
   drink: ["...B...", "..BBB..", ".BBBBB.", ".BBLBB.", ".BBBBB.", "..BBB..", "......."],
@@ -185,16 +203,19 @@ const ANIMAL_ROWS: Record<string, readonly string[]> = {
   cow: ["..........HH", ".BWWBBWWBBHH", "BBWWBBBWWBHE", "BWWBBWWBBBHH", "BBBWWBBBWWB.", ".B.B....B.B.", ".B.B....B.B."],
   chicken: ["...RR.", "..WWWY", ".WWWE.", "WWWWW.", ".WWW..", "..Y.Y."],
   wolf: ["..........GG", "G.GGGGGGGGGE", "GGGGGGGGGGGG", ".GGGGGGGGG..", ".G.G...G.G..", ".G.G...G.G.."],
+  deer: ["..T.T.....", "...TT...EE", "........BB", ".BBBBBBBBB", "WBBBBBBBB.", ".BBBBBBB..", ".B.B..B.B.", ".B.B..B.B.", ".K.K..K.K."],
+  rabbit: ["..WW.", "...WW", ".GGGE", "GGGGG", ".G.G."],
+  fox: ["........OO", "W......OOE", "OOOOOOOOO.", ".OOOOOOO..", ".K.K..K.K."],
   horse: ["..........MM", ".........MMM", "..BBBBBBBBME", "MBBBBBBBBBB.", "MBBBBBBBBB..", ".BBBBBBBB...", ".B.B..B.B...", ".B.B..B.B...", ".K.K..K.K..."],
 };
-const ANIMAL_PAL: Palette = { W: "#f2efe6", K: "#3a3a3a", E: "#111111", B: "#7a4a2a", H: "#efe8dc", R: "#d83a2a", Y: "#e8b83a", G: "#7d8590", M: "#4a2e18" };
+const ANIMAL_PAL: Palette = { W: "#f2efe6", K: "#3a3a3a", E: "#111111", B: "#7a4a2a", H: "#efe8dc", R: "#d83a2a", Y: "#e8b83a", G: "#7d8590", M: "#4a2e18", T: "#c8b090", O: "#d8702a" };
 const animalCache = new Map<string, HTMLCanvasElement>();
 export function animalSprite(kind: string, flip: boolean): HTMLCanvasElement {
   const key = `${kind}:${flip ? 1 : 0}`;
   let c = animalCache.get(key);
   if (!c) {
     const rows = ANIMAL_ROWS[kind] ?? ANIMAL_ROWS.sheep!;
-    const pal = kind === "cow" ? { ...ANIMAL_PAL, B: "#3a2a20", W: "#f2efe6" } : ANIMAL_PAL;
+    const pal = kind === "cow" ? { ...ANIMAL_PAL, B: "#3a2a20", W: "#f2efe6" } : kind === "rabbit" ? { ...ANIMAL_PAL, G: "#9a7a5a" } : ANIMAL_PAL;
     c = fromRows(flip ? rows.map((r) => [...r].reverse().join("")) : rows, pal);
     animalCache.set(key, c);
   }

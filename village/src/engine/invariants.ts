@@ -28,6 +28,7 @@ export function checkInvariants(w: World): void {
   w.farms.forEach((f, i) => checkNonNegative(`farm ${i}`, f.crop));
   for (const b of w.buildings) if (b.hearth) checkNonNegative(`hearth ${b.id}`, b.hearth);
   for (const key of Object.keys(w.tileItems)) checkNonNegative(`tile ${key}`, w.tileItems[Number(key)]!);
+  for (const pr of w.projects) checkNonNegative(`site ${pr.id}`, pr.stock);
 
   for (const p of w.people) {
     const gone = !p.alive || p.exiled;

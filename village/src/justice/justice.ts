@@ -14,6 +14,7 @@ import { holderInv, transfer, transferAll } from "../world/items.ts";
 import { FOOD_KINDS, type EntityRef, type HolderRef, type Hearing, type Person, type Sentence, type SentenceKind } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { normFor } from "./norms.ts";
+import { inquestStep } from "./inquest.ts";
 
 export function hearingCaseRef(h: Hearing): CaseRef {
   return { kind: h.kind, place: h.place, timeFrom: h.timeFrom, timeTo: h.timeTo };
@@ -415,7 +416,9 @@ function resentAcquittal(w: World, h: Hearing, accused: Person, judges: Person[]
   const weight = killing ? w.config.retribution.killingWeight : 1;
   for (const p of aggrieved(w, h, accused)) {
     const before = p.injustice[accused.id] ?? 0;
-    p.injustice[accused.id] = Math.round((before + weight) * 1000) / 1000;
+    // Those who care about fairness feel it more; those who hold to the law accept the council's word.
+    const felt = weight * Math.max(0.3, 1 + 0.4 * p.values.fairness - 0.3 * p.values.law);
+    p.injustice[accused.id] = Math.round((before + felt) * 1000) / 1000;
     let total = 0;
     for (const key of Object.keys(p.injustice)) total += p.injustice[Number(key)]!;
     adjustTrust(p, accused.id, -0.3, w.tick);
@@ -478,6 +481,8 @@ export function enforceSentence(w: World, s: Sentence, executor: Person, rng: Rn
     case "restitution": {
       const to = victimHolder(w, s.victim) ?? { t: "communal" as const };
       let owed = s.qty * cfg.restitutionMultiplier;
+      // Stolen silver goes back first, and counts toward what is owed.
+      owed -= transfer(w, { t: "person", id: convict.id }, to, "valuables", convict.inventory.valuables, "restitution", [executor.id]) * 3;
       for (const from of [{ t: "person" as const, id: convict.id }, { t: "household" as const, id: convict.householdId }]) {
         const inv = holderInv(w, from);
         for (const kind of FOOD_KINDS) {
@@ -522,6 +527,7 @@ export function enforceSentence(w: World, s: Sentence, executor: Person, rng: Rn
  * upkeep, detention, and daily obligation and belief upkeep.
  */
 export function justiceStep(w: World): void {
+  inquestStep(w);
   processCaseChecks(w);
   runDeductions(w);
 

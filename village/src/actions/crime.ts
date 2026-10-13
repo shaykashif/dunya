@@ -8,7 +8,7 @@ import { startChase, strikeCandidates, theftTarget } from "./intrigue.ts";
 import { rampageCandidates } from "./madness.ts";
 import { bestFood, foodUnits, holderInv, transfer } from "../world/items.ts";
 import { createTrace } from "../world/traces.ts";
-import type { Building, Crime, EntityRef, Person, Point } from "../world/types.ts";
+import type { Building, Crime, EntityRef, ItemKind, Person, Point } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { cand, desperation, isDetained, nearbyPeople, travelTicks } from "./helpers.ts";
 import type { ActionDef, CandidateAction } from "./types.ts";
@@ -53,7 +53,9 @@ export const steal: ActionDef = {
     for (const pl of activePlots(w, p, "theft")) {
       if (!dark && !desperate) continue;
       const h = pl.targetHolder!;
-      if (foodUnits(holderInv(w, h)) <= 0) continue;
+      const inv = holderInv(w, h);
+      const greed = pl.motive === "greed";
+      if (greed ? inv.valuables + inv.tool <= 0 : foodUnits(inv) <= 0) continue;
       const t = theftTarget(w, h);
       const qty = 2 + Math.round(p.personality.greed * 2);
       const building = t.buildingId === null ? null : w.buildings[t.buildingId]!;
@@ -72,7 +74,8 @@ export const steal: ActionDef = {
           norm: true,
           qty,
           source: h,
-          effects: { food: Math.min(qty * 0.25, 1 - p.survival.food) * (1 - risk), greed: 0.3 + qty * 0.05, duty: 0.3 },
+          // The same pull that made them plan it, tempered by the chance of being seen.
+          effects: greed ? { greed: (1.2 + Math.min(1, (inv.valuables + inv.tool * 0.5) / 6) * 0.9) * (1 - 0.5 * risk), status: 0.1, duty: 0.3 } : { food: Math.min(qty * 0.25, 1 - p.survival.food) * (1 - risk), greed: 0.3 + qty * 0.05, duty: 0.3 },
         }),
       );
     }
@@ -177,16 +180,26 @@ export const steal: ActionDef = {
 
     const inv = holderInv(w, src);
     const ev = ctx.emit("theft", [p.id], { thief: p.id, victim: src, wanted: c.qty });
-    const crime = recordCrime(w, foodUnits(inv) > 0 ? "theft" : "attempted_theft", p.id, src, place, ev.seq, 0);
+    const crime = recordCrime(w, foodUnits(inv) + inv.valuables + inv.tool > 0 ? "theft" : "attempted_theft", p.id, src, place, ev.seq, 0);
     let taken = 0;
     let item = "";
-    for (let i = 0; i < (c.qty ?? 1); i++) {
+    // A greedy thief goes for the silver and the tools; a hungry one for food.
+    const greedy = pl?.motive === "greed" || (src.t === "person" && p.personality.greed > 0.7);
+    const wanted: ItemKind[] = greedy ? ["valuables", "valuables", "tool"] : [];
+    for (const kind of wanted) {
+      if (inv[kind] <= 0) continue;
+      taken += transfer(w, src, { t: "person", id: p.id }, kind, 1, "stolen", [p.id]);
+      item = item || kind;
+    }
+    for (let i = taken; i < (greedy ? 0 : c.qty ?? 1); i++) {
       const kind = bestFood(inv);
       if (!kind) break;
       taken += transfer(w, src, { t: "person", id: p.id }, kind, 1, "stolen", [p.id]);
       item = item || kind;
     }
     crime.qty = taken;
+    // A thief who got away with it lies low for a while, longer with loot to hide.
+    if (taken > 0) p.cooldowns["plot:theft"] = w.tick + w.days(4 + p.inventory.valuables);
     if (taken > 0) {
       const t = createTrace(w, "item_missing", building ? insideOf(w, building) : place, [{ kind: "holder", holder: src }], { holder: src, item, qty: taken }, crime.id);
       crime.traceIds.push(t.id);

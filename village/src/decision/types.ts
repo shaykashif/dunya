@@ -1,6 +1,6 @@
 import type { CandidateAction } from "../actions/types.ts";
 import type { Belief } from "../perception/beliefs.ts";
-import type { Emotions, Obligation, Person, Personality, Survival, Wants } from "../world/types.ts";
+import type { Emotions, NeedKind, Obligation, Person, Personality, Survival, Value, Wants } from "../world/types.ts";
 
 /** What a person knows when deciding: their own state and beliefs, never world truth. */
 export interface DecisionContext {
@@ -27,6 +27,11 @@ export interface DecisionContext {
   homeFood: number;
   /** How desperate hunger makes them, in [0, 1]. */
   desperation: number;
+  /** What they hold dear, in [-1, 1]. */
+  values: Readonly<Record<Value, number>>;
+  /** How well each personal need has been met, and how strongly each is felt. */
+  focus: Readonly<Record<NeedKind, number>>;
+  needStrength: Readonly<Record<NeedKind, number>>;
 }
 
 export interface Decision {

@@ -1,4 +1,12 @@
 import { activeObligations, createObligation, fulfillObligation } from "../entities/obligations.ts";
+import { satisfy, sharpestClash } from "../entities/culture.ts";
+import type { Value } from "../world/types.ts";
+
+const VALUE_TOPIC: Record<Value, string> = {
+  law: "the law", family: "family", tradition: "the old ways", craftsmanship: "good work", hard_work: "hard work", leisure: "idleness",
+  martial: "fighting", peace: "keeping the peace", nature: "the forest", fairness: "what is fair", cooperation: "helping others",
+  romance: "love", truth: "honesty", merriment: "merrymaking", piety: "the gods",
+};
 import { adjustBond, adjustTrust, cheb, clamp01, feel, firstName, isKin, rel } from "../entities/person.ts";
 import { CRIME_PREDICATES } from "../perception/beliefs.ts";
 import { addBelief } from "../perception/store.ts";
@@ -268,6 +276,19 @@ export const socialize: ActionDef = {
     rel(t, p.id, w.tick).together += 4;
     t.wants.companionship = clamp01(t.wants.companionship + 0.2);
     ctx.emit("socialized", [p.id, t.id], { a: p.id, b: t.id });
+    satisfy(p, "leisure", 0.2);
+    satisfy(t, "leisure", 0.15);
+    // People whose values clash sometimes end up arguing.
+    const clash = sharpestClash(p, t);
+    if (clash && ctx.rng.chance(w.config.culture.argueChance)) {
+      adjustTrust(p, t.id, -0.06, w.tick);
+      adjustTrust(t, p.id, -0.06, w.tick);
+      adjustBond(p, t.id, -warmth * 2, w.tick);
+      adjustBond(t, p.id, -warmth * 2, w.tick);
+      ctx.emit("argument", [p.id, t.id], { a: p.id, b: t.id, over: clash });
+      feel(w, p, "annoyed", `argued with ${firstName(t)} about ${VALUE_TOPIC[clash]}`, 0.25);
+      feel(w, t, "annoyed", `argued with ${firstName(p)} about ${VALUE_TOPIC[clash]}`, 0.25);
+    }
     if (wasLonely) feel(w, p, "happy", `spent time with ${firstName(t)} after being lonely`, 0.3);
     const filter = gossipFilter(w);
     testify(w, p, t, { context: "gossip", filter, maxClaims: 1 });

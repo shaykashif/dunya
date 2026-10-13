@@ -22,6 +22,11 @@ export function holderInv(w: World, h: HolderRef): Inventory {
       const i = w.map.idx(h.x, h.y);
       return (w.tileItems[i] ??= emptyInventory());
     }
+    case "site": {
+      const pr = w.projects.find((x) => x.id === h.id);
+      if (!pr) throw new Error(`no project ${h.id}`);
+      return pr.stock;
+    }
   }
 }
 
@@ -32,6 +37,7 @@ export function holderLabel(h: HolderRef): string {
     case "hearth": return `hearth:${h.id}`;
     case "farm": return `farm:${h.id}`;
     case "tile": return `tile:${h.x},${h.y}`;
+    case "site": return `site:${h.id}`;
     default: return h.t;
   }
 }
@@ -98,5 +104,6 @@ export function worldTotals(w: World): Inventory {
   for (const f of w.farms) add(f.crop);
   for (const b of w.buildings) if (b.hearth) add(b.hearth);
   for (const key of Object.keys(w.tileItems)) add(w.tileItems[Number(key)]!);
+  for (const pr of w.projects) add(pr.stock);
   return total;
 }

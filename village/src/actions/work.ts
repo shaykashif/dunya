@@ -1,4 +1,6 @@
 import { workAccident } from "../entities/injuries.ts";
+import { practise, skillLevel } from "../entities/skills.ts";
+import { projectWood } from "./build.ts";
 import { clamp01, feel } from "../entities/person.ts";
 import { consume, produce, transfer } from "../world/items.ts";
 import type { HolderRef, Person, Point } from "../world/types.ts";
@@ -18,9 +20,10 @@ export const gatherWood: ActionDef = {
     const cfg = w.config.wood;
     if (w.ageYears(p) < cfg.minAge) return [];
     const stock = householdWood(w, p.householdId) + p.inventory.wood;
-    if (stock >= cfg.householdTarget) return [];
+    const target = cfg.householdTarget + projectWood(w, p.householdId);
+    if (stock >= target) return [];
     const dest = w.map.nearest("forest", p);
-    const shortage = 1 - stock / cfg.householdTarget;
+    const shortage = 1 - stock / target;
     return [
       cand("gather_wood", "gather_wood", "gather firewood", {
         dest,
@@ -34,7 +37,8 @@ export const gatherWood: ActionDef = {
   resolve(p, _c, w, ctx) {
     const cfg = w.config.wood;
     workAccident(w, p, ctx.rng, "woodcutting");
-    const qty = cfg.yieldMin + ctx.rng.int(cfg.yieldMax - cfg.yieldMin + 1);
+    const qty = cfg.yieldMin + ctx.rng.int(cfg.yieldMax - cfg.yieldMin + 1) + Math.floor(skillLevel(w, p, "woodcutting") / 6);
+    practise(w, p, "woodcutting", w.config.wood.gatherDuration);
     produce(w, { t: "person", id: p.id }, "wood", qty, "gathered", [p.id]);
     return ctx.events;
   },
@@ -139,6 +143,7 @@ export const plant: ActionDef = {
   resolve(p, _c, w, ctx) {
     const farm = w.farms[p.householdId]!;
     farm.work++;
+    practise(w, p, "farming", w.config.fields.plantDuration);
     if (!farm.planted) {
       farm.planted = true;
       ctx.emit("field_planted", [p.id], { household: p.householdId });
@@ -166,7 +171,8 @@ export const harvest: ActionDef = {
     const cfg = w.config.fields;
     const farm: HolderRef = { t: "farm", id: p.householdId };
     const tithe = transfer(w, farm, { t: "communal" }, "grain", cfg.harvestTithe, "tithe", [p.id]);
-    const amount = Math.round((cfg.harvestPerAction - cfg.harvestTithe) * (p.inventory.tool > 0 ? 1 : 0.5));
+    const amount = Math.round((cfg.harvestPerAction - cfg.harvestTithe) * (p.inventory.tool > 0 ? 1 : 0.5)) + (skillLevel(w, p, "farming") >= 10 ? 1 : 0);
+    practise(w, p, "farming", cfg.harvestDuration);
     const kept = transfer(w, farm, { t: "household", id: p.householdId }, "grain", amount, "harvest", [p.id]);
     if (tithe + kept === 0) ctx.success = false;
     else feel(w, p, "content", "brought in the harvest", 0.2);

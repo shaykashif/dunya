@@ -10,6 +10,8 @@ const MOVE_COST: Record<Terrain, number> = {
   water: Infinity,
   wall: Infinity,
   well: Infinity,
+  rock: 2,
+  bridge: 0.8,
 };
 
 export class GameMap {
@@ -21,6 +23,8 @@ export class GameMap {
   forest: Point[] = [];
   bank: Point[] = [];
   field: Point[] = [];
+  /** Rocky ground where stone can be quarried. */
+  rock: Point[] = [];
   /** The town well; `wells` lists every well, including one per compound. */
   well: Point = { x: 0, y: 0 };
   wells: Point[] = [];
@@ -33,6 +37,9 @@ export class GameMap {
   private nearestForestIdx: number[] = [];
   private nearestBankIdx: number[] = [];
   private nearestFieldIdx: number[] = [];
+  private nearestRockIdx: number[] = [];
+  /** Connected area of passable ground each tile belongs to (-1 if impassable), for quick reachability. */
+  region: Int32Array = new Int32Array(0);
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -141,6 +148,7 @@ export class GameMap {
     this.forest = [];
     this.bank = [];
     this.field = [];
+    this.rock = [];
     for (let y = 0; y < this.height; y++) {
       for (let x = 0; x < this.width; x++) {
         const t = this.at(x, y);
@@ -149,6 +157,8 @@ export class GameMap {
           if (this.neighbors4(x, y).some((p) => this.at(p.x, p.y) !== "forest" && this.passable(p.x, p.y))) this.forest.push({ x, y });
         } else if (t === "field") {
           this.field.push({ x, y });
+        } else if (t === "rock") {
+          this.rock.push({ x, y });
         } else if (this.passable(x, y) && this.neighbors4(x, y).some((p) => this.at(p.x, p.y) === "water")) {
           this.bank.push({ x, y });
         }
@@ -157,10 +167,44 @@ export class GameMap {
     this.nearestForestIdx = this.nearestTable(this.forest);
     this.nearestBankIdx = this.nearestTable(this.bank);
     this.nearestFieldIdx = this.nearestTable(this.field);
+    this.nearestRockIdx = this.nearestTable(this.rock);
+    this.labelRegions();
   }
 
-  nearest(kind: "forest" | "bank" | "field", from: Point): Point {
-    const table = kind === "forest" ? this.nearestForestIdx : kind === "bank" ? this.nearestBankIdx : this.nearestFieldIdx;
+  private labelRegions(): void {
+    const n = this.width * this.height;
+    this.region = new Int32Array(n).fill(-1);
+    const queue = new Int32Array(n);
+    let next = 0;
+    for (let s = 0; s < n; s++) {
+      if (this.region[s] !== -1 || !Number.isFinite(MOVE_COST[this.terrain[s]!])) continue;
+      let head = 0, tail = 0;
+      queue[tail++] = s;
+      this.region[s] = next;
+      while (head < tail) {
+        const cur = queue[head++]!;
+        const x = cur % this.width, y = (cur - x) / this.width;
+        for (const nb of this.neighbors4(x, y)) {
+          const i = this.idx(nb.x, nb.y);
+          if (this.region[i] !== -1 || !Number.isFinite(MOVE_COST[this.terrain[i]!])) continue;
+          this.region[i] = next;
+          queue[tail++] = i;
+        }
+      }
+      next++;
+    }
+  }
+
+  /** True if someone could walk from a to b (or to a tile beside b, if b itself cannot be stood on). */
+  reachable(a: Point, b: Point): boolean {
+    const ra = this.region[this.idx(a.x, a.y)]!;
+    if (ra < 0) return false;
+    if (this.region[this.idx(b.x, b.y)] === ra) return true;
+    return this.neighbors4(b.x, b.y).some((n) => this.region[this.idx(n.x, n.y)] === ra);
+  }
+
+  nearest(kind: "forest" | "bank" | "field" | "rock", from: Point): Point {
+    const table = kind === "forest" ? this.nearestForestIdx : kind === "bank" ? this.nearestBankIdx : kind === "rock" ? this.nearestRockIdx : this.nearestFieldIdx;
     return this.pt(table[this.idx(from.x, from.y)]!);
   }
 
@@ -199,6 +243,8 @@ export class GameMap {
   }
 }
 
+let scratch: { g: Float64Array; came: Int32Array; stamp: Uint32Array; closedStamp: Uint32Array; gen: number } | null = null;
+
 /**
  * A* over 4-neighbour tiles. Deterministic tie-breaking by tile index.
  * `blocked` marks extra impassable tiles (people standing in the way) for detours.
@@ -207,10 +253,17 @@ export function findPath(map: GameMap, from: number, to: number, blocked?: (i: n
   if (from === to) return [];
   const toPt = map.pt(to);
   if (!map.passable(toPt.x, toPt.y)) return null;
+  // Unreachable: different patches of ground (across the river, say). No need to search.
+  if (map.region.length > 0 && map.region[from] !== map.region[to] && map.region[from]! >= 0) return null;
   const n = map.width * map.height;
-  const g = new Float64Array(n).fill(Infinity);
-  const came = new Int32Array(n).fill(-1);
-  const closed = new Uint8Array(n);
+  // Scratch arrays are reused between searches; a stamp marks which entries belong to this one.
+  if (!scratch || scratch.stamp.length !== n) scratch = { g: new Float64Array(n), came: new Int32Array(n), stamp: new Uint32Array(n), closedStamp: new Uint32Array(n), gen: 0 };
+  const sc = scratch;
+  sc.gen++;
+  const gen = sc.gen;
+  const gAt = (i: number) => (sc.stamp[i] === gen ? sc.g[i]! : Infinity);
+  const setG = (i: number, v: number, from: number) => { sc.g[i] = v; sc.came[i] = from; sc.stamp[i] = gen; };
+  const closedAt = (i: number) => sc.closedStamp[i] === gen;
   const heapF: number[] = [];
   const heapI: number[] = [];
   const less = (a: number, b: number) => heapF[a]! < heapF[b]! || (heapF[a] === heapF[b] && heapI[a]! < heapI[b]!);
@@ -247,33 +300,32 @@ export function findPath(map: GameMap, from: number, to: number, blocked?: (i: n
     const x = i % map.width, y = Math.floor(i / map.width);
     return (Math.abs(x - toPt.x) + Math.abs(y - toPt.y)) * 0.8;
   };
-  g[from] = 0;
+  setG(from, 0, -1);
   push(h(from), from);
   let expanded = 0;
   while (heapF.length > 0) {
     const cur = pop();
-    if (closed[cur]) continue;
+    if (closedAt(cur)) continue;
     if (cur === to) break;
     if (++expanded > maxExpand) return null;
-    closed[cur] = 1;
+    sc.closedStamp[cur] = gen;
     const cx = cur % map.width, cy = Math.floor(cur / map.width);
     for (const nb of map.neighbors4(cx, cy)) {
       const ni = map.idx(nb.x, nb.y);
-      if (closed[ni]) continue;
+      if (closedAt(ni)) continue;
       const c = map.cost(ni);
       if (!Number.isFinite(c)) continue;
       if (blocked && ni !== to && blocked(ni)) continue;
-      const ng = g[cur]! + c;
-      if (ng < g[ni]!) {
-        g[ni] = ng;
-        came[ni] = cur;
+      const ng = gAt(cur) + c;
+      if (ng < gAt(ni)) {
+        setG(ni, ng, cur);
         push(ng + h(ni), ni);
       }
     }
   }
-  if (!Number.isFinite(g[to]!)) return null;
+  if (!Number.isFinite(gAt(to))) return null;
   const path: number[] = [];
-  for (let c = to; c !== from; c = came[c]!) path.push(c);
+  for (let c = to; c !== from; c = sc.came[c]!) path.push(c);
   path.reverse();
   return path;
 }

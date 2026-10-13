@@ -3,9 +3,12 @@
 // them, carving crutches, mending stonework, carving headstones, keeping watch.
 import { cannotWalk, legImpairment, needsCrutch, untendedWounds } from "../entities/body.ts";
 import { careSkill, needsRescue, noteAnimal, pickUp, setDown, treat } from "../entities/injuries.ts";
+import { strikeWolf } from "../world/animals.ts";
 import { cheb, clamp01, feel, firstName, isKin } from "../entities/person.ts";
 import { sightRange } from "../perception/detection.ts";
-import { bestFood, consume, foodUnits, transfer } from "../world/items.ts";
+import { bestFood, consume, foodUnits, produce, transfer } from "../world/items.ts";
+import { satisfy } from "../entities/culture.ts";
+import { practise } from "../entities/skills.ts";
 import type { Building, HolderRef, Person, Point } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { atHome, cand, homeDest, isDetained, isNight, onCooldown, travelTicks } from "./helpers.ts";
@@ -132,10 +135,73 @@ export const carry: ActionDef = {
   },
 };
 
+/** The nearest healer who could see to someone, if any. */
+function nearestHealer(w: World, p: Person): Person | null {
+  let best: Person | null = null;
+  for (const h of w.active()) {
+    if (h.id === p.id || h.task !== "healer" || cannotWalk(h) || h.carriedById !== null || cheb(h, p) > 70) continue;
+    if (!best || cheb(h, p) < cheb(best, p)) best = h;
+  }
+  return best;
+}
+
+/** Someone hurt looks after themselves: binds their wounds, limps home, or goes to the healer. */
+export const seekCare: ActionDef = {
+  id: "seek_care",
+  name: "Seek care",
+  candidates(p, w) {
+    if (w.ageYears(p) < 6 || p.carriedById !== null || p.carryingId !== null || cannotWalk(p)) return [];
+    const bleeding = p.injuries.reduce((a, i) => a + i.bleeding, 0);
+    const open = untendedWounds(p).length > 0;
+    if (!open && bleeding <= 0) return [];
+    const g = Math.min(1, gravity(p) + bleeding * 0.6);
+    const out: CandidateAction[] = [
+      cand("seek_care", "seek_care:self", bleeding > 0 ? "bind their bleeding wounds" : "bind their own wounds", {
+        dest: null,
+        duration: 2,
+        option: "self",
+        effects: { health: g * (bleeding > 0 ? 0.9 : 0.4), security: 0.1 },
+      }),
+    ];
+    const home = homeDest(w, p);
+    if (home) out.push(cand("seek_care", "seek_care:home", "go home to have their wounds seen to", { dest: home, duration: 1, travel: travelTicks(w, p, home), option: "home", effects: { health: g * 0.6, security: 0.3, comfort: 0.1 } }));
+    const healer = nearestHealer(w, p);
+    if (healer) {
+      out.push(
+        cand("seek_care", `seek_care:healer:${healer.id}`, `go to ${healer.name} the healer`, {
+          targetId: healer.id,
+          dest: { x: healer.x, y: healer.y },
+          follow: true,
+          duration: 2,
+          travel: travelTicks(w, p, healer),
+          option: "healer",
+          effects: { health: g * 0.8, security: 0.2 },
+        }),
+      );
+    }
+    return out;
+  },
+  resolve(p, c, w, ctx) {
+    if (c.option === "self") treat(w, p, p, ctx.rng, "on the spot", 0.75);
+    else if (c.option === "healer") {
+      const h = w.maybePerson(c.targetId);
+      if (!h || !w.isActive(h.id) || cheb(h, p) > 2) {
+        ctx.success = false;
+        return ctx.events;
+      }
+      treat(w, h, p, ctx.rng, "the healer's care");
+    } else {
+      const carer = bestCarer(w, p, p);
+      treat(w, carer, p, ctx.rng, "home", carer.id === p.id ? 0.75 : 1);
+    }
+    return ctx.events;
+  },
+};
+
 /** What a hurt person needs from a nurse right now. */
 function careNeeded(w: World, nurse: Person, v: Person): boolean {
   if (v.carriedById !== null || needsRescue(w, v)) return false;
-  if (untendedWounds(v).length > 0) return true;
+  if (untendedWounds(v).length > 0 || v.injuries.some((i) => i.bleeding > 0)) return true;
   if (nurse.task === "healer" && v.injuries.some((i) => !i.permanent && i.severity >= 0.25 && i.care < careSkill(w, nurse) - 0.05)) return true;
   return cannotWalk(v) && (v.survival.water < 0.6 || v.survival.food < 0.5);
 }
@@ -257,6 +323,12 @@ export const masonry: ActionDef = {
         }),
       );
     }
+    // Carving figurines and trinkets from good stone, for the house's shelf.
+    const stone = p.inventory.stone + w.households[p.householdId]!.store.stone;
+    if (stone >= 1 && w.households[p.householdId]!.store.valuables < 10) {
+      const dest = homeDest(w, p);
+      out.push(cand("masonry", "masonry:carve", "carve a stone figurine", { dest, duration: 6, travel: travelTicks(w, p, dest), option: "carve", effects: { status: 0.08, focus: { create: 0.4 }, provision: 0.05 } }));
+    }
     const grave = w.graves.find((g) => !g.marked);
     if (grave) {
       const dead = w.maybePerson(grave.personId);
@@ -274,6 +346,22 @@ export const masonry: ActionDef = {
     return out;
   },
   resolve(p, c, w, ctx) {
+    if (c.option === "carve") {
+      if (!atHome(w, p)) {
+        ctx.success = false;
+        return ctx.events;
+      }
+      const used = consume(w, { t: "person", id: p.id }, "stone", 1, "carved", [p.id]) || consume(w, { t: "household", id: p.householdId }, "stone", 1, "carved", [p.id]);
+      if (!used) {
+        ctx.success = false;
+        return ctx.events;
+      }
+      produce(w, { t: "household", id: p.householdId }, "valuables", 1, "carved", [p.id]);
+      practise(w, p, "masonry", c.duration);
+      satisfy(p, "create", 0.4);
+      ctx.emit("figurine_carved", [p.id], { by: p.id, household: p.householdId });
+      return ctx.events;
+    }
     if (c.buildingId !== undefined) {
       const b = w.buildings[c.buildingId]!;
       b.condition = clamp01(b.condition + 0.2);
@@ -347,6 +435,13 @@ export const patrol: ActionDef = {
     let scared = 0;
     for (const a of w.animals) {
       if (!a.alive || a.kind !== "wolf" || cheb(a, p) > 8) continue;
+      // An armed watchman shoots; otherwise shouting and a torch send it off.
+      if (p.inventory.musket > 0 && cheb(a, p) <= w.config.muskets.range && !(p.cooldowns["reload"] !== undefined && w.tick < p.cooldowns["reload"])) {
+        strikeWolf(w, p, a, ctx.rng);
+        p.cooldowns["reload"] = w.tick + w.config.muskets.reloadTicks;
+        scared++;
+        continue;
+      }
       a.fearUntil = w.tick + 12;
       a.state = "flee";
       a.target = null;

@@ -8,7 +8,10 @@ Around that sit:
 
 - the environment: seasons, weather, water, shelter and fire
 - household tasks
-- livestock, wolves, horses and muskets
+- livestock, wild game (deer, rabbits, foxes), wolves that swim, roam and lie in ambush, horses and muskets
+- injuries per body part, bleeding, rescue and nursing; inquests into every death
+- building: furniture, wells and pumps, bridges, house extensions, palisades and a temple, from hauled wood and quarried stone
+- skills that grow with practice, a culture of shared values and gods, personal needs, festivals
 - marriages that need both house elders' blessing, and elopements when they refuse
 - madness
 

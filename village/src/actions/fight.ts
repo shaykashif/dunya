@@ -2,6 +2,7 @@
 // Several rounds can pass in one tick; either side can be killed.
 import { cannotWalk } from "../entities/body.ts";
 import { kill } from "../entities/death.ts";
+import { practise } from "../entities/skills.ts";
 import { BLOW_PARTS, MAIM_PARTS, injure, pickPart } from "../entities/injuries.ts";
 import { adjustBond, adjustTrust, clamp01, feel, firstName, rel, speedOf, strengthOf } from "../entities/person.ts";
 import { interruptPlan } from "../engine/plans.ts";
@@ -112,6 +113,7 @@ function strike(w: World, rng: Rng, from: Person, to: Person, factor: number, bl
     to.bloodyClothes = true;
   }
   blows.push({ by: from.id, hit, damage });
+  practise(w, from, "fighting", 1);
 }
 
 /**

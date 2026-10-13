@@ -108,7 +108,7 @@ export function needsCrutch(p: Person): boolean {
 
 /** Wounds still untended, or festering. */
 export function untendedWounds(p: Person): Injury[] {
-  return p.injuries.filter((i) => !i.permanent && ((i.severity >= 0.25 && i.care < 0.3) || i.infected));
+  return p.injuries.filter((i) => !i.permanent && ((i.severity >= 0.25 && i.care < 0.3) || i.infected || i.bleeding > 0));
 }
 
 /** Plain-language severity, Dwarf Fortress style. */

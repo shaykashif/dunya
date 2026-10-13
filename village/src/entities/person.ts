@@ -77,7 +77,7 @@ export function strengthOf(w: World, p: Person): number {
   const age = w.ageYears(p);
   let base = age < 14 ? 0.3 + 0.05 * Math.max(0, age - 6) : age < 50 ? 1 : Math.max(0.4, 1 - (age - 50) * 0.02);
   if (p.sex === "m" && age >= 14) base *= 1.15;
-  const hurt = armFactor(p) * (1 - 0.3 * painOf(p)) * (cannotWalk(p) ? 0.6 : 1);
+  const hurt = armFactor(p) * (1 - 0.3 * painOf(p)) * (cannotWalk(p) ? 0.6 : 1) * (0.85 + 0.015 * Math.min(20, Math.floor(Math.sqrt(p.skills.fighting / w.config.skills.levelXp))));
   return base * hurt * (0.6 + 0.4 * p.survival.health) * (0.8 + 0.4 * p.personality.boldness);
 }
 
@@ -143,6 +143,11 @@ export function blankPerson(init: {
     carriedById: null,
     carryingId: null,
     injustice: {},
+    skills: { farming: 0, fishing: 0, foraging: 0, hunting: 0, woodcutting: 0, carpentry: 0, masonry: 0, medicine: 0, fighting: 0, herding: 0 },
+    values: { law: 0, family: 0, tradition: 0, craftsmanship: 0, hard_work: 0, leisure: 0, martial: 0, peace: 0, nature: 0, fairness: 0, cooperation: 0, romance: 0, truth: 0, merriment: 0, piety: 0 },
+    deityId: 0,
+    focus: { pray: 0.8, create: 0.8, leisure: 0.8, family: 0.8 },
+    bedId: null,
   };
 }
 
@@ -151,7 +156,7 @@ export function pushRecent(p: Person, tick: number, text: string, ok: boolean): 
   if (p.recent.length > 12) p.recent.shift();
 }
 
-const POSITIVE = new Set(["happy", "grateful", "in love", "joyful", "relieved", "proud", "comforted", "content", "hopeful", "triumphant", "vindicated"]);
+const POSITIVE = new Set(["happy", "grateful", "in love", "joyful", "relieved", "proud", "comforted", "content", "hopeful", "triumphant", "vindicated", "pleased", "satisfied", "inspired", "uplifted", "merry", "rested"]);
 
 /**
  * Records a feeling and its cause in the person's short history, nudges their

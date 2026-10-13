@@ -5,6 +5,8 @@ import { updateBonding } from "../entities/bonding.ts";
 import { tickSummary, updateNeeds } from "../entities/needs.ts";
 import { cannotWalk } from "../entities/body.ts";
 import { accidentStep, updateInjuries } from "../entities/injuries.ts";
+import { cultureStep, needStrength } from "../entities/culture.ts";
+import { abandonStale, assignBeds } from "../world/structures.ts";
 import { activeObligations } from "../entities/obligations.ts";
 import { cheb, inSleepWindow, pushRecent, speedOf } from "../entities/person.ts";
 import type { DecisionRecord } from "../decision/sources.ts";
@@ -49,6 +51,9 @@ export function buildContext(w: World, p: Person, purpose: "act" | "respond"): D
     madness: p.mad ? Math.max(0.6, p.madness) : 0,
     homeFood: homeFood(w, p),
     desperation: desperation(w, p),
+    values: p.values,
+    focus: p.focus,
+    needStrength: { pray: needStrength(p, "pray"), create: needStrength(p, "create"), leisure: needStrength(p, "leisure"), family: needStrength(p, "family") },
   };
 }
 
@@ -376,6 +381,11 @@ export class Engine {
     // 2. Survival, wants, health and deaths; wounds heal or fester.
     updateNeeds(w);
     updateInjuries(w);
+    cultureStep(w);
+    if (w.env.minuteOfDay === 0) {
+      for (const hh of w.households) assignBeds(w, hh.id);
+      abandonStale(w);
+    }
     // 3. Decisions for everyone without a plan.
     for (const p of w.people) {
       if (!p.alive || p.exiled || p.plan) continue;

@@ -1,5 +1,5 @@
 import { cannotWalk, mobility } from "../../src/entities/body.ts";
-import type { Animal, Building, Person, Trace } from "../../src/world/types.ts";
+import type { Animal, Building, Person, Project, Trace } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
 import {
   BODY,
@@ -117,6 +117,17 @@ function drawTerrain(w: World, pal: SeasonPalette, season: number): HTMLCanvasEl
             case "water":
               col = water;
               break;
+            case "rock": {
+              // Grey boulders and scree.
+              const rn = hash2(px >> 2, py >> 2, 31);
+              col = rn < 0.35 ? rgb("#8e8a82") : rn < 0.7 ? rgb("#7a766e") : rgb("#a29e94");
+              if (hash2(px, py, 33) < 0.08) col = rgb("#5e5a54");
+              if (pal.snow && y < 5) col = rgb("#e8eef2");
+              break;
+            }
+            case "bridge":
+              col = y % 4 === 3 ? rgb("#5a3e22") : x === 1 || x === 14 ? rgb("#4a3018") : rgb(((x >> 2) & 1) === 0 ? "#9a7046" : "#8a6440");
+              break;
             default: {
               col = grass[n < 0.5 ? 0 : n < 0.78 ? 1 : n < 0.93 ? 2 : 3]!;
               if (t === "forest") col = shade(col, 0.82);
@@ -149,12 +160,37 @@ function drawTerrain(w: World, pal: SeasonPalette, season: number): HTMLCanvasEl
     g.fillRect(wl.x * TILE + 13, wl.y * TILE, 1, 6);
     g.fillRect(wl.x * TILE + 2, wl.y * TILE, 12, 1);
   }
-  // Pens: a simple fence around each house's animals.
+  // Pens: a simple fence around each house's animals, or a sharpened palisade once one is built.
   for (const cp of w.compounds) {
     const px = (cp.center.x + 8) * TILE, py = (cp.center.y + 5) * TILE;
-    g.strokeStyle = "#6a4a2a";
-    g.lineWidth = 1;
-    g.strokeRect(px - 3 * TILE + 0.5, py - 3 * TILE + 0.5, 7 * TILE, 7 * TILE);
+    const x0 = px - 3 * TILE, y0 = py - 3 * TILE, size = 7 * TILE;
+    if (w.fenced.includes(cp.householdId)) {
+      g.fillStyle = "#5a3a1e";
+      for (let i = 0; i <= size; i += 3) {
+        g.fillRect(x0 + i, y0 - 3, 2, 5);
+        g.fillRect(x0 + i, y0 + size - 2, 2, 5);
+        g.fillRect(x0 - 2, y0 + i - 1, 5, 2);
+        g.fillRect(x0 + size - 2, y0 + i - 1, 5, 2);
+      }
+      g.fillStyle = "#8a6440";
+      for (let i = 0; i <= size; i += 3) {
+        g.fillRect(x0 + i, y0 - 4, 2, 1);
+        g.fillRect(x0 + i, y0 + size - 3, 2, 1);
+      }
+    } else {
+      g.strokeStyle = "#6a4a2a";
+      g.lineWidth = 1;
+      g.strokeRect(x0 + 0.5, y0 + 0.5, size, size);
+    }
+  }
+  // Wells fitted with a pump: a post and a handle.
+  for (const i of w.pumps) {
+    const wx = (i % w.map.width) * TILE, wy = Math.floor(i / w.map.width) * TILE;
+    g.fillStyle = "#3a3a40";
+    g.fillRect(wx + 11, wy - 6, 3, 12);
+    g.fillRect(wx + 6, wy - 6, 8, 2);
+    g.fillStyle = "#5e4430";
+    g.fillRect(wx + 3, wy - 8, 4, 2);
   }
   return c;
 }
@@ -263,10 +299,12 @@ export class Renderer {
 
     const season = w.env.season;
     const pal = SEASON_PALETTES[season]!;
-    const key = `${season}:${w.farms.map((f) => Math.round((f.crop.grain / Math.max(1, w.config.fields.initialCrop)) * 6)).join(",")}`;
+    const key = `${season}:${w.mapVersion}:${w.pumps.length}:${w.fenced.length}:${w.farms.map((f) => Math.round((f.crop.grain / Math.max(1, w.config.fields.initialCrop)) * 6)).join(",")}`;
     if (!this.terrain || key !== this.terrainKey) {
       this.terrain = drawTerrain(w, pal, season);
       this.terrainKey = key;
+      // Building can turn water into bridge.
+      this.waterTiles = [];
     }
     g.drawImage(this.terrain, 0, 0);
     this.drawWater(w, time);
@@ -278,6 +316,15 @@ export class Renderer {
     const inView = (x: number, y: number) => x > cam.x - 32 && y > cam.y - 32 && x < cam.x + vw + 32 && y < cam.y + vh + 32;
 
     for (const den of wolfDens(w)) if (inView(den.x * TILE + 8, den.y * TILE + 8)) this.drawDen(den.x, den.y);
+    // Furniture shows through when the roof is off; building sites show their scaffolding.
+    for (const b of w.buildings) if (this.roofHidden(b, opts)) this.drawFurniture(w, b);
+    for (const pr of w.projects) if (pr.status === "planned" && inView(pr.site.x * TILE + 8, pr.site.y * TILE + 8)) this.drawSite(w, pr, opts);
+
+    for (const a of w.animals) {
+      if (a.alive || a.diedTick === null || w.tick - a.diedTick >= w.days(w.config.animals.carcassDays)) continue;
+      const px = a.x * TILE + 8, py = a.y * TILE + 13;
+      if (inView(px, py)) this.drawCarcass(a, px, py);
+    }
 
     for (const a of w.animals) {
       if (!a.alive || a.riderId !== null) continue;
@@ -324,6 +371,105 @@ export class Renderer {
         g.fillText(name, sx, sy);
       }
     }
+  }
+
+  /** Beds, tables, chairs, chests and altars inside a building, drawn from small pixel shapes. */
+  private drawFurniture(w: World, b: Building): void {
+    const g = this.g;
+    for (const f of w.furniture) {
+      if (f.buildingId !== b.id) continue;
+      const x = f.x * TILE, y = f.y * TILE;
+      const fine = f.quality >= 3;
+      const wood = f.quality >= 2 ? "#a8743a" : "#8a5e34";
+      switch (f.kind) {
+        case "bed":
+          g.fillStyle = wood;
+          g.fillRect(x + 2, y + 1, 12, 14);
+          g.fillStyle = "#e8e0cc";
+          g.fillRect(x + 3, y + 2, 10, 4);
+          g.fillStyle = HOUSEHOLD_COLORS[(b.householdId ?? 0) % HOUSEHOLD_COLORS.length]!;
+          g.fillRect(x + 3, y + 6, 10, 8);
+          break;
+        case "table":
+          g.fillStyle = wood;
+          g.fillRect(x + 1, y + 4, 14, 8);
+          g.fillStyle = "#5e4430";
+          g.fillRect(x + 2, y + 12, 2, 3);
+          g.fillRect(x + 12, y + 12, 2, 3);
+          break;
+        case "chair":
+          g.fillStyle = wood;
+          g.fillRect(x + 5, y + 4, 6, 2);
+          g.fillRect(x + 5, y + 8, 6, 3);
+          g.fillRect(x + 5, y + 11, 1, 3);
+          g.fillRect(x + 10, y + 11, 1, 3);
+          break;
+        case "chest":
+          g.fillStyle = "#6a4422";
+          g.fillRect(x + 3, y + 6, 10, 8);
+          g.fillStyle = "#c8a040";
+          g.fillRect(x + 7, y + 9, 2, 2);
+          break;
+        case "altar":
+          g.fillStyle = "#9a968e";
+          g.fillRect(x + 3, y + 7, 10, 7);
+          g.fillStyle = "#c8c2b4";
+          g.fillRect(x + 2, y + 6, 12, 2);
+          g.fillStyle = "#f2c84a";
+          g.fillRect(x + 7, y + 3, 2, 3);
+          break;
+      }
+      if (fine) {
+        g.fillStyle = "#f2d84a";
+        g.fillRect(x + 1, y + 1, 1, 1);
+      }
+    }
+  }
+
+  /** A building site: stacked materials, scaffolding, and a bar for how far along it is. */
+  private drawSite(w: World, pr: Project, opts: ViewOptions): void {
+    const g = this.g;
+    const inside = pr.buildingId !== null && !this.roofHidden(w.buildings[pr.buildingId]!, opts);
+    if (inside && pr.kind !== "extension") return;
+    const tiles = pr.tiles.length > 0 ? pr.tiles : [pr.site];
+    for (const t of tiles) {
+      const x = t.x * TILE, y = t.y * TILE;
+      g.strokeStyle = "rgba(240,200,90,0.8)";
+      g.lineWidth = 1;
+      g.setLineDash([2, 2]);
+      g.strokeRect(x + 0.5, y + 0.5, TILE - 1, TILE - 1);
+      g.setLineDash([]);
+    }
+    const s = pr.site;
+    const x = s.x * TILE, y = s.y * TILE;
+    if (pr.stock.wood > 0) {
+      g.fillStyle = "#8a5e34";
+      for (let i = 0; i < Math.min(4, pr.stock.wood); i++) g.fillRect(x + 1, y + 12 - i * 2, 9, 2);
+    }
+    if (pr.stock.stone > 0) {
+      g.fillStyle = "#8e8a82";
+      for (let i = 0; i < Math.min(4, pr.stock.stone); i++) g.fillRect(x + 9 + (i % 2) * 3, y + 11 - Math.floor(i / 2) * 3, 3, 3);
+    }
+    const frac = Math.min(1, pr.done / Math.max(1, pr.work));
+    g.fillStyle = "rgba(0,0,0,0.6)";
+    g.fillRect(x, y - 4, TILE, 3);
+    g.fillStyle = "#7ac860";
+    g.fillRect(x, y - 4, Math.round(TILE * frac), 3);
+  }
+
+  /** A dead animal lying on its side; a skinned one is a red carcass. */
+  private drawCarcass(a: Animal, px: number, py: number): void {
+    const g = this.g;
+    const spr = animalSprite(a.kind, false);
+    g.save();
+    g.translate(Math.round(px), Math.round(py));
+    g.rotate(Math.PI / 2);
+    g.globalAlpha = 0.85;
+    g.filter = a.skinned ? "sepia(1) saturate(4) hue-rotate(-40deg) brightness(0.7)" : "brightness(0.7)";
+    g.drawImage(spr, -spr.height + 2, -spr.width / 2);
+    g.restore();
+    g.fillStyle = "#8a1a1a";
+    g.fillRect(Math.round(px) - 3, Math.round(py) + 1, 6, 1);
   }
 
   /** A wolf den: a heap of rocks round a dark hole, with bones scattered in front. */
@@ -538,8 +684,8 @@ export class Renderer {
       }
       return;
     }
-    const roof = b.kind === "hall" ? "#6e695f" : hh === null ? "#7a5230" : HOUSEHOLD_COLORS[hh % HOUSEHOLD_COLORS.length]!;
-    const roofDark = b.kind === "hall" ? "#4e4a43" : hh === null ? "#553820" : HOUSEHOLD_DARK[hh % HOUSEHOLD_DARK.length]!;
+    const roof = b.kind === "hall" ? "#6e695f" : b.kind === "temple" ? "#e0d8c4" : hh === null ? "#7a5230" : HOUSEHOLD_COLORS[hh % HOUSEHOLD_COLORS.length]!;
+    const roofDark = b.kind === "hall" ? "#4e4a43" : b.kind === "temple" ? "#b0a68e" : hh === null ? "#553820" : HOUSEHOLD_DARK[hh % HOUSEHOLD_DARK.length]!;
     const winter = w.env.season === 3;
     const rx = x0 - 2, ry = y0 - 4, rw = wpx + 4, rh = hpx + 2;
     g.fillStyle = roofDark;
@@ -736,7 +882,7 @@ export function drawMinimap(canvas: HTMLCanvasElement, w: World, cam: Camera, vi
     canvas.height = H;
     base.img = null;
   }
-  if (!base.img || base.season !== w.env.season) {
+  if (!base.img || base.season !== w.env.season * 10000 + w.mapVersion) {
     const img = g.createImageData(W, H);
     const snow = w.env.season === 3;
     const colors: Record<string, RGB> = {
@@ -749,6 +895,8 @@ export function drawMinimap(canvas: HTMLCanvasElement, w: World, cam: Camera, vi
       wall: rgb("#5e4430"),
       door: rgb("#4a2e16"),
       well: rgb("#9aa0a8"),
+      rock: rgb("#8e8a82"),
+      bridge: rgb("#8a6440"),
     };
     for (let i = 0; i < W * H; i++) {
       const c = colors[w.map.terrain[i]!]!;
@@ -758,7 +906,7 @@ export function drawMinimap(canvas: HTMLCanvasElement, w: World, cam: Camera, vi
       img.data[i * 4 + 3] = 255;
     }
     base.img = img;
-    base.season = w.env.season;
+    base.season = w.env.season * 10000 + w.mapVersion;
   }
   g.putImageData(base.img, 0, 0);
   // Dens as dark rings, wolves as red dots: easy to spot in the far corners of the forest.

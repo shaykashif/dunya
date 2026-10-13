@@ -183,3 +183,35 @@ Added at the user's request after milestone 1. Where these conflict with entries
 - The chronicle is a transparent overlay on the left (C toggles, B or the book button opens it in full). Intrigue, Council and People are side buttons that fill the lower right; the People panel holds the person panel (pixel face, body-damage diagram, written description, wounds) and, for animals, their needs and history.
 - A fight is one alert that updates as it goes on; "Fight log" lists every blow, choice and wound. Smite moved from S to X because S now pans.
 
+
+## Building, culture and the wild (third round)
+
+**Building**
+- **Projects.** A house head plans what the house lacks (beds, a table, chairs, a chest, a household altar, new rooms when crowded, a second well for a big compound, a pump, a palisade round the pen); the elder plans for the village (a bridge over the river, a temple). Each project needs wood and stone hauled to its site, then work; skill makes each stint count for more. Furniture gets a quality from the builder's skill (well-crafted up to masterful). Projects nobody touches for 20 days are given up and their materials go back. Costs are in `construction.costs`.
+- **The map changes.** Extensions grow a house three rows north; wells and bridges change terrain; the temple is a new building in town. `mapChanged` drops cached paths and rebuilds site tables and reachability; the viewer redraws on `mapVersion`.
+- **Stone.** Quarried at rocky outcrops (a couple lie across the river, so a bridge opens them up). Masons also carve stone figurines, which become a house's valuables.
+- **Beds.** Not everyone starts with one (the poorest house least). A couple shares; infants sleep with their mother. Sleeping on the floor rests worse and leaves people sore and less comfortable; a fine bed is a small pleasure. Eating at home without a table annoys; a fine table pleases. A house's furnishing feeds its comfort.
+
+**Skills**
+- Ten skills (farming, fishing, foraging, hunting, woodcutting, carpentry, masonry, medicine, fighting, herding) earn experience by doing the work; level is `floor(sqrt(xp / 25))`, up to 20, named as in Dwarf Fortress (Dabbling to Legendary). Level scales success and yield by 0.75 to 1.25. People start with a life's worth in one or two things; each house gives tasks to its most skilled.
+
+**Culture**
+- **Values.** The village holds fifteen values (law, family, tradition, craftsmanship, hard work, leisure, martial prowess, peace, nature, fairness, cooperation, romance, truth, merriment, piety). Each house leans its own way and each person strays further. Values tint the utility scorer (the law-abiding feel theft more; the martial and the peaceful weigh grudges differently; lovers of nature dislike felling and killing), lying in testimony (truth), resentment of acquittals (fairness up, law down), scandal at elopements (tradition), and how fast people warm to each other (similar values). Sharply opposed values can start arguments when people talk.
+- **Needs.** Four personal needs (to pray, to make things, to rest and play, to be with family) are felt as strongly as the value behind them; unmet, they drag mood and distract. They are met by praying, building and crafting, idling and socialising and festivals, and time near kin.
+- **Religion.** A pantheon of three gods with spheres; each house has a patron. People pray at home, at a household altar, or at the temple once built. A festival in the square every 30 days.
+
+**Theft**
+- **Hunger theft needs a hungry house.** Only someone whose own house is short (under 3 food per member) plots to steal food; a hungry person with a full larder at home eats. Greed, or envy of a richer house's silver, drives theft of valuables and tools instead. Stolen valuables go back on capture or as restitution.
+
+**Hurt and hungry people**
+- The badly hurt (in pain, bleeding or weak from wounds) put aside crimes, plots and heavy work, and can bind their wounds, limp home or go to a healer. Open wounds bleed (severity x a per-kind rate, costing health) until bound or clotted; moving about slows clotting.
+- Nobody sets out on a long hunt, quarry trip or wolf hunt hungry and empty-handed. A hunting mother who did starved with both her infants.
+
+**Animals**
+- **Wild game.** Deer herds range the deep woods, rabbits keep near their warrens, foxes hunt rabbits and hens at night. All bolt from people on the move and from hunting predators; deer and rabbits outrun wolves most of the time. Herds and warrens breed, and game wanders in from beyond the map when the woods are short.
+- **Hunting** goes to a herd's range in the deep woods; only game within a shot (a musket) or a throw is worth it, and a still hunter goes unnoticed until close. A musket-carrying hunter shoots any wolf in sight first, as do armed defenders and watchmen.
+- **Wolves** swim, range the woods morning and evening, sleep at the den through midday, chase game at night, lie in wait in the trees beside roads for anyone passing alone when very hungry, and smell out the helpless from far off. After biting someone, a wolf slinks off. Palisades turn most wolves from the pen; a turned-away wolf leaves fenced pens alone for a while. After losses, a house's hunters go to the den by day.
+- **Carcasses** lie where they fell for four days and can be skinned for fur (wolves, deer, foxes); two furs make a coat worth +8 degrees outdoors.
+
+**Inquests**
+- A found body (other than an executed convict's) brings the council: the elder and heads not kin to the dead go to examine it, each reading the signs for themselves. The council rules by majority (the graver reading on a tie): wolves (bury and hunt the pack), hunger, cold or sickness (bury), or murder (each judge opens a case). The body is buried once the council has ruled, or after two days regardless.

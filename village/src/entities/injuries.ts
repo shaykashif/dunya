@@ -11,6 +11,7 @@ import type { World } from "../world/world.ts";
 import { OPEN_WOUNDS, cannotWalk, disfigurement, legImpairment, painOf } from "./body.ts";
 import { kill } from "./death.ts";
 import { cheb, clamp01, feel, firstName, householdMembers } from "./person.ts";
+import { practise, skillLevel } from "./skills.ts";
 
 type Weights = Partial<Record<BodyPart, number>>;
 
@@ -42,7 +43,9 @@ export function injure(w: World, p: Person, part: BodyPart, kind: InjuryKind, se
     kind = "gash";
     part = "face";
   }
-  const inj: Injury = { id: w.nextId("injury"), part, kind, severity, tick: w.tick, cause, byId, care: 0, infected: false, permanent: kind === "lost", lasting: kind === "lost" ? "lost eye" : null };
+  const bleed = (w.config.injuries.bleed as Record<string, number>)[kind] ?? 0;
+  const inj: Injury = { id: w.nextId("injury"), part, kind, severity, tick: w.tick, cause, byId, care: 0, infected: false, bleeding: r3(severity * bleed), permanent: kind === "lost", lasting: kind === "lost" ? "lost eye" : null };
+  if (inj.bleeding > 0) p.bloodyClothes = true;
   p.injuries.push(inj);
   if (health > 0) {
     p.survival.health = clamp01(p.survival.health - health);
@@ -71,17 +74,24 @@ export function describeInjury(inj: Injury): string {
 
 /** How well someone dresses wounds and sets bones. */
 export function careSkill(w: World, p: Person): number {
-  if (p.task === "healer") return w.config.injuries.healerSkill;
-  return Math.min(0.75, 0.3 + 0.3 * p.personality.empathy + (w.ageYears(p) >= 50 ? 0.1 : 0));
+  const medicine = skillLevel(w, p, "medicine") * 0.02;
+  if (p.task === "healer") return Math.min(0.97, w.config.injuries.healerSkill + medicine * 0.5);
+  return Math.min(0.8, 0.3 + 0.3 * p.personality.empathy + (w.ageYears(p) >= 50 ? 0.1 : 0) + medicine);
 }
 
 /** Cleans and binds wounds and sets bones. Returns how many wounds were tended. */
-export function treat(w: World, healer: Person, patient: Person, rng: Rng, where: string): number {
-  const skill = careSkill(w, healer);
+export function treat(w: World, healer: Person, patient: Person, rng: Rng, where: string, scale = 1): number {
+  const skill = careSkill(w, healer) * scale;
+  practise(w, healer, "medicine", 3);
   let n = 0;
   let cured = 0;
   for (const inj of patient.injuries) {
     if (inj.permanent) continue;
+    // Bound tight, a wound stops bleeding.
+    if (inj.bleeding > 0 && skill >= 0.25) {
+      inj.bleeding = 0;
+      n++;
+    }
     if (inj.care < skill) {
       inj.care = r3(skill);
       n++;
@@ -205,6 +215,16 @@ export function updateInjuries(w: World): void {
   const newDay = w.env.minuteOfDay === 0;
   for (const p of w.people) {
     if (!p.alive || p.exiled || p.injuries.length === 0) continue;
+    // Open wounds bleed until bound or clotted; moving about keeps them open longer.
+    const moving = p.plan?.phase === "travel" || p.plan?.cand.kind === "attack" || p.plan?.cand.kind === "chase" || p.plan?.cand.kind === "flee";
+    for (const inj of p.injuries) {
+      if (inj.bleeding <= 0) continue;
+      const loss = (inj.bleeding * cfg.bleedHealthPerDay) / tpd;
+      p.survival.health = clamp01(p.survival.health - loss);
+      p.lossCause.wounds += loss;
+      p.bloodyClothes = true;
+      inj.bleeding = Math.max(0, inj.bleeding - (cfg.clotPerDay / tpd) * (moving ? 0.4 : 1));
+    }
     const starving = p.survival.food < 0.25 || p.survival.water < 0.25;
     const old = w.ageYears(p) >= 60;
     for (const inj of p.injuries.slice()) {

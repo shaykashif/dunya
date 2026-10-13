@@ -6,8 +6,11 @@ import { breakUpAction, court, elope, propose } from "./bonding.ts";
 import { attack, steal } from "./crime.ts";
 import { homeOf, isDetained } from "./helpers.ts";
 import { chase, flee, intimidate, lieInWait, plot, raid, stalk } from "./intrigue.ts";
-import { carry, craft, masonry, patrol, rescue, tendWounded } from "./care.ts";
-import { cannotWalk, workFactor } from "../entities/body.ts";
+import { carry, craft, masonry, patrol, rescue, seekCare, tendWounded } from "./care.ts";
+import { celebrate, commission, construct, haul, pray, quarry, wolfHunt } from "./build.ts";
+import { attendInquest } from "../justice/inquest.ts";
+import { sew, skin } from "./chores.ts";
+import { cannotWalk, painOf, workFactor } from "../entities/body.ts";
 import { hide, kidnap, search } from "./madness.ts";
 import { defend, hunt, investigateShot, slaughter, tendAnimals, tendChildren, wash } from "./chores.ts";
 import { applyTaskDuty } from "../entities/tasks.ts";
@@ -52,12 +55,23 @@ export const ACTIONS: readonly ActionDef[] = [
   search,
   lieInWait,
   intimidate,
+  seekCare,
   rescue,
   carry,
   tendWounded,
   craft,
   masonry,
   patrol,
+  commission,
+  haul,
+  construct,
+  quarry,
+  pray,
+  celebrate,
+  wolfHunt,
+  skin,
+  sew,
+  attendInquest,
   examine,
   interview,
   accuse,
@@ -79,11 +93,14 @@ export function actionDef(kind: ActionKind): ActionDef {
   return def;
 }
 
-const DETAINED_KINDS: readonly ActionKind[] = ["eat", "drink", "sleep", "idle", "testify", "socialize", "wash"];
+const DETAINED_KINDS: readonly ActionKind[] = ["eat", "drink", "sleep", "idle", "testify", "socialize", "wash", "pray"];
 const INFANT_KINDS: readonly ActionKind[] = ["sleep", "idle"];
 
+/** What the badly hurt put aside: crimes, plots and hard labour. */
+const HURT_SKIPS: readonly ActionKind[] = ["plot", "steal", "stalk", "lie_in_wait", "raid", "intimidate", "kidnap", "commission", "construct", "haul", "quarry", "hunt", "wolf_hunt", "repair_shelter", "craft", "masonry", "patrol", "court", "propose"];
+
 /** Work that goes slower with bad hands, bad legs or pain. */
-const WORK_KINDS: readonly ActionKind[] = ["forage", "gather_wood", "repair_shelter", "plant", "harvest", "hunt", "slaughter", "tend_animals", "craft", "masonry"];
+const WORK_KINDS: readonly ActionKind[] = ["forage", "gather_wood", "repair_shelter", "plant", "harvest", "hunt", "slaughter", "tend_animals", "craft", "masonry", "construct", "quarry"];
 
 export function generateCandidates(w: World, p: Person): CandidateAction[] {
   // The carried are carried; the carrier can only take them somewhere.
@@ -92,9 +109,13 @@ export function generateCandidates(w: World, p: Person): CandidateAction[] {
   const infant = w.ageYears(p) < w.config.needs.infantAge;
   const detained = isDetained(w, p) || p.captorId !== null;
   const lame = cannotWalk(p);
+  // Badly hurt, bleeding or in agony, nobody (unless mad) has a mind for schemes or heavy work.
+  const wounded = p.injuries.some((i) => !i.permanent);
+  const hurting = !p.mad && wounded && (p.survival.health < 0.45 || painOf(p) >= 0.45 || p.injuries.some((i) => i.bleeding >= 0.3));
   const out: CandidateAction[] = [];
   for (const def of ACTIONS) {
     if (carrying && def.id !== "carry") continue;
+    if (hurting && HURT_SKIPS.includes(def.id)) continue;
     if (infant && !INFANT_KINDS.includes(def.id)) continue;
     if (detained && !DETAINED_KINDS.includes(def.id)) continue;
     for (const c of def.candidates(p, w)) {

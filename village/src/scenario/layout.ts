@@ -138,6 +138,18 @@ export function buildLayout(cfg: SimConfig, rng: Rng, houses: number): Layout {
     clearDisc(map, { x: 6 + rng.int(mc.width - 30), y: 6 + rng.int(mc.height - 12) }, 2 + rng.int(4), rng);
   }
 
+  // Rocky outcrops in the forest, where stone can be quarried; a couple across the river.
+  for (let i = 0; i < mc.rockOutcrops; i++) {
+    const east = i < 2;
+    const c = east ? { x: mc.width - 6 + rng.int(4), y: 8 + rng.int(mc.height - 16) } : { x: 6 + rng.int(mc.width - 30), y: 6 + rng.int(mc.height - 12) };
+    const r = 1 + rng.int(3);
+    for (let y = c.y - r - 1; y <= c.y + r + 1; y++) {
+      for (let x = c.x - r - 1; x <= c.x + r + 1; x++) {
+        if (map.inBounds(x, y) && Math.hypot(x - c.x, y - c.y) <= r + (rng.next() - 0.5) * 1.5) map.set(x, y, "rock");
+      }
+    }
+  }
+
   // A meandering river near the east edge, three tiles wide.
   const riverBase = mc.width - 12;
   const ph = rng.next() * 6;

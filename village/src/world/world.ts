@@ -11,7 +11,10 @@ import {
   type CensusEntry,
   type Compound,
   type Crime,
+  type Culture,
+  type Furniture,
   type Grave,
+  type Inquest,
   type Hearing,
   type Household,
   type Inventory,
@@ -20,6 +23,7 @@ import {
   type Person,
   type Plot,
   type Point,
+  type Project,
   type Sentence,
   type Trace,
 } from "./types.ts";
@@ -36,7 +40,7 @@ export interface Ledger {
   consumed: Inventory;
 }
 
-type IdKind = "trace" | "crime" | "belief" | "obligation" | "case" | "hearing" | "person" | "sentence" | "plot" | "injury";
+type IdKind = "trace" | "crime" | "belief" | "obligation" | "case" | "hearing" | "person" | "sentence" | "plot" | "injury" | "furniture" | "project" | "inquest";
 
 /**
  * The world state. Only engine modules (environment, needs, action resolution,
@@ -79,8 +83,24 @@ export class World {
   obligations: Obligation[] = [];
   hearings: Hearing[] = [];
   sentences: Sentence[] = [];
+  /** The council's inquiries into deaths. */
+  inquests: Inquest[] = [];
   /** The burial ground, in order of burial. */
   graves: Grave[] = [];
+  /** Furniture in every building, and everything being built. */
+  furniture: Furniture[] = [];
+  projects: Project[] = [];
+  /** Tile indices of wells fitted with a pump. */
+  pumps: number[] = [];
+  /** Houses whose animal pen has a palisade, and when each last lost an animal to wolves. */
+  fenced: number[] = [];
+  livestockLost: Record<number, number> = {};
+  /** Bumped whenever building changes the map, so the viewer redraws the ground. */
+  mapVersion = 0;
+  /** The village's values and gods. */
+  culture!: Culture;
+  /** The festival under way, if any. */
+  festival: { name: string; deityId: number; startTick: number; endTick: number; attended: number[] } | null = null;
   census: Record<number, CensusEntry> = {};
   ledger: Ledger = { initial: emptyInventory(), produced: emptyInventory(), consumed: emptyInventory() };
   elderId: number | null = null;
@@ -89,7 +109,7 @@ export class World {
   beliefCrime: Map<number, number> = new Map();
   pendingObservations: PendingObservation[] = [];
   pendingCaseChecks: { personId: number; beliefId: number }[] = [];
-  private ids: Record<IdKind, number> = { trace: 1, crime: 1, belief: 1, obligation: 1, case: 1, hearing: 1, person: 1, sentence: 1, plot: 1, injury: 1 };
+  private ids: Record<IdKind, number> = { trace: 1, crime: 1, belief: 1, obligation: 1, case: 1, hearing: 1, person: 1, sentence: 1, plot: 1, injury: 1, furniture: 1, project: 1, inquest: 1 };
   private pathCache = new Map<number, number[] | null>();
 
   constructor(config: SimConfig, seed: number, log: EventLog) {
@@ -238,6 +258,11 @@ export class World {
 
   isInside(p: Point, b: Building): boolean {
     return p.x >= b.x0 + 1 && p.x <= b.x1 - 1 && p.y >= b.y0 + 1 && p.y <= b.y1 - 1;
+  }
+
+  /** Forget cached paths after the map changes. */
+  invalidatePaths(): void {
+    this.pathCache.clear();
   }
 
   path(from: Point, to: Point): number[] | null {

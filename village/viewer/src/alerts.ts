@@ -3,12 +3,14 @@ import type { SimEvent } from "../../src/log/events.ts";
 import type { World } from "../../src/world/world.ts";
 import { first } from "./feed.ts";
 
-export type AlertKind = "fight" | "death" | "council" | "raid" | "madness" | "kidnap" | "wolf" | "love" | "retribution" | "injury";
+export type AlertKind = "fight" | "death" | "council" | "inquest" | "raid" | "madness" | "kidnap" | "wolf" | "love" | "retribution" | "injury" | "festival";
 
 export const ALERT_LABELS: Record<AlertKind, string> = {
   fight: "Fights",
   death: "Deaths",
   council: "Council sessions",
+  inquest: "Inquests into deaths",
+  festival: "Festivals",
   raid: "Raids",
   madness: "Madness",
   kidnap: "Kidnappings",
@@ -87,6 +89,14 @@ export function toAlert(e: SimEvent, w: World): Alert | null {
       return d.canWalk ? null : make("injury", "🩹", "Crippled", `${first(w, d.person)} ${d.cause} and cannot walk.`, at(d.at), [d.person]);
     case "injury_lasting":
       return make("injury", "🩹", "Lasting injury", `${first(w, d.person)}'s ${d.part} healed badly: ${d.lasting}.`, posOf(d.person), [d.person]);
+    case "inquest_called":
+      return make("inquest", "⚖", "Inquest", `The council is called to examine ${first(w, d.person)}'s body.`, at(d.at), [d.person]);
+    case "inquest_held": {
+      const f = String(d.finding);
+      return make("inquest", "⚖", "The council rules", f === "murder" ? `${first(w, d.person)} was murdered. An investigation is opened.` : f === "wolves" ? `Wolves killed ${first(w, d.person)}. The hunters go after the pack.` : `${first(w, d.person)} died a natural death and is to be buried.`, null, [d.person]);
+    }
+    case "festival_began":
+      return make("festival", "🎉", "Festival", `${String(d.name).charAt(0).toUpperCase()}${String(d.name).slice(1)} begins in the square.`, at(d.at), []);
     case "elopement":
       return make("love", "💘", "Elopement", `${first(w, d.a)} and ${first(w, d.b)} have run away together, defying their elders.`, posOf(d.a), [d.a, d.b]);
     case "marriage_forbidden":

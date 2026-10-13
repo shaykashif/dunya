@@ -43,7 +43,7 @@ export const DEFAULT_CONFIG = {
     startHour: 6,
   },
   /** One tile is about 20 m; compounds sit about 40 tiles (a bit under a km) from town. */
-  map: { width: 160, height: 120, compoundDistance: 40, compoundRadius: 13, townRadius: 14, meadows: 10 },
+  map: { width: 160, height: 120, compoundDistance: 40, compoundRadius: 13, townRadius: 14, meadows: 10, rockOutcrops: 9 },
   light: {
     darkestHour: 2,
     moonlight: 0.03,
@@ -88,6 +88,8 @@ export const DEFAULT_CONFIG = {
     shelterBonusTemp: 8,
     hearthBonusTemp: 13,
     clothBonusTemp: 4,
+    /** A fur coat keeps out the cold far better than plain clothes. */
+    coatBonusTemp: 8,
     nightOutdoorPenalty: 2,
     stormOutdoorPenalty: 3,
     healthLossPerTick: { food: 1 / (144 * 10), water: 1 / (144 * 3), warmth: 1 / (144 * 1.5), rest: 1 / (144 * 8) },
@@ -243,6 +245,9 @@ export const DEFAULT_CONFIG = {
     firstDegree: { sympathyThreshold: 0.4, imprisonmentDays: 30 },
     enforcementBaseFail: 0.12,
     maxPostponements: 3,
+    /** The council meets over a found body this soon, and rules after this long at most. */
+    inquestDelayTicks: 6,
+    inquestWaitTicks: 30,
   },
   decision: {
     maxCandidates: 30,
@@ -257,12 +262,13 @@ export const DEFAULT_CONFIG = {
       relation: 0.6,
       romance: 0.6,
       grudge: 0.8,
-      greed: 0.25,
+      greed: 0.5,
       risk: 0.9,
       norm: 1.4,
       travel: 0.003,
       sleepWindow: 0.6,
       frenzy: 2.5,
+      focus: 0.6,
     },
   },
   bonding: {
@@ -298,6 +304,42 @@ export const DEFAULT_CONFIG = {
     wolvesPerPack: 3,
     wolfSpeed: 13,
     wolfHuntRadius: 45,
+    /** Wolves range this far from the den by day, and lie in wait beside roads this far at night. */
+    wolfRoamRadius: 30,
+    wolfAmbushRadius: 45,
+    /** An ambushing wolf springs at a lone passer-by this close. */
+    wolfPounce: 7,
+    /** Carcasses lie where they fell this many days before rotting away. */
+    carcassDays: 4,
+    /** Chance a palisade keeps a wolf out of the pen. */
+    palisadeHolds: 0.85,
+    /** Wild game: deer herds range the deep woods; rabbits and foxes are everywhere. */
+    game: {
+      deerHerds: 6,
+      deerPerHerd: [4, 6] as [number, number],
+      rabbits: 18,
+      foxes: 4,
+      herdRange: 14,
+      /** Tiles per tick when running: deer and rabbits outrun wolves (13); a fox barely does. */
+      speed: { deer: 17, rabbit: 15, fox: 14 },
+      /** How close a moving person or a hunting predator comes before the animal bolts. */
+      spook: { deer: 9, rabbit: 4, fox: 6 },
+      /** Even a still, stalking hunter is noticed this close. */
+      spookStill: { deer: 5, rabbit: 2, fox: 4 },
+      /** Chance a predator that reaches a fleeing animal brings it down. */
+      caught: { deer: 0.25, rabbit: 0.3, fox: 0.35, chicken: 0.3 },
+      /** A wolf gives up a chase after this many ticks, then rests this many. */
+      chaseTicks: 4,
+      chaseRest: 8,
+      meat: { deer: [3, 5] as [number, number], rabbit: [1, 1] as [number, number], fox: [0, 0] as [number, number] },
+      /** A herd below its cap gains a fawn this often; rabbits breed faster. */
+      deerBirthEveryDays: 6,
+      maxPerHerd: 8,
+      rabbitBirthEveryDays: 3,
+      maxRabbits: 30,
+      /** Game wanders in from beyond the map this often when the woods are short of it. */
+      wanderInEveryDays: 4,
+    },
     /** Wolves go for someone only if nobody else is this close to them. */
     wolfLoneRadius: 7,
     wolfGroupFear: 2,
@@ -315,6 +357,7 @@ export const DEFAULT_CONFIG = {
     milkPerCow: 1,
     eggsPerHen: 0.5,
     woolEveryDays: 8,
+    /** Seasonal hunting luck, relative: game is harder to bring down in winter. */
     huntChance: [0.3, 0.35, 0.3, 0.15] as [number, number, number, number],
     huntYield: [2, 4] as [number, number],
     slaughterMeat: { sheep: 5, cow: 9, chicken: 1 },
@@ -364,6 +407,10 @@ export const DEFAULT_CONFIG = {
     healPerDay: { bruise: 0.5, cut: 0.25, gash: 0.1, bite: 0.12, sprain: 0.22, fracture: 0.035, gunshot: 0.05, lost: 0 },
     /** Daily chance an open wound of at least `infectMinSeverity` festers, reduced by care. */
     infectionPerDay: 0.1,
+    /** Open wounds bleed at severity x this, costing health per day at `bleedHealthPerDay` x the rate, until bound or clotted. */
+    bleed: { cut: 0.35, gash: 1, bite: 0.8, gunshot: 1.2 },
+    bleedHealthPerDay: 1.1,
+    clotPerDay: 1.4,
     infectMinSeverity: 0.25,
     infectionHealthPerDay: 0.06,
     painMoodPerTick: 0.0015,
@@ -393,6 +440,57 @@ export const DEFAULT_CONFIG = {
     /** A disfigured face lowers attraction by up to this, and slows how fast strangers warm to them. */
     disfigureAttraction: 0.35,
     disfigureBondFactor: 0.5,
+  },
+  /** Skills, Dwarf Fortress style: practice earns experience; level = floor(sqrt(xp / levelXp)), up to 20. */
+  skills: { xpPerTick: 2, levelXp: 25, maxLevel: 20 },
+  /** Building: furniture, wells and pumps, bridges, house extensions and the temple. Costs are materials and work units. */
+  construction: {
+    costs: {
+      bed: { wood: 2, stone: 0, work: 3 },
+      table: { wood: 2, stone: 0, work: 3 },
+      chair: { wood: 1, stone: 0, work: 2 },
+      chest: { wood: 2, stone: 0, work: 2 },
+      altar: { wood: 0, stone: 3, work: 3 },
+      well: { wood: 1, stone: 6, work: 6 },
+      pump: { wood: 3, stone: 2, work: 4 },
+      /** Per tile of the span. */
+      bridge: { wood: 3, stone: 1, work: 2 },
+      extension: { wood: 10, stone: 4, work: 10 },
+      /** A palisade round the animal pen; wolves rarely get through it. */
+      fence: { wood: 8, stone: 0, work: 5 },
+      temple: { wood: 12, stone: 16, work: 18 },
+    },
+    workDuration: 6,
+    carryMax: 4,
+    quarryDuration: 6,
+    quarryYield: [2, 4] as [number, number],
+    /** A table for every this many people, a chair for every this many. */
+    peoplePerTable: 6,
+    peoplePerChair: 2,
+    /** A house is crowded below this many floor tiles per person. */
+    tilesPerPerson: 4,
+    maxHouseProjects: 2,
+    /** A compound this populous wants a second well. */
+    secondWellAbove: 11,
+    /** Projects nobody works on for this long are given up. */
+    abandonDays: 20,
+  },
+  /** Sleeping in a bed rests better and feels better; the floor does neither. */
+  sleep: { bedRestFactor: 1.15, floorRestFactor: 0.85 },
+  /** The village's shared values and gods, and how far people stray from them. */
+  culture: {
+    houseSpread: 0.25,
+    personSpread: 0.35,
+    /** How fast unmet needs fade, per day, scaled by how strongly they are felt. */
+    focusDecayPerDay: 0.5,
+    unmetMoodPerTick: 0.0012,
+    /** A festival in the square every this many days, from this hour, lasting this many ticks. */
+    festivalEveryDays: 30,
+    festivalFirstDay: 20,
+    festivalHour: 11,
+    festivalTicks: 24,
+    /** Chance two people with sharply opposed values argue when they talk. */
+    argueChance: 0.2,
   },
   /** Acquittals of someone a victim is sure wronged them eventually drive the victim to take justice into their own hands. */
   retribution: {

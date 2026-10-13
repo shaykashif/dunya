@@ -3,6 +3,7 @@ import type { CandidateAction } from "../actions/types.ts";
 import type { Person, Task } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { householdMembers } from "./person.ts";
+import { skillLevel, TASK_SKILL } from "./skills.ts";
 
 /**
  * Assigns tasks within a house: someone minds the young children, then farmer,
@@ -18,9 +19,11 @@ export function assignTasks(w: World, householdId: number): void {
   const teens = members.filter((m) => w.ageYears(m) >= 11 && w.ageYears(m) < 16);
   for (const m of members) m.task = w.ageYears(m) >= 60 ? "elder" : w.ageYears(m) < 11 ? "child" : "forager";
   const free = adults.slice();
+  // The most skilled at a task gets it; temperament breaks ties.
   const take = (task: Task, pick: (a: Person, b: Person) => number): void => {
     if (free.length === 0) return;
-    free.sort((a, b) => pick(a, b) || a.id - b.id);
+    const skill = TASK_SKILL[task];
+    free.sort((a, b) => (skill ? skillLevel(w, b, skill) - skillLevel(w, a, skill) : 0) || pick(a, b) || a.id - b.id);
     free.shift()!.task = task;
   };
   const elders = members.filter((m) => w.ageYears(m) >= 60 && m.personality.empathy >= 0.4).sort((a, b) => b.personality.empathy - a.personality.empathy || a.id - b.id);

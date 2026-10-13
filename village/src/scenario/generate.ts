@@ -9,8 +9,12 @@ import { emptyInventory, type Household, type Person, type Sex } from "../world/
 import { World } from "../world/world.ts";
 import type { SimConfig } from "./config.ts";
 import { assignTasks } from "../entities/tasks.ts";
-import { spawnAnimals } from "../world/animals.ts";
+import { spawnAnimals, spawnGame } from "../world/animals.ts";
 import { buildLayout } from "./layout.ts";
+import { generateCulture, houseValues, personValues } from "../entities/culture.ts";
+import { startingSkills } from "../entities/skills.ts";
+import { assignBeds, bedUnits, furnitureSpot } from "../world/structures.ts";
+import type { FurnitureKind } from "../world/types.ts";
 
 const FEMALE = [
   "Agnes", "Berit", "Clara", "Dagny", "Edda", "Freya", "Gerda", "Helga", "Ingrid", "Jorunn", "Kari", "Liv", "Marta", "Nora", "Oda", "Ragna",
@@ -221,12 +225,27 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog = n
     w.census[p.id] = { householdId: p.householdId, sex: p.sex, birthTick: p.birthTick, parents: p.parents.slice(), partnerId: p.partnerId, alive: true, armed: false };
   }
 
+  // Culture: the village's values and gods, each house's leaning, each person's own. Skills from a life's work.
+  const crng = w.rng.get("culture");
+  w.culture = generateCulture(crng);
+  for (const hh of households) {
+    const base = houseValues(crng, w.culture, cfg.culture.houseSpread);
+    const patron = crng.int(w.culture.deities.length);
+    for (const p of w.people) {
+      if (p.householdId !== hh.id) continue;
+      p.values = personValues(crng, base, cfg.culture.personSpread);
+      p.deityId = crng.chance(0.75) ? patron : crng.int(w.culture.deities.length);
+      p.skills = startingSkills(crng, w.ageYears(p));
+    }
+  }
+
   for (const hh of households) {
     assignHead(w, hh.id);
     assignTasks(w, hh.id);
   }
   assignElder(w);
   spawnAnimals(w, w.rng.get("animals"));
+  spawnGame(w, w.rng.get("animals"));
 
   // Starting goods: food unevenly distributed, and the strained house owns no tools.
   for (const p of w.people) {
@@ -243,6 +262,8 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog = n
     hh.store.fish = fish;
     hh.store.grain = units - fish;
     hh.store.wood = sc.woodPerHousehold;
+    // Heirlooms: silver, jewellery, carvings. The poorest house has next to none.
+    hh.store.valuables = hh.id === strained ? rng.int(2) : 3 + rng.int(5);
     buildings[hh.buildingId]!.hearth!.wood = 2;
     w.farms[hh.id]!.crop.grain = hh.id === strained ? Math.round(cfg.fields.initialCrop / 2) : cfg.fields.initialCrop;
   }
@@ -253,6 +274,27 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog = n
     }
   }
   w.communal.grain = Math.round(w.people.length * sc.foodDaysCommunal * sc.unitsPerPersonDay);
+
+  // Furniture: never quite enough beds, the poorest house least of all.
+  for (const hh of households) {
+    const b = buildings[hh.buildingId]!;
+    const units = bedUnits(w, hh.id);
+    const share = hh.id === strained ? 0.3 : 0.5 + crng.next() * 0.3;
+    const pieces: [FurnitureKind, number][] = [
+      ["bed", Math.max(1, Math.round(units * share))],
+      ["table", hh.id === strained ? 0 : 1],
+      ["chair", hh.id === strained ? 1 : 2 + crng.int(3)],
+      ["chest", crng.chance(0.5) ? 1 : 0],
+    ];
+    for (const [kind, n] of pieces) {
+      for (let i = 0; i < n; i++) {
+        const spot = furnitureSpot(w, b, kind);
+        if (!spot) break;
+        w.furniture.push({ id: w.nextId("furniture"), kind, buildingId: b.id, x: spot.x, y: spot.y, quality: crng.chance(0.2) ? 1 : 0, makerId: null, tick: 0 });
+      }
+    }
+    assignBeds(w, hh.id);
+  }
   w.ledger.initial = worldTotals(w);
 
   w.emit("scenario_created", [], {

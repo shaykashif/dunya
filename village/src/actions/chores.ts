@@ -1,14 +1,15 @@
 // Household work tied to tasks, and answering screams and washing off blood.
 import { noteAnimal, workAccident } from "../entities/injuries.ts";
+import { practise, skillFactor } from "../entities/skills.ts";
 import { cheb, clamp01, feel, firstName, householdMembers } from "../entities/person.ts";
-import { witnessAction } from "../perception/detection.ts";
+import { sightRange, witnessAction } from "../perception/detection.ts";
 import { discoverTrace } from "../perception/perception.ts";
-import { livestockOf, strikeWolf, wolvesNear } from "../world/animals.ts";
+import { isCarcass, killAnimal, livestockOf, strikeWolf, wolvesNear } from "../world/animals.ts";
 import { gunshot } from "../world/arms.ts";
-import { foodUnits, produce, transfer } from "../world/items.ts";
-import { FOOD_KINDS, type Point } from "../world/types.ts";
+import { bestFood, consume, foodUnits, produce, transfer } from "../world/items.ts";
+import { FOOD_KINDS, GAME_KINDS, type Person, type Point } from "../world/types.ts";
 import type { World } from "../world/world.ts";
-import { cand, homeDest, isDetained, onCooldown, travelTicks } from "./helpers.ts";
+import { atHome, cand, homeDest, isDetained, isNight, onCooldown, travelTicks } from "./helpers.ts";
 import type { ActionDef, CandidateAction } from "./types.ts";
 
 function pen(w: World, hid: number): Point {
@@ -32,6 +33,8 @@ export const defend: ActionDef = {
           targetId: v.id,
           dest: { x: v.x, y: v.y },
           follow: true,
+          // Someone with a musket can fire from where they stand.
+          reach: p.inventory.musket > 0 ? w.config.muskets.range : 1,
           duration: 1,
           risk: 0.3,
           effects: { relation: 0.3 + bond * 0.5, duty: 0.4, security: 0.2 },
@@ -43,7 +46,7 @@ export const defend: ActionDef = {
   resolve(p, c, w, ctx) {
     delete p.cooldowns[`help:${c.targetId}`];
     const v = w.maybePerson(c.targetId);
-    const wolf = v ? wolvesNear(w, v, 3)[0] : undefined;
+    const wolf = v ? wolvesNear(w, v, 3)[0] ?? (p.inventory.musket > 0 ? wolvesNear(w, p, w.config.muskets.range)[0] : undefined) : undefined;
     if (wolf) strikeWolf(w, p, wolf, ctx.rng);
     if (v && w.isActive(v.id)) feel(w, v, "grateful", `${firstName(p)} came when they screamed`, 0.5);
     return ctx.events;
@@ -98,6 +101,7 @@ export const tendAnimals: ActionDef = {
   },
   resolve(p, _c, w, ctx) {
     w.livestockTended[p.householdId] = w.tick;
+    practise(w, p, "herding", 6);
     for (const a of livestockOf(w, p.householdId)) {
       a.hunger = 0;
       noteAnimal(w, a, `was fed and tended by ${firstName(p)}`);
@@ -107,21 +111,39 @@ export const tendAnimals: ActionDef = {
   },
 };
 
+/**
+ * Where to hunt: the range of the nearest deer herd the hunter can reach, deep
+ * in the woods (hunters know the game trails), else deep forest away from town.
+ */
+function huntingGround(w: World, p: Person): Point | null {
+  const ranges: Point[] = [];
+  for (const a of w.animals) if (a.alive && a.kind === "deer" && !ranges.some((r) => r.x === a.home.x && r.y === a.home.y)) ranges.push(a.home);
+  ranges.sort((a, b) => cheb(a, p) - cheb(b, p) || a.x - b.x || a.y - b.y);
+  for (const r of ranges.slice(0, 3)) if (w.map.reachable(p, r)) return { ...r };
+  const c = w.compound(p.householdId).center;
+  const dx = c.x - w.map.square.x, dy = c.y - w.map.square.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const out = { x: Math.round(c.x + (dx / d) * 30), y: Math.round(c.y + (dy / d) * 30) };
+  return w.map.nearest("forest", { x: Math.max(1, Math.min(w.map.width - 2, out.x)), y: Math.max(1, Math.min(w.map.height - 2, out.y)) });
+}
+
 export const hunt: ActionDef = {
   id: "hunt",
   name: "Hunt",
   candidates(p, w) {
     if (w.ageYears(p) < 16 || isDetained(w, p)) return [];
-    const c = w.compound(p.householdId).center;
-    // Hunting grounds lie deeper in the forest, away from town.
-    const dx = c.x - w.map.square.x, dy = c.y - w.map.square.y;
-    const d = Math.hypot(dx, dy) || 1;
-    const out = { x: Math.round(c.x + (dx / d) * 18), y: Math.round(c.y + (dy / d) * 18) };
-    const dest = w.map.nearest("forest", { x: Math.max(1, Math.min(w.map.width - 2, out.x)), y: Math.max(1, Math.min(w.map.height - 2, out.y)) });
-    const chance = w.config.animals.huntChance[w.env.season]! * (p.inventory.musket > 0 ? w.config.muskets.huntFactor : p.inventory.tool > 0 ? 1 : 0.6);
+    // Nobody sets off on a long hunt hungry and empty-handed.
+    if (p.survival.food < 0.35 && bestFood(p.inventory) === null) return [];
+    const dest = huntingGround(w, p);
+    if (!dest) return [];
+    // The fuller the larder, the less a hunt is worth.
+    const members = Math.max(1, householdMembers(w, p.householdId).length);
+    const st = w.households[p.householdId]!.store;
+    const larder = 1 / (1 + (foodUnits(st) + st.meat) / (members * 8));
+    const chance = w.config.animals.huntChance[w.env.season]! * (p.inventory.musket > 0 ? w.config.muskets.huntFactor : p.inventory.tool > 0 ? 1 : 0.6) * larder * 2;
     const night = w.env.light < w.config.light.nightThreshold;
     return [
-      cand("hunt", "hunt", "hunt in the deep forest", {
+      cand("hunt", "hunt", "stalk deer in the deep woods", {
         dest,
         reach: 3,
         duration: 8,
@@ -133,18 +155,49 @@ export const hunt: ActionDef = {
   },
   resolve(p, _c, w, ctx) {
     const cfg = w.config.animals;
-    const chance = cfg.huntChance[w.env.season]! * (p.inventory.musket > 0 ? w.config.muskets.huntFactor : p.inventory.tool > 0 ? 1 : 0.6);
-    if (p.inventory.musket > 0) gunshot(w, p, { x: p.x, y: p.y }, "hunting");
+    practise(w, p, "hunting", 8);
     workAccident(w, p, ctx.rng, "hunting");
-    if (ctx.rng.chance(chance)) {
-      const qty = cfg.huntYield[0] + ctx.rng.int(cfg.huntYield[1] - cfg.huntYield[0] + 1);
-      produce(w, { t: "person", id: p.id }, "meat", qty, "hunted", [p.id]);
-      ctx.emit("hunted", [p.id], { qty });
-      feel(w, p, "proud", "brought down a deer", 0.4);
-    } else {
-      ctx.success = false;
-      ctx.emit("hunted", [p.id], { qty: 0 });
+    const range = sightRange(w, p) + 2;
+    const musketeer = p.inventory.musket > 0;
+    // A wolf in sight is shot first: the village has no love for them.
+    const wolf = musketeer
+      ? w.animals.filter((a) => a.alive && a.kind === "wolf" && cheb(a, p) <= w.config.muskets.range * 1.5 && w.map.lineOfSight(p.x, p.y, a.x, a.y)).sort((a, b) => cheb(a, p) - cheb(b, p) || a.id - b.id)[0]
+      : undefined;
+    if (wolf) {
+      strikeWolf(w, p, wolf, ctx.rng);
+      ctx.emit("hunted", [p.id], { qty: 0, kind: "wolf", animal: wolf.id, killed: !wolf.alive });
+      if (wolf.alive) ctx.success = false;
+      return ctx.events;
     }
+    // Only game within a shot or a throw is worth it: the biggest first, then the nearest.
+    const shot = Math.min(range, musketeer ? w.config.muskets.range * 1.5 : 5);
+    const quarry = w.animals
+      .filter((a) => a.alive && GAME_KINDS.includes(a.kind) && cheb(a, p) <= shot && w.map.lineOfSight(p.x, p.y, a.x, a.y))
+      .sort((a, b) => Number(b.kind === "deer") - Number(a.kind === "deer") || cheb(a, p) - cheb(b, p) || a.id - b.id)[0];
+    if (!quarry) {
+      ctx.success = false;
+      ctx.emit("hunted", [p.id], { qty: 0, kind: null });
+      return ctx.events;
+    }
+    const musket = p.inventory.musket > 0;
+    if (musket) gunshot(w, p, { x: p.x, y: p.y }, "hunting");
+    const weapon = musket ? 0.75 : p.inventory.tool > 0 ? 0.45 : 0.25;
+    const luck = cfg.huntChance[w.env.season]! / 0.3;
+    const near = cheb(quarry, p) <= 4 ? 1 : musket ? 0.85 : 0.55;
+    if (!ctx.rng.chance(Math.min(0.95, weapon * luck * near * skillFactor(w, p, "hunting")))) {
+      quarry.fearUntil = w.tick + 6;
+      noteAnimal(w, quarry, `escaped ${firstName(p)}'s ${musket ? "shot" : "throw"}`);
+      ctx.success = false;
+      ctx.emit("hunted", [p.id], { qty: 0, kind: quarry.kind });
+      return ctx.events;
+    }
+    killAnimal(w, quarry);
+    noteAnimal(w, quarry, `was brought down by ${firstName(p)}`);
+    const [lo, hi] = (cfg.game.meat as Record<string, [number, number]>)[quarry.kind] ?? [1, 1];
+    const qty = lo + ctx.rng.int(hi - lo + 1);
+    produce(w, { t: "person", id: p.id }, "meat", qty, "hunted", [p.id]);
+    ctx.emit("hunted", [p.id], { qty, kind: quarry.kind, animal: quarry.id });
+    feel(w, p, "proud", `brought down a ${quarry.kind}`, quarry.kind === "deer" ? 0.4 : 0.15);
     return ctx.events;
   },
 };
@@ -171,7 +224,10 @@ export const slaughter: ActionDef = {
       ctx.success = false;
       return ctx.events;
     }
-    animal.alive = false;
+    killAnimal(w, animal);
+    // Butchered in the pen: nothing is left lying about.
+    animal.skinned = true;
+    animal.diedTick = null;
     noteAnimal(w, animal, `was slaughtered for meat by ${firstName(p)}`);
     const meat = w.config.animals.slaughterMeat[animal.kind as "sheep" | "cow" | "chicken"];
     produce(w, { t: "household", id: p.householdId }, "meat", meat, "slaughtered", [p.id]);
@@ -239,3 +295,88 @@ export const wash: ActionDef = {
   },
 };
 
+
+/** Skinning a carcass for its fur: wolves, deer and foxes. */
+export const skin: ActionDef = {
+  id: "skin",
+  name: "Skin",
+  candidates(p, w) {
+    if (w.ageYears(p) < 14 || isDetained(w, p) || isNight(w) || p.carryingId !== null || p.survival.food < 0.3) return [];
+    const out: CandidateAction[] = [];
+    for (const a of w.animals) {
+      if (a.skinned || !isCarcass(w, a) || (a.kind !== "wolf" && a.kind !== "deer" && a.kind !== "fox") || cheb(a, p) > 30 || !w.map.reachable(p, a)) continue;
+      const cold = w.env.season === 3 || w.env.temperature < 6;
+      out.push(
+        cand("skin", `skin:${a.id}`, `skin the dead ${a.kind} for its fur`, {
+          targetId: a.id,
+          dest: { x: a.x, y: a.y },
+          reach: 1,
+          duration: 3,
+          travel: travelTicks(w, p, a),
+          effects: { provision: 0.2 + (cold ? 0.25 : 0), warmth: cold ? 0.05 : 0 },
+        }),
+      );
+    }
+    out.sort((a, b) => a.travel - b.travel || a.targetId! - b.targetId!);
+    return out.slice(0, 1);
+  },
+  resolve(p, c, w, ctx) {
+    const a = w.animals.find((x) => x.id === c.targetId);
+    if (!a || a.skinned || !isCarcass(w, a) || cheb(a, p) > 2) {
+      ctx.success = false;
+      return ctx.events;
+    }
+    a.skinned = true;
+    produce(w, { t: "person", id: p.id }, "fur", 1, "skinned", [p.id]);
+    noteAnimal(w, a, `was skinned by ${firstName(p)}`);
+    practise(w, p, "hunting", 3);
+    ctx.emit("skinned", [p.id], { by: p.id, animal: a.id, kind: a.kind });
+    return ctx.events;
+  },
+};
+
+/** Sewing two furs into a coat for someone in the house who has none: it keeps the cold out. */
+export const sew: ActionDef = {
+  id: "sew",
+  name: "Sew",
+  candidates(p, w) {
+    if (w.ageYears(p) < 12 || isDetained(w, p) || p.carryingId !== null) return [];
+    const fur = p.inventory.fur + w.households[p.householdId]!.store.fur;
+    if (fur < 2) return [];
+    // Self first, then whoever in the house is out in the cold most: the oldest, then the youngest.
+    const members = householdMembers(w, p.householdId).filter((m) => m.inventory.coat === 0 && w.ageYears(m) >= 4);
+    members.sort((a, b) => Number(b.id === p.id) - Number(a.id === p.id) || a.birthTick - b.birthTick || a.id - b.id);
+    const who = members[0];
+    if (!who) return [];
+    const winter = w.env.season === 3 || w.env.season === 2;
+    const dest = homeDest(w, p);
+    return [
+      cand("sew", `sew:${who.id}`, who.id === p.id ? "sew themselves a fur coat" : `sew a fur coat for ${who.name}`, {
+        targetId: who.id,
+        dest,
+        duration: 6,
+        travel: travelTicks(w, p, dest),
+        effects: { warmth: who.id === p.id ? 0.3 : 0, comfort: 0.1, duty: who.id === p.id ? 0 : 0.3 + (winter ? 0.3 : 0), focus: { create: 0.3 } },
+      }),
+    ];
+  },
+  resolve(p, c, w, ctx) {
+    const who = w.maybePerson(c.targetId);
+    if (!who || !w.isActive(who.id) || who.inventory.coat > 0 || !atHome(w, p)) {
+      ctx.success = false;
+      return ctx.events;
+    }
+    let need = 2;
+    need -= consume(w, { t: "person", id: p.id }, "fur", need, "sewn", [p.id]);
+    if (need > 0) need -= consume(w, { t: "household", id: p.householdId }, "fur", need, "sewn", [p.id]);
+    if (need > 0) {
+      ctx.success = false;
+      return ctx.events;
+    }
+    produce(w, { t: "person", id: who.id }, "coat", 1, "sewn", [p.id]);
+    ctx.emit("coat_sewn", [p.id], { by: p.id, for: who.id });
+    if (who.id !== p.id) feel(w, who, "grateful", `${firstName(p)} sewed them a fur coat`, 0.4);
+    else feel(w, p, "pleased", "sewed themselves a fur coat", 0.2);
+    return ctx.events;
+  },
+};

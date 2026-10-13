@@ -110,6 +110,7 @@ export type StreamName =
   | "bonding"
   | "animals"
   | "injuries"
+  | "culture"
   | "decision";
 
 export class RngStreams {

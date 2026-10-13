@@ -125,7 +125,7 @@ export function testify(
     }
     const incriminating = CRIME_PREDICATES.includes(b.predicate) || ["was_at", "hungry", "trace_found", "seen_bloody", "washing_blood"].includes(b.predicate);
     if (incriminating && protect > 0) {
-      const pLie = (1 - pers.honesty) * protect * (0.6 + 0.4 * pers.boldness);
+      const pLie = (1 - pers.honesty) * protect * (0.6 + 0.4 * pers.boldness) * (1 - 0.4 * speaker.values.truth);
       if (rng.chance(pLie)) {
         if (rng.chance(0.6)) {
           w.emit("statement_withheld", [speaker.id], { speaker: speaker.id, listener: listenerIds[0], listeners: listenerIds, hearing, original: b.id, lie: true, lieType: "omit", about: b.subject, predicate: b.predicate });
@@ -143,7 +143,7 @@ export function testify(
   }
 
   if (guilty && opts.caseRef && opts.context !== "gossip") {
-    const pFab = (1 - pers.honesty) * (0.4 + 0.6 * pers.boldness) * 0.7;
+    const pFab = (1 - pers.honesty) * (0.4 + 0.6 * pers.boldness) * 0.7 * (1 - 0.4 * speaker.values.truth);
     if (rng.chance(pFab)) {
       const goat = scapegoatFor(w, speaker, listenerIds);
       if (goat) {

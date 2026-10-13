@@ -1,7 +1,7 @@
 import type { Rng } from "../engine/rng.ts";
 import type { SimEvent } from "../log/events.ts";
 import type { World } from "../world/world.ts";
-import type { HolderRef, ItemKind, Person, Point } from "../world/types.ts";
+import type { HolderRef, ItemKind, NeedKind, Person, Point } from "../world/types.ts";
 
 export type ActionKind =
   | "forage"
@@ -54,6 +54,17 @@ export type ActionKind =
   | "masonry"
   | "patrol"
   | "intimidate"
+  | "commission"
+  | "haul"
+  | "construct"
+  | "quarry"
+  | "pray"
+  | "celebrate"
+  | "wolf_hunt"
+  | "seek_care"
+  | "skin"
+  | "sew"
+  | "inquest"
   | "respond";
 
 /** Expected changes the actor anticipates; the utility scorer weighs them. */
@@ -77,6 +88,8 @@ export interface Effects {
   greed?: number;
   /** The pull of a mad compulsion; only the mad feel it. */
   frenzy?: number;
+  /** How much the action would meet each personal need (to pray, to make things, ...). */
+  focus?: Partial<Record<NeedKind, number>>;
 }
 
 export interface CandidateAction {

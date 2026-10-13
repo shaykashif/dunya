@@ -59,7 +59,8 @@ export function updateTraces(w: World): void {
       }
     }
     if (trace.kind === "body") {
-      if (trace.discoveredTick !== null && w.tick - trace.discoveredTick >= w.days(cfg.burialDelayDays)) {
+      // Buried once the council has ruled on the death, or after a while regardless.
+      if (trace.discoveredTick !== null && (trace.details.inquestDone === true || w.tick - trace.discoveredTick >= w.days(cfg.burialDelayDays * 2))) {
         removeTrace(w, trace, "burial");
         const who = trace.involves.find((r) => r.kind === "person");
         if (who && who.kind === "person") {

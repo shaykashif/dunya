@@ -1,4 +1,7 @@
-import { clamp01 } from "../entities/person.ts";
+import { clamp01, feel } from "../entities/person.ts";
+import { satisfy } from "../entities/culture.ts";
+import { practise, skillFactor } from "../entities/skills.ts";
+import { furnitureIn, hasBed, QUALITY_WORDS } from "../world/structures.ts";
 import { bestFood, consume, foodUnits, foodValue, produce, transfer } from "../world/items.ts";
 import { FOOD_KINDS, type ItemKind, type Person } from "../world/types.ts";
 import type { World } from "../world/world.ts";
@@ -10,7 +13,7 @@ export function forageChance(w: World, site: "forest" | "river", p: Person): num
   const cfg = w.config.forage;
   const base = (site === "forest" ? cfg.forestChance : cfg.riverChance)[w.env.season]!;
   const factor = Math.max(cfg.minYieldFactor, 1 - w.forageStress[site] / cfg.stressCapacity[site]);
-  return base * factor * (p.inventory.tool > 0 ? 1 : cfg.noToolFactor);
+  return base * factor * (p.inventory.tool > 0 ? 1 : cfg.noToolFactor) * skillFactor(w, p, site === "river" ? "fishing" : "foraging");
 }
 
 export const forage: ActionDef = {
@@ -48,6 +51,7 @@ export const forage: ActionDef = {
   resolve(p, c, w, ctx) {
     const cfg = w.config.forage;
     const site = c.item === "fish" ? "river" : "forest";
+    practise(w, p, site === "river" ? "fishing" : "foraging", c.duration);
     if (ctx.rng.chance(forageChance(w, site, p))) {
       const qty = 1 + ctx.rng.int(cfg.maxYield);
       w.forageStress[site] += qty;
@@ -110,6 +114,13 @@ export const eat: ActionDef = {
       return ctx.events;
     }
     p.survival.food = clamp01(p.survival.food + foodValue(w, c.item!));
+    // Eating at home: at a table, or hunched by the hearth without one.
+    if (src.t === "household" && w.ageYears(p) >= 6 && !(p.cooldowns["meal"] !== undefined && w.tick < p.cooldowns["meal"])) {
+      p.cooldowns["meal"] = w.tick + w.days(1);
+      const table = furnitureIn(w, w.households[p.householdId]!.buildingId, "table").sort((a, b) => b.quality - a.quality)[0];
+      if (!table) feel(w, p, "annoyed", "ate without a table", 0.15);
+      else if (table.quality >= 2) feel(w, p, "pleased", `ate at a ${QUALITY_WORDS[table.quality]} table`, 0.15);
+    }
     return ctx.events;
   },
 };
@@ -168,7 +179,7 @@ export const sleep: ActionDef = {
         duration: 1,
         travel: travelTicks(w, p, dest),
         continuous: true,
-        effects: { rest: gain, warmth: cold ? 0.1 : 0, comfort: 0.3, security: 0.2 },
+        effects: { rest: gain, warmth: cold ? 0.1 : 0, comfort: hasBed(w, p) ? 0.35 : 0.15, security: 0.2 },
       }),
     ];
     if (dest !== null) {
@@ -190,7 +201,10 @@ export const sleep: ActionDef = {
   },
   tickEffect(p, _c, w) {
     p.asleep = true;
-    p.survival.rest = clamp01(p.survival.rest + restRate(w, p));
+    // A bed of one's own rests better than the floor.
+    const home = w.isInside(p, w.house(p.householdId));
+    const bed = home ? (hasBed(w, p) ? w.config.sleep.bedRestFactor : w.config.sleep.floorRestFactor) : 1;
+    p.survival.rest = clamp01(p.survival.rest + restRate(w, p) * bed);
   },
   isDone(p, _c, w, performed) {
     const s = p.survival;
@@ -200,8 +214,23 @@ export const sleep: ActionDef = {
     if (!window && s.rest >= 0.7) return true;
     return s.rest >= 0.99 && !window;
   },
-  resolve(p, _c, _w, ctx) {
+  resolve(p, _c, w, ctx) {
     p.asleep = false;
+    const plan = p.plan;
+    const slept = plan ? plan.performed : 0;
+    if (slept >= 12 && w.isInside(p, w.house(p.householdId)) && w.ageYears(p) >= w.config.needs.infantAge) {
+      const bed = hasBed(w, p) ? w.furniture.find((f) => f.id === p.bedId) : undefined;
+      if (!bed) {
+        p.wants.comfort = clamp01(p.wants.comfort - 0.08);
+        if (!(p.cooldowns["floor"] !== undefined && w.tick < p.cooldowns["floor"])) {
+          p.cooldowns["floor"] = w.tick + w.days(1);
+          feel(w, p, "sore", "slept on the floor without a bed", 0.2);
+        }
+      } else if (bed.quality >= 2 && !(p.cooldowns["finebed"] !== undefined && w.tick < p.cooldowns["finebed"])) {
+        p.cooldowns["finebed"] = w.tick + w.days(3);
+        feel(w, p, "rested", `slept in a ${QUALITY_WORDS[bed.quality]} bed`, 0.15 + 0.05 * bed.quality);
+      }
+    }
     return ctx.events;
   },
 };
@@ -224,7 +253,8 @@ export const idle: ActionDef = {
     }
     return out;
   },
-  resolve(_p, _c, _w, ctx) {
+  resolve(p, c, _w, ctx) {
+    satisfy(p, "leisure", c.key === "idle" ? 0.1 : 0.05);
     return ctx.events;
   },
 };
@@ -236,7 +266,7 @@ export const storeGoods: ActionDef = {
   candidates(p, w) {
     const food = foodUnits(p.inventory);
     const spareFood = Math.max(0, food - 1);
-    const wood = p.inventory.wood;
+    const wood = p.inventory.wood + p.inventory.stone + p.inventory.fur;
     if (spareFood < 2 && wood < 1) return [];
     const dest = homeDest(w, p);
     const store = w.households[p.householdId]!.store;
@@ -264,6 +294,8 @@ export const storeGoods: ActionDef = {
       if (have - k > 0) transfer(w, { t: "person", id: p.id }, to, kind, have - k, "stored", [p.id]);
     }
     if (p.inventory.wood > 0) transfer(w, { t: "person", id: p.id }, to, "wood", p.inventory.wood, "stored", [p.id]);
+    if (p.inventory.stone > 0) transfer(w, { t: "person", id: p.id }, to, "stone", p.inventory.stone, "stored", [p.id]);
+    if (p.inventory.fur > 0) transfer(w, { t: "person", id: p.id }, to, "fur", p.inventory.fur, "stored", [p.id]);
     return ctx.events;
   },
 };

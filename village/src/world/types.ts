@@ -2,7 +2,7 @@ import type { Belief } from "../perception/beliefs.ts";
 import type { CaseFile } from "../investigation/casefile.ts";
 import type { CandidateAction } from "../actions/types.ts";
 
-export type Terrain = "ground" | "field" | "forest" | "water" | "path" | "floor" | "wall" | "door" | "well";
+export type Terrain = "ground" | "field" | "forest" | "water" | "path" | "floor" | "wall" | "door" | "well" | "rock" | "bridge";
 
 export type Weather = "clear" | "cloudy" | "rain" | "storm" | "snow";
 export const WEATHERS: readonly Weather[] = ["clear", "cloudy", "rain", "storm", "snow"];
@@ -10,8 +10,9 @@ export const WEATHERS: readonly Weather[] = ["clear", "cloudy", "rain", "storm",
 export type SeasonName = "spring" | "summer" | "autumn" | "winter";
 export const SEASON_NAMES: readonly SeasonName[] = ["spring", "summer", "autumn", "winter"];
 
-export type ItemKind = "grain" | "fish" | "berries" | "meat" | "milk" | "eggs" | "wood" | "cloth" | "tool" | "musket";
-export const ITEM_KINDS: readonly ItemKind[] = ["grain", "fish", "berries", "meat", "milk", "eggs", "wood", "cloth", "tool", "musket"];
+/** `valuables` are silver, jewellery and carvings: worth nothing to eat, everything to a greedy thief. */
+export type ItemKind = "grain" | "fish" | "berries" | "meat" | "milk" | "eggs" | "wood" | "stone" | "cloth" | "fur" | "coat" | "tool" | "musket" | "valuables";
+export const ITEM_KINDS: readonly ItemKind[] = ["grain", "fish", "berries", "meat", "milk", "eggs", "wood", "stone", "cloth", "fur", "coat", "tool", "musket", "valuables"];
 /** Food kinds in order of preference (most filling first). */
 export const FOOD_KINDS: readonly ("meat" | "fish" | "grain" | "milk" | "eggs" | "berries")[] = ["meat", "fish", "grain", "milk", "eggs", "berries"];
 export type FoodKind = (typeof FOOD_KINDS)[number];
@@ -19,7 +20,7 @@ export type FoodKind = (typeof FOOD_KINDS)[number];
 export type Inventory = Record<ItemKind, number>;
 
 export function emptyInventory(): Inventory {
-  return { grain: 0, fish: 0, berries: 0, meat: 0, milk: 0, eggs: 0, wood: 0, cloth: 0, tool: 0, musket: 0 };
+  return { grain: 0, fish: 0, berries: 0, meat: 0, milk: 0, eggs: 0, wood: 0, stone: 0, cloth: 0, fur: 0, coat: 0, tool: 0, musket: 0, valuables: 0 };
 }
 
 /** Who owns or holds a quantity of items. */
@@ -29,7 +30,9 @@ export type HolderRef =
   | { t: "communal" }
   | { t: "farm"; id: number }
   | { t: "hearth"; id: number }
-  | { t: "tile"; x: number; y: number };
+  | { t: "tile"; x: number; y: number }
+  /** Materials hauled to a construction site. */
+  | { t: "site"; id: number };
 
 export interface Point {
   x: number;
@@ -191,6 +194,8 @@ export interface Injury {
   /** Best care it has had, in [0, 1]: 0 untended, about 0.85 from a healer. Speeds healing and prevents lasting harm. */
   care: number;
   infected: boolean;
+  /** How fast an open wound is bleeding, in [0, ~1.2]; 0 once bound or clotted. */
+  bleeding: number;
   /** Healed badly (or could never heal, like a lost eye): it stays for life. */
   permanent: boolean;
   /** The lasting condition, once permanent: "lame", "crooked arm", "disfiguring scar", ... */
@@ -206,6 +211,109 @@ export interface AnimalNote {
   text: string;
 }
 
+/** Skills improve with practice, Dwarf Fortress style; experience maps to a level from 0 to 20. */
+export type Skill = "farming" | "fishing" | "foraging" | "hunting" | "woodcutting" | "carpentry" | "masonry" | "medicine" | "fighting" | "herding";
+export const SKILLS: readonly Skill[] = ["farming", "fishing", "foraging", "hunting", "woodcutting", "carpentry", "masonry", "medicine", "fighting", "herding"];
+
+/** What a culture, and each person in it, holds dear or despises, in [-1, 1]. */
+export type Value =
+  | "law"
+  | "family"
+  | "tradition"
+  | "craftsmanship"
+  | "hard_work"
+  | "leisure"
+  | "martial"
+  | "peace"
+  | "nature"
+  | "fairness"
+  | "cooperation"
+  | "romance"
+  | "truth"
+  | "merriment"
+  | "piety";
+export const VALUES: readonly Value[] = ["law", "family", "tradition", "craftsmanship", "hard_work", "leisure", "martial", "peace", "nature", "fairness", "cooperation", "romance", "truth", "merriment", "piety"];
+
+/** Personal needs, Dwarf Fortress style: how strongly each is felt follows a person's values. */
+export type NeedKind = "pray" | "create" | "leisure" | "family";
+export const NEED_KINDS: readonly NeedKind[] = ["pray", "create", "leisure", "family"];
+
+export interface Deity {
+  id: number;
+  name: string;
+  /** What the god or goddess is the patron of: "the harvest", "oaths", ... */
+  spheres: string[];
+}
+
+/** The village's shared ways: values, gods, the festival calendar. */
+export interface Culture {
+  name: string;
+  values: Record<Value, number>;
+  deities: Deity[];
+}
+
+export type FurnitureKind = "bed" | "table" | "chair" | "chest" | "altar";
+
+/** A piece of furniture standing in a building. It does not block the way. */
+export interface Furniture {
+  id: number;
+  kind: FurnitureKind;
+  buildingId: number;
+  x: number;
+  y: number;
+  /** 0 plain, 1 well-crafted, 2 finely-crafted, 3 superior, 4 exceptional, 5 masterful. */
+  quality: number;
+  makerId: number | null;
+  tick: number;
+}
+
+export type ProjectKind = FurnitureKind | "well" | "pump" | "bridge" | "extension" | "fence" | "temple";
+
+/** Something being built: materials are hauled to the site, then worked into place. */
+export interface Project {
+  id: number;
+  kind: ProjectKind;
+  /** House it is for, or null for the village (bridges, the temple, the town pump). */
+  householdId: number | null;
+  /** Building the furniture or extension goes in. */
+  buildingId: number | null;
+  /** Where the work is done. */
+  site: Point;
+  /** Tiles it will change (a bridge's span, a temple's footprint, an extension's rows). */
+  tiles: Point[];
+  need: { wood: number; stone: number };
+  stock: Inventory;
+  /** Work units needed and done; skill makes each stint count for more. */
+  work: number;
+  done: number;
+  status: "planned" | "done" | "abandoned";
+  plannerId: number;
+  builders: number[];
+  createdTick: number;
+  /** Last time anyone hauled to it or worked on it. */
+  lastWorkTick: number;
+  doneTick: number | null;
+  /** Best skill brought to it, for the quality of furniture. */
+  quality: number;
+}
+
+/** The council's inquiry into a body: judges examine it and rule on how the person died. */
+export interface Inquest {
+  id: number;
+  traceId: number;
+  personId: number;
+  place: Point;
+  calledTick: number;
+  scheduledTick: number;
+  judges: number[];
+  /** What each judge read from the body. */
+  readings: { judge: number; cause: string }[];
+  status: "scheduled" | "held";
+  /** "murder", "wolves" or "natural", once held. */
+  finding: string | null;
+  cause: string | null;
+}
+
 /** A grave in the village burial ground; a stonemason may carve it a headstone. */
 export interface Grave {
   personId: number;
@@ -215,7 +323,9 @@ export interface Grave {
   marked: boolean;
 }
 
-export type AnimalKind = "wolf" | "sheep" | "cow" | "chicken" | "horse";
+export type AnimalKind = "wolf" | "sheep" | "cow" | "chicken" | "horse" | "deer" | "rabbit" | "fox";
+/** Wild game of the forest: it flees people and wolves, and most of it outruns a wolf. */
+export const GAME_KINDS: readonly AnimalKind[] = ["deer", "rabbit", "fox"];
 
 export interface Animal {
   id: number;
@@ -231,11 +341,19 @@ export interface Animal {
   hunger: number;
   /** Person or animal being hunted (wolves), as "p:<id>" or "a:<id>". */
   target: string | null;
-  state: "rest" | "graze" | "prowl" | "hunt" | "flee" | "ridden";
+  state: "rest" | "graze" | "roam" | "prowl" | "ambush" | "hunt" | "flee" | "ridden";
   /** Person riding this horse, if any. */
   riderId: number | null;
   /** Wolves that fled stay away until this tick. */
   fearUntil: number;
+  /** Where a wolf is heading: a spot to range over by day, or to lie in wait at night. */
+  goal: Point | null;
+  /** Ticks spent chasing the current quarry; negative while resting after a failed chase. */
+  chase: number;
+  /** When it died; the carcass lies where it fell until it rots or is cleared. */
+  diedTick: number | null;
+  /** Its hide has been taken. */
+  skinned: boolean;
   /** Recent history: what the animal did and what was done to it. */
   log: AnimalNote[];
 }
@@ -309,6 +427,16 @@ export interface Person {
    * against them or their kin, keyed by that person. Enough of it turns to retribution.
    */
   injustice: Record<number, number>;
+  /** Experience in each skill. */
+  skills: Record<Skill, number>;
+  /** What this person holds dear or despises, in [-1, 1]. */
+  values: Record<Value, number>;
+  /** God or goddess this person worships most. */
+  deityId: number;
+  /** How well each personal need has been met lately, in [0, 1]. */
+  focus: Record<NeedKind, number>;
+  /** Bed this person sleeps in (a couple share one), or null: the floor. */
+  bedId: number | null;
 }
 
 export interface Household {
@@ -321,7 +449,7 @@ export interface Household {
 
 export interface Building {
   id: number;
-  kind: "house" | "store" | "hall";
+  kind: "house" | "store" | "hall" | "temple";
   householdId: number | null;
   x0: number;
   y0: number;

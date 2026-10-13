@@ -3,6 +3,7 @@ import { consume } from "../world/items.ts";
 import type { DeathCause, Person } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { kill } from "./death.ts";
+import { furnishing } from "../world/structures.ts";
 import { cheb, clamp01, feel, householdMembers } from "./person.ts";
 
 export const SURVIVAL_CAUSE: Record<"food" | "water" | "warmth" | "rest", DeathCause> = {
@@ -25,6 +26,7 @@ export function feltTemperature(w: World, p: Person): number {
     if (w.env.weather === "storm") t -= cfg.stormOutdoorPenalty;
   }
   if (p.inventory.cloth > 0) t += cfg.clothBonusTemp;
+  if (p.inventory.coat > 0 && !(b && w.map.roofed(p.x, p.y))) t += cfg.coatBonusTemp;
   return t;
 }
 
@@ -140,9 +142,11 @@ export function updateNeeds(w: World): void {
     }
     const home = w.house(p.householdId);
     const survivalMean = (s.food + s.water + s.warmth + s.rest) / 4;
-    const comfortTarget = 0.5 * home.condition + 0.5 * survivalMean;
+    const comfortTarget = 0.35 * home.condition + 0.15 * furnishing(w, p.householdId) + 0.5 * survivalMean;
     p.wants.comfort += (comfortTarget - p.wants.comfort) * wc.wantDriftPerTick;
-    const statusTarget = 0.3 + (p.role === "elder" ? 0.4 : 0) + (p.isHead ? 0.2 : 0) - Math.min(0.3, p.convictions * 0.15);
+    // A house's silver and heirlooms carry standing.
+    const wealth = Math.min(1, w.households[p.householdId]!.store.valuables / 8);
+    const statusTarget = 0.25 + 0.1 * wealth + (p.role === "elder" ? 0.4 : 0) + (p.isHead ? 0.2 : 0) - Math.min(0.3, p.convictions * 0.15);
     p.wants.status += (statusTarget - p.wants.status) * wc.wantDriftPerTick;
     p.wants.security += wc.securityRecoverPerDay / tpd;
     for (const k of ["companionship", "affection", "status", "comfort", "security"] as const) p.wants[k] = clamp01(p.wants[k]);

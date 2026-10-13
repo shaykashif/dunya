@@ -4,7 +4,10 @@ import { createSimulation } from "../../src/sim.ts";
 import { armFactor, cannotWalk, disfigurement, mobility, painOf, severityWord, sightFactor } from "../../src/entities/body.ts";
 import { describeInjury } from "../../src/entities/injuries.ts";
 import { foodUnits } from "../../src/world/items.ts";
-import type { Animal, BodyPart, Injury, Person } from "../../src/world/types.ts";
+import { NEED_KINDS, SKILLS, VALUES, type Animal, type BodyPart, type Injury, type NeedKind, type Person, type Value } from "../../src/world/types.ts";
+import { deityOf, needStrength } from "../../src/entities/culture.ts";
+import { skillLevel, skillTitle } from "../../src/entities/skills.ts";
+import { hasBed } from "../../src/world/structures.ts";
 import type { World } from "../../src/world/world.ts";
 import { ALERT_LABELS, toAlert, type Alert, type AlertKind } from "./alerts.ts";
 import { CouncilBook, type Session } from "./council.ts";
@@ -59,7 +62,7 @@ let tab = "people";
 const opts: ViewOptions = { roofs: true, traces: true, names: false, chronicle: true };
 const cam: Camera = { x: 0, y: 0, zoom: 1.5 };
 let stats = { thefts: 0, attacks: 0, accusations: 0, verdicts: 0, wrongful: 0, deaths: 0, births: 0, bonds: 0, plots: 0 };
-const pauseOn: Record<AlertKind, boolean> = { fight: true, death: true, council: true, raid: true, madness: true, kidnap: true, wolf: true, retribution: true, injury: false, love: false };
+const pauseOn: Record<AlertKind, boolean> = { fight: true, death: true, council: true, inquest: false, raid: true, madness: true, kidnap: true, wolf: true, retribution: true, injury: false, love: false, festival: false };
 try {
   const saved = JSON.parse(localStorage.getItem("village.pauseOn") ?? "{}") as Partial<Record<AlertKind, boolean>>;
   Object.assign(pauseOn, saved);
@@ -288,7 +291,8 @@ function frame(now: number): void {
       void advance(n);
     }
   }
-  const alpha = paused ? 1 : Math.min(1, acc);
+  // Paused or not, people stay where they are drawn mid-step; acc only moves while running.
+  const alpha = Math.min(1, acc);
   const sel = world.maybePerson(selected);
   const rect0 = canvas.getBoundingClientRect();
   if (follow && sel && sel.alive && !sel.exiled) {
@@ -364,10 +368,12 @@ function updateHud(force = false): void {
     const n = active.filter((p) => p.householdId === h.id).length;
     const herd = world.animals.filter((a) => a.alive && a.householdId === h.id).length;
     const feud = Math.max(...world.households.map((o) => world.feud(h.id, o.id)));
-    return `<div class="store"><em style="background:${color}"></em>${esc(h.name)} <small>(${n})</small><span>🍞${foodUnits(h.store)} 🌾${world.farms[h.id]!.crop.grain} 🐑${herd}${feud >= 0.4 ? ` <span class="bad">⚔${feud.toFixed(1)}</span>` : ""}</span></div>`;
+    const beds = world.furniture.filter((f) => f.buildingId === h.buildingId && f.kind === "bed").length;
+    return `<div class="store"><em style="background:${color}"></em>${esc(h.name)} <small>(${n})</small><span title="food · grain in field · animals · wood · stone · valuables · beds">🍞${foodUnits(h.store)} 🌾${world.farms[h.id]!.crop.grain} 🐑${herd} 🪵${h.store.wood} 🪨${h.store.stone} 💎${h.store.valuables} 🛏${beds}${feud >= 0.4 ? ` <span class="bad">⚔${feud.toFixed(1)}</span>` : ""}</span></div>`;
   });
   stores.push(`<div class="store"><em style="background:#7a5230"></em>Communal store<span>🌾 ${world.communal.grain}</span></div>`);
   $("stores").innerHTML = stores.join("");
+  if (hudThrottle % 30 === 0 || force) renderCulture();
 
   if (hudThrottle % 12 === 0 || force) renderInspector();
   if (dirty.feed || force) renderFeed();
@@ -499,7 +505,14 @@ function describeBody(p: Person, age: number): string {
   return parts.join("");
 }
 
-const ANIMAL_STATE: Record<string, string> = { rest: "resting", graze: "grazing", prowl: "prowling", hunt: "hunting", flee: "fleeing", ridden: "being ridden" };
+const ANIMAL_STATE: Record<string, string> = { rest: "resting", graze: "grazing", roam: "ranging the woods", prowl: "slinking toward the road", ambush: "lying in wait by the road", hunt: "hunting", flee: "fleeing", ridden: "being ridden" };
+const ANIMAL_NEEDS: Record<string, string> = {
+  wolf: "A wolf sleeps at the den by day and ranges the deep woods morning and evening. Hungry at night, it chases deer (which mostly outrun it), lies in wait in the trees beside the roads for anyone walking alone, smells out the helpless from far off, and raids unguarded pens. It swims rivers. Groups, palisades and muskets drive it off.",
+  deer: "Grazes its herd's range in the deep woods by day and beds down at night. It bolts from anyone walking near and from hunting wolves, and outruns a wolf more often than not. Hunters must sit still to get close.",
+  rabbit: "Keeps close to its warren at the forest's edge. Quick enough to outrun a wolf most of the time; foxes are its bane.",
+  fox: "Sleeps by day and hunts rabbits and unguarded hens at night. Its fur makes good coats.",
+  horse: "Needs grazing and a pen at night. Carries a rider on long trips.",
+};
 
 function renderAnimal(el: HTMLElement, a: Animal): void {
   const owner = a.householdId === null ? "wild" : `the ${esc(world.households[a.householdId]?.name ?? "")} house`;
@@ -509,13 +522,8 @@ function renderAnimal(el: HTMLElement, a: Animal): void {
     const t = k === "p" ? world.maybePerson(Number(id)) : null;
     if (t) doing += ` — stalking <a href="#" data-person="${t.id}">${esc(t.name.split(" ")[0]!)}</a>`;
   }
-  const wolf = a.kind === "wolf";
   const rider = a.riderId !== null ? world.maybePerson(a.riderId) : null;
-  const needs = wolf
-    ? "A wolf hunts at night when hungry, goes for the weak and the lone, and keeps away from groups and from fire. A wounded or fallen person is the easiest prey."
-    : a.kind === "horse"
-      ? "Needs grazing and a pen at night. Carries a rider."
-      : "Needs to graze by day and to be fed and penned at night. Wolves take the unguarded.";
+  const needs = ANIMAL_NEEDS[a.kind] ?? "Needs to graze by day and to be fed and penned at night. Wolves and foxes take the unguarded.";
   const history = a.log
     .slice(-14)
     .reverse()
@@ -524,7 +532,7 @@ function renderAnimal(el: HTMLElement, a: Animal): void {
   el.innerHTML = `
     <div class="pp-head"><canvas id="animalpic" class="animalpic" width="32" height="32"></canvas>
       <div class="who"><b>${a.kind[0]!.toUpperCase()}${a.kind.slice(1)} #${a.id}</b><small>${owner}${a.alive ? "" : " · dead"}</small></div></div>
-    <div class="doing">${a.alive ? doing : "dead"}${rider ? ` · ridden by ${personLink(rider)}` : ""}</div>
+    <div class="doing">${a.alive ? doing : `dead since ${clock(world, a.diedTick ?? world.tick)}${a.skinned ? ", skinned" : a.kind === "wolf" || a.kind === "deer" || a.kind === "fox" ? ", its fur still on it" : ""}`}${rider ? ` · ridden by ${personLink(rider)}` : ""}</div>
     <div class="cols"><div>${bar("Health", a.health, "#4ac060")}</div><div>${bar("Fed", 1 - a.hunger, "#e0a03a")}</div></div>
     <h4>Needs</h4><div class="desc"><p>${needs}</p></div>
     <h4>What it has been doing</h4><ul class="recent">${history || `<li class="hint">Nothing noted yet.</li>`}</ul>
@@ -538,6 +546,54 @@ function renderAnimal(el: HTMLElement, a: Animal): void {
   $<HTMLInputElement>("follow").onchange = (ev) => {
     follow = (ev.target as HTMLInputElement).checked;
   };
+}
+
+/** What holding (or scorning) each value looks like, as a verb phrase for "they". */
+const VALUE_WORDS: Record<Value, [string, string]> = {
+  law: ["respect the law", "have no respect for the law"],
+  family: ["value family above all", "care little for family"],
+  tradition: ["hold to the old ways", "scorn tradition"],
+  craftsmanship: ["value good craftsmanship", "see no point in fine work"],
+  hard_work: ["believe in hard work", "see work as a burden"],
+  leisure: ["love a lazy afternoon", "think idleness a vice"],
+  martial: ["admire strength at arms", "despise fighting"],
+  peace: ["value peace", "think peace makes the weak"],
+  nature: ["love the wild woods", "see the woods as something to use"],
+  fairness: ["care deeply about fairness", "think fairness a fool's notion"],
+  cooperation: ["value helping others", "would rather go it alone"],
+  romance: ["are romantics at heart", "find romance foolish"],
+  truth: ["value honesty", "see no harm in a lie"],
+  merriment: ["love a celebration", "find merrymaking tiresome"],
+  piety: ["are devout", "have no use for the gods"],
+};
+const NEED_LABELS: Record<NeedKind, string> = { pray: "to pray", create: "to make things", leisure: "to rest and play", family: "to be with family" };
+
+function listJoin(xs: string[]): string {
+  return xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+}
+
+/** Skills, values, faith, needs and home comforts, Dwarf Fortress style. */
+function lifeHtml(p: Person): string {
+  const skills = SKILLS.map((s) => ({ s, l: skillLevel(world, p, s) })).filter((x) => x.l >= 1).sort((a, b) => b.l - a.l).slice(0, 6);
+  const skillText = skills.map(({ s, l }) => `<span>${esc(skillTitle(l, s))}</span>`).join("");
+  const held = VALUES.map((v) => ({ v, x: p.values[v] })).filter(({ x }) => Math.abs(x) >= 0.45).sort((a, b) => Math.abs(b.x) - Math.abs(a.x)).slice(0, 4);
+  const pron = "They";
+  const valueText = held.length ? `${pron} ${listJoin(held.map(({ v, x }) => VALUE_WORDS[v][x > 0 ? 0 : 1]))}.` : `${pron} hold no strong views.`;
+  const god = deityOf(world, p);
+  const faith = p.values.piety > 0.3 ? `Worships ${esc(god.name)}, god of ${esc(god.spheres.join(" and "))}, devoutly.` : p.values.piety > -0.3 ? `Worships ${esc(god.name)}, god of ${esc(god.spheres.join(" and "))}.` : `Pays little heed to ${esc(god.name)} or any god.`;
+  const needs = NEED_KINDS.filter((n) => needStrength(p, n) >= 0.35)
+    .map((n) => {
+      const f = p.focus[n];
+      const word = f < 0.15 ? `<span class="bad">badly unmet</span>` : f < 0.4 ? "unmet" : f > 0.75 ? "satisfied" : "fine";
+      return `need ${NEED_LABELS[n]}: ${word}`;
+    })
+    .join(" · ");
+  const bed = hasBed(world, p) ? "has a bed" : world.ageYears(p) < world.config.needs.infantAge ? "sleeps with their mother" : `<span class="bad">sleeps on the floor</span>`;
+  const coat = p.inventory.coat > 0 ? " · wears a fur coat" : "";
+  const silver = p.inventory.valuables > 0 ? ` · carries ${p.inventory.valuables} valuables` : "";
+  return `${skillText ? `<h4>Skills</h4><div class="tags">${skillText}</div>` : ""}
+    <h4>Beliefs</h4><div class="desc"><p>${valueText} ${faith}</p></div>
+    <div class="traits">${bed}${coat}${silver}${needs ? ` · ${needs}` : ""}</div>`;
 }
 
 function renderInspector(): void {
@@ -614,6 +670,7 @@ function renderInspector(): void {
     </div>
     <div class="traits">bold ${per.boldness.toFixed(2)} · empathy ${per.empathy.toFixed(2)} · greed ${per.greed.toFixed(2)} · honesty ${per.honesty.toFixed(2)} · loyalty ${per.loyalty.toFixed(2)}</div>
     <div class="traits">guilt ${e.guilt.toFixed(2)} · grief ${e.grief.toFixed(2)} · jealousy ${e.jealousy.toFixed(2)} · ${p.beliefs.length} beliefs · carries 🍞${foodUnits(p.inventory)}</div>
+    ${lifeHtml(p)}
     ${grudges ? `<h4>Grudges</h4><ul>${grudges}</ul>` : ""}
     ${feelings ? `<h4>Feelings</h4><ul class="feelings">${feelings}</ul>` : ""}
     ${recent ? `<h4>Recently</h4><ul class="recent">${recent}</ul>` : ""}
@@ -669,10 +726,44 @@ function renderIntrigue(): void {
   $("intrigue").innerHTML = `<h4>Plots</h4>${plots || `<li class="hint">No plots yet.</li>`}<h4>Major events</h4>${events || `<li class="hint">Nothing yet.</li>`}`;
 }
 
+/** The village's ways: values, gods, the festival, and what is being built. */
+function renderCulture(): void {
+  const c = world.culture;
+  const held = VALUES.map((v) => ({ v, x: c.values[v] })).sort((a, b) => b.x - a.x);
+  const love = listJoin(held.slice(0, 3).map(({ v }) => VALUE_WORDS[v][0]));
+  const scorn = listJoin(held.slice(-2).filter(({ x }) => x < -0.1).map(({ v }) => VALUE_WORDS[v][1]));
+  const gods = c.deities.map((d) => `<b>${esc(d.name)}</b> <small>(${esc(d.spheres.join(", "))})</small>`).join(" · ");
+  const fest = world.festival ? `<p>🎉 <b>${esc(world.festival.name)}</b> is under way in the square.</p>` : "";
+  const projects = world.projects
+    .filter((pr) => pr.status === "planned")
+    .map((pr) => {
+      const owner = pr.householdId === null ? "the village" : `the ${esc(world.households[pr.householdId]!.name)} house`;
+      const left = Math.max(0, pr.need.wood - pr.stock.wood), stone = Math.max(0, pr.need.stone - pr.stock.stone);
+      const mats = left + stone > 0 ? ` · needs ${left ? `${left} wood` : ""}${left && stone ? ", " : ""}${stone ? `${stone} stone` : ""}` : ` · ${Math.round((pr.done / pr.work) * 100)}% built`;
+      return `<li>${PROJECT_NAMES[pr.kind] ?? pr.kind} <small>for ${owner}${mats}</small></li>`;
+    })
+    .join("");
+  const temple = world.buildings.some((b) => b.kind === "temple");
+  $("culture").innerHTML = `<h3>Culture</h3><div class="desc"><p>${esc(c.name.charAt(0).toUpperCase() + c.name.slice(1))} ${love}${scorn ? `, but ${scorn}` : ""}.</p><p>They worship ${gods}${temple ? ", at the temple in town" : ""}.</p>${fest}</div>${projects ? `<h4>Being built</h4><ul>${projects}</ul>` : ""}`;
+}
+
+const PROJECT_NAMES: Record<string, string> = { bed: "a bed", table: "a table", chair: "a chair", chest: "a chest", altar: "a household altar", well: "a new well", pump: "a well pump", bridge: "a bridge over the river", extension: "new rooms", fence: "a palisade round the pen", temple: "a temple" };
+
 function renderCouncil(): void {
   dirty.council = false;
   const list = [...council.sessions.values()].reverse();
+  const inquests = world.inquests
+    .slice()
+    .reverse()
+    .map((iq) => {
+      const name = esc(world.person(iq.personId).name.split(" ")[0]!);
+      const readings = iq.readings.map((r) => `${esc(world.person(r.judge).name.split(" ")[0]!)}: ${CAUSE_WORDS[r.cause] ?? r.cause}`).join("; ");
+      const state = iq.status === "held" ? `<b>${FINDING_WORDS[iq.finding ?? ""] ?? iq.finding}</b>` : `<b>examining the body</b>`;
+      return `<li class="justice"><time>${clock(world, iq.calledTick)}</time> Inquest into ${name}'s death — ${state}${readings ? `<br><small>${readings}</small>` : ""}</li>`;
+    })
+    .join("");
   $("council").innerHTML =
+    (inquests ? `<h4>Inquests</h4>${inquests}<h4>Hearings</h4>` : "") +
     list
       .map((s) => {
         const state = s.verdict ? (s.verdict === "guilty" ? `guilty → ${s.sentence}` : "acquitted") : s.openedTick === null ? `scheduled ${clock(world, s.scheduledTick)}` : "in session";
@@ -680,6 +771,9 @@ function renderCouncil(): void {
       })
       .join("") || `<li class="hint">The council has not sat yet.</li>`;
 }
+
+const CAUSE_WORDS: Record<string, string> = { person: "killed by someone", wolf: "wolves", unknown: "no mark on the body", starvation: "starved", exposure: "cold", dehydration: "thirst", exhaustion: "exhaustion", infection: "a festering wound", wounds: "wounds" };
+const FINDING_WORDS: Record<string, string> = { murder: "ruled a murder: an investigation is opened", wolves: "killed by wolves: the hunters go after the pack", natural: "a natural death: buried and mourned" };
 
 function openSession(s: Session): void {
   bookOpen = false;
@@ -771,6 +865,19 @@ function pickAt(sx: number, sy: number): Hit | null {
     const s = renderer.personScreen(p, cam, prev, renderer.alpha);
     const d = Math.hypot(s.x - sx, s.y - 6 * cam.zoom - sy);
     if (d < hitRadius(moving) && (!best || d < best.d)) best = { kind: "person", id: p.id, d };
+  }
+  // The dead: bodies awaiting burial, and carcasses lying in the woods.
+  for (const t of world.traces) {
+    if (t.kind !== "body") continue;
+    const who = t.involves.find((r) => r.kind === "person");
+    if (!who || who.kind !== "person") continue;
+    const d = Math.hypot((t.location.x * TILE + 8 - cam.x) * cam.zoom - sx, (t.location.y * TILE + 9 - cam.y) * cam.zoom - sy);
+    if (d < hitRadius(false) && (!best || d + 6 < best.d)) best = { kind: "person", id: who.id, d };
+  }
+  for (const a of world.animals) {
+    if (a.alive || a.diedTick === null || world.tick - a.diedTick >= world.days(world.config.animals.carcassDays)) continue;
+    const d = Math.hypot((a.x * TILE + 8 - cam.x) * cam.zoom - sx, (a.y * TILE + 12 - cam.y) * cam.zoom - sy);
+    if (d < hitRadius(false) && (!best || d + 6 < best.d)) best = { kind: "animal", id: a.id, d };
   }
   for (const a of world.animals) {
     if (!a.alive || a.riderId !== null) continue;

@@ -4,6 +4,7 @@
 import { kill } from "../entities/death.ts";
 import { makeMad } from "../entities/madness.ts";
 import { createTrace } from "../world/traces.ts";
+import { killAnimal } from "../world/animals.ts";
 import type { MadKind } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 
@@ -28,7 +29,7 @@ export function applyIntervention(w: World, cmd: Intervention): void {
   } else {
     const a = w.animals.find((x) => x.id === cmd.animalId && x.alive);
     if (!a) return;
-    a.alive = false;
+    killAnimal(w, a);
     if (a.riderId !== null) {
       const rider = w.maybePerson(a.riderId);
       if (rider) rider.ridingHorseId = null;

@@ -41,36 +41,48 @@ export const plot: ActionDef = {
 
     // A theft, to be carried out after dark.
     const members = Math.max(1, w.active().filter((o) => o.householdId === p.householdId).length);
-    const lean = foodUnits(w.households[p.householdId]!.store) / members < 3 || p.survival.food < 0.45;
-    const greedy = p.personality.greed > 0.7 && p.personality.honesty < 0.35;
+    // Hunger drives theft only when the house itself is short; a full larder at home is eaten, not stolen.
+    const lean = foodUnits(w.households[p.householdId]!.store) / members < 3;
+    // Greed, or envy of a richer house's silver when one's own house has next to none.
+    const own = w.households[p.householdId]!.store.valuables / members;
+    const richest = Math.max(...w.households.filter((h) => h.id !== p.householdId).map((h) => h.store.valuables / Math.max(1, w.active().filter((o) => o.householdId === h.id).length)));
+    const envious = richest - own >= 0.3 && p.personality.greed > 0.45 && p.personality.honesty < 0.5;
+    const greedy = (p.personality.greed > 0.6 && p.personality.honesty < 0.45) || envious;
     const compelled = p.mad === "thief";
     if ((lean || greedy || compelled) && activePlots(w, p, "theft").length === 0 && !onCooldown(w, p, "plot:theft")) {
+      // The greedy are after valuables and tools; the hungry after food.
+      const forGreed = !lean;
       const qty = 2 + Math.round(p.personality.greed * 2);
       const gain = Math.min(qty * 0.25, 1 - p.survival.food);
       const targets: HolderRef[] = [];
       for (const hh of w.households) {
         if (hh.id === p.householdId) continue;
-        if (w.farms[hh.id]!.crop.grain > 0) targets.push({ t: "farm", id: hh.id });
+        if (!forGreed && w.farms[hh.id]!.crop.grain > 0) targets.push({ t: "farm", id: hh.id });
         targets.push({ t: "household", id: hh.id });
       }
-      if (foodUnits(w.communal) > 0) targets.push({ t: "communal" });
+      if (!forGreed && foodUnits(w.communal) > 0) targets.push({ t: "communal" });
       const scored = targets.map((h) => {
         const feud = h.t === "farm" || h.t === "household" ? w.feud(p.householdId, h.id) : 0;
         const risk = h.t === "communal" ? 0.25 + w.storeWatch * w.config.communal.watchCatch : h.t === "farm" ? 0.2 : 0.35;
-        return { h, risk, feud };
+        const loot = forGreed && h.t === "household" ? w.households[h.id]!.store.valuables + w.households[h.id]!.store.tool * 0.5 : 0;
+        return { h, risk, feud, loot };
       });
-      scored.sort((a, b) => a.risk - a.feud - (b.risk - b.feud));
-      for (const { h, risk, feud } of scored.slice(0, 3)) {
+      scored.sort((a, b) => a.risk - a.feud - a.loot * 0.05 - (b.risk - b.feud - b.loot * 0.05));
+      for (const { h, risk, feud, loot } of scored.slice(0, 3)) {
+        if (forGreed && loot <= 0) continue;
         const t = theftTarget(w, h);
         out.push(
-          cand("plot", `plot:theft:${h.t}${"id" in h ? `:${h.id}` : ""}`, `plan to steal from ${t.label}`, {
+          cand("plot", `plot:theft:${h.t}${"id" in h ? `:${h.id}` : ""}`, `plan to steal ${forGreed ? "valuables" : "food"} from ${t.label}`, {
             dest: null,
             duration: 1,
             risk,
             norm: true,
             source: h,
             option: "theft",
-            effects: { food: gain * 0.7, greed: 0.3 + qty * 0.05, grudge: feud * 0.3, frenzy: compelled ? 1 : 0 },
+            motive: forGreed ? "greed" : "hunger",
+            effects: forGreed
+              ? { greed: (1.2 + Math.min(1, loot / 6) * 0.9) / (1 + p.inventory.valuables / 2), status: 0.1, grudge: feud * 0.3, frenzy: compelled ? 1 : 0 }
+              : { food: gain * 0.7, greed: 0.2 + qty * 0.05, grudge: feud * 0.3, frenzy: compelled ? 1 : 0 },
           }),
         );
       }
@@ -164,7 +176,7 @@ export const plot: ActionDef = {
   },
   resolve(p, c, w, ctx) {
     if (c.option === "theft") {
-      formPlot(w, p, "theft", { targetHolder: c.source!, targetHouseholdId: c.source!.t === "communal" ? undefined : (c.source as { id: number }).id, motive: desperation(w, p) > 0.3 ? "hunger" : "greed" });
+      formPlot(w, p, "theft", { targetHolder: c.source!, targetHouseholdId: c.source!.t === "communal" ? undefined : (c.source as { id: number }).id, motive: c.motive ?? (desperation(w, p) > 0.3 ? "hunger" : "greed") });
     } else if (c.option === "murder") {
       formPlot(w, p, "murder", { targetPersonId: c.targetId!, motive: c.motive ?? "grudge" });
       feel(w, p, "resentful", `swore to settle things with ${firstName(w.person(c.targetId!))}`, 0.5);
@@ -538,6 +550,7 @@ export const chase: ActionDef = {
     }
     // Caught: goods go back and the chaser takes them to the council.
     let returned = 0;
+    returned += transfer(w, { t: "person", id: t.id }, ch.victim, "valuables", t.inventory.valuables, "recovered", [p.id]);
     for (let i = 0; i < 4; i++) {
       const kind = bestFood(t.inventory);
       if (!kind) break;

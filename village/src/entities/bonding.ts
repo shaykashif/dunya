@@ -4,6 +4,7 @@ import { sightRange } from "../perception/detection.ts";
 import type { Person, Relationship, Stage } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { disfigurement } from "./body.ts";
+import { valueSimilarity } from "./culture.ts";
 import { householdFamine } from "./needs.ts";
 import { createObligation, fulfillObligation } from "./obligations.ts";
 import { assignHead, blankPerson, cheb, clamp01, feel, firstName, isKin, newRelationship, rel } from "./person.ts";
@@ -172,8 +173,10 @@ export function updateBonding(w: World): void {
       // Strangers warm more slowly to someone whose face is marred.
       const da = disfigurement(a), db = disfigurement(b);
       const f = w.config.injuries.disfigureBondFactor;
-      if (ra.bond < cfg.proximityBondCap) ra.bond = Math.min(cfg.proximityBondCap, ra.bond + cfg.proximityBondPerTick * (ra.kin ? 1 : 1 - f * db));
-      if (rb.bond < cfg.proximityBondCap) rb.bond = Math.min(cfg.proximityBondCap, rb.bond + cfg.proximityBondPerTick * (rb.kin ? 1 : 1 - f * da));
+      // Like minds warm to each other faster.
+      const alike = 0.6 + 0.8 * valueSimilarity(a, b);
+      if (ra.bond < cfg.proximityBondCap) ra.bond = Math.min(cfg.proximityBondCap, ra.bond + cfg.proximityBondPerTick * alike * (ra.kin ? 1 : 1 - f * db));
+      if (rb.bond < cfg.proximityBondCap) rb.bond = Math.min(cfg.proximityBondCap, rb.bond + cfg.proximityBondPerTick * alike * (rb.kin ? 1 : 1 - f * da));
       if (db >= 0.4 && !ra.kin && ra.bond < 0.3) recoil(w, a, b);
       if (da >= 0.4 && !rb.kin && rb.bond < 0.3) recoil(w, b, a);
     }
