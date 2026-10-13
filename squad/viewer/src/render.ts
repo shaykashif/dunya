@@ -23,8 +23,8 @@ export interface Camera {
 }
 
 export type Effect =
-  | { kind: "tracer"; x0: number; y0: number; x1: number; y1: number; color: string; born: number; dur: number; delay: number }
-  | { kind: "flash"; x: number; y: number; born: number; dur: number; delay: number; r: number }
+  | { kind: "tracer"; x0: number; y0: number; x1: number; y1: number; color: string; born: number; dur: number; delay: number; by?: number }
+  | { kind: "flash"; x: number; y: number; born: number; dur: number; delay: number; r: number; by?: number }
   | { kind: "puff"; x: number; y: number; born: number; dur: number; delay: number; color: string }
   | { kind: "boom"; x: number; y: number; born: number; dur: number; delay: number; size: number; seed: number }
   | { kind: "pop"; x: number; y: number; born: number; dur: number; delay: number; seed: number }
@@ -264,6 +264,27 @@ class TerrainLayer {
   }
 }
 
+/** Where a sprite's figure sits: sprites carry a one-pixel outline, so place the figure inside it. */
+function figureBox(spr: HTMLCanvasElement, p: { x: number; y: number }, bob: number): { sx: number; sy: number; iw: number; prone: boolean } {
+  const prone = spr.width > spr.height;
+  const iw = spr.width - 2, ih = spr.height - 2;
+  return { sx: Math.round(p.x - iw / 2), sy: Math.round(p.y + (prone ? 6 - ih : 7 - ih) + bob), iw, prone };
+}
+
+/** The weapon in a man's hands, by posture and facing, and the muzzle at its far end. */
+function weaponShape(s: Soldier, sx: number, sy: number, iw: number, prone: boolean): { x: number; y: number; w: number; h: number; muzzle: { x: number; y: number }; bipod: { x: number; y: number } | null } | null {
+  if (!s.weapon || s.status !== "active") return null;
+  const big = s.weapon === "mg42" || s.weapon === "bar";
+  const len = big ? 7 : s.weapon === "thompson" || s.weapon === "mp40" ? 4 : 6;
+  const left = s.dir < 0;
+  if (prone) {
+    const x = left ? sx - len + 2 : sx + iw - 2, y = sy + 1;
+    return { x, y, w: len, h: 1, muzzle: { x: left ? x - 1 : x + len, y: y + 0.5 }, bipod: big ? { x: left ? x : x + len - 2, y: sy + 2 } : null };
+  }
+  const x = left ? sx - len + 3 : sx + iw - 3, y = sy + (s.posture === "crouch" ? 4 : 6);
+  return { x, y, w: len, h: big ? 2 : 1, muzzle: { x: left ? x - 1 : x + len, y: y + (big ? 1 : 0.5) }, bipod: null };
+}
+
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly g: CanvasRenderingContext2D;
@@ -403,24 +424,18 @@ export class Renderer {
       g.ellipse(p.x, p.y + 5, 8, 4, 0, 0, Math.PI * 2);
       g.stroke();
     }
-    const bob = walking ? (step ? -1 : 0) : 0;
-    const prone = spr.width > spr.height;
-    // Sprites carry a one-pixel outline; place and dress the figure inside it.
-    const iw = spr.width - 2, ih = spr.height - 2;
-    const sx = Math.round(p.x - iw / 2), sy = Math.round(p.y + (prone ? 6 - ih : 7 - ih) + bob);
+    const { sx, sy, iw, prone } = figureBox(spr, p, walking ? (step ? -1 : 0) : 0);
     if (s.status === "captured") g.globalAlpha = 0.75;
     g.drawImage(spr, sx - 1, sy - 1);
     g.globalAlpha = 1;
     // The weapon.
-    if (s.weapon && s.status === "active") {
-      const big = s.weapon === "mg42" || s.weapon === "bar";
+    const gun = weaponShape(s, sx, sy, iw, prone);
+    if (gun) {
       g.fillStyle = "#2a2420";
-      const len = big ? 7 : s.weapon === "thompson" || s.weapon === "mp40" ? 4 : 6;
-      if (prone) g.fillRect(s.dir < 0 ? sx - len + 2 : sx + iw - 2, sy + 1, len, 1);
-      else g.fillRect(s.dir < 0 ? sx - len + 3 : sx + iw - 3, sy + (s.posture === "crouch" ? 4 : 6), len, big ? 2 : 1);
-      if (big && prone) {
+      g.fillRect(gun.x, gun.y, gun.w, gun.h);
+      if (gun.bipod) {
         g.fillStyle = "#3a3430";
-        g.fillRect(s.dir < 0 ? sx - len + 2 : sx + iw + len - 4, sy + 2, 1, 2);
+        g.fillRect(gun.bipod.x, gun.bipod.y, 1, 2);
       }
     }
     // Carrying a wounded man over the shoulder.
@@ -450,6 +465,14 @@ export class Renderer {
       g.fillStyle = col;
       g.fillText(mark, p.x - 2.5, sy - 1.5);
     }
+  }
+
+  /** Where a man's weapon muzzle is drawn right now, for flashes and tracers. */
+  muzzleOf(s: Soldier, prev: Map<number, { x: number; y: number }>): { x: number; y: number } {
+    const p = this.worldPos(s, prev, this.alpha);
+    const box = figureBox(this.sprite(s, false), p, 0);
+    const gun = weaponShape(s, box.sx, box.sy, box.iw, box.prone);
+    return gun ? gun.muzzle : { x: p.x, y: p.y };
   }
 
   /** A building at three-quarter view: its south wall and its roof. */
@@ -502,6 +525,12 @@ export class Renderer {
       if (t < 0) continue;
       switch (e.kind) {
         case "tracer": {
+          const by = e.by !== undefined ? w.maybe(e.by) : null;
+          if (by && by.weapon) {
+            const m = this.muzzleOf(by, prev);
+            e.x0 = m.x;
+            e.y0 = m.y;
+          }
           const a = Math.max(0, t - 0.25), b = Math.min(1, t + 0.1);
           g.strokeStyle = e.color;
           g.globalAlpha = 0.9;
@@ -513,9 +542,13 @@ export class Renderer {
           g.globalAlpha = 1;
           break;
         }
-        case "flash":
-          muzzleFlash(g, e.x, e.y, e.r, t);
+        case "flash": {
+          // From the muzzle as the man is drawn now: he may have dropped prone or turned.
+          const by = e.by !== undefined ? w.maybe(e.by) : null;
+          const m = by && by.weapon ? this.muzzleOf(by, prev) : e;
+          muzzleFlash(g, m.x, m.y, e.r, t);
           break;
+        }
         case "puff":
           dustSpurt(g, e.x, e.y, Math.floor(e.born * 1000 + e.x), t);
           break;

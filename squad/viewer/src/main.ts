@@ -87,8 +87,8 @@ function effectsFor(e: SimEvent): void {
         const x0 = fx * TILE + 8, y0 = fy * TILE + 6, x1 = ax * TILE + 8 + jx, y1 = ay * TILE + 6 + jy;
         // Every fourth round of a belt is a tracer; rifles show a faint streak.
         const automatic = rounds > 1;
-        if (!automatic || k % 2 === 0) renderer.addEffect({ kind: "tracer", x0, y0, x1, y1, color: automatic ? color : "rgba(255,240,200,0.55)", born: t, dur: 0.14, delay });
-        renderer.addEffect({ kind: "flash", x: x0 + (ax > fx ? 4 : -4), y: y0, r: automatic ? 3 : 2.5, born: t, dur: 0.07, delay });
+        if (!automatic || k % 2 === 0) renderer.addEffect({ kind: "tracer", x0, y0, x1, y1, color: automatic ? color : "rgba(255,240,200,0.55)", born: t, dur: 0.14, delay, by: shooter?.id });
+        renderer.addEffect({ kind: "flash", x: x0 + (ax > fx ? 4 : -4), y: y0, r: automatic ? 3 : 2.5, born: t, dur: 0.07, delay, by: shooter?.id });
         renderer.addEffect({ kind: "puff", x: x1, y: y1 + 2, color: "rgba(200,180,140,A)", born: t, dur: 0.35, delay: delay + 0.1 });
       }
       break;
