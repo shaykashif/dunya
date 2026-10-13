@@ -247,6 +247,8 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
       const text = f === "murder" ? `The council rules that ${first(w, d.person)} was murdered, and opens an investigation.` : f === "wolves" ? `The council rules that wolves killed ${first(w, d.person)}; the hunters are sent after the pack.` : `The council rules that ${first(w, d.person)} died of ${CAUSES[String(d.cause)] ?? d.cause}; they are to be buried.`;
       return line("justice", text, [d.person]);
     }
+    case "famine_relief":
+      return line("village", `The elder ${first(w, d.elder)} opened the communal store to the hungry ${w.households[d.household as number]?.name} house.`, [d.elder]);
     case "game_arrived":
       return line("life", `A small herd of deer has wandered in from beyond the woods.`);
     case "palisade_held":

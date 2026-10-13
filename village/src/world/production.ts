@@ -36,6 +36,23 @@ export function updateProduction(w: World): void {
     for (const hh of w.households) assignTasks(w, hh.id);
   }
 
+  // Famine relief: outside winter, the elder opens the store to a house that has run out and is going hungry.
+  if (env.season !== 3 && env.minuteOfDay === cfg.communal.rationHour * 60) {
+    const elder = w.maybePerson(w.elderId);
+    if (elder && w.isActive(elder.id)) {
+      for (const hh of w.households) {
+        const members = householdMembers(w, hh.id);
+        if (members.length === 0) continue;
+        const stock = hh.store.grain + hh.store.fish + hh.store.berries + hh.store.meat;
+        const hungry = members.filter((m) => m.survival.food < 0.35).length;
+        if (stock >= members.length || hungry * 2 < members.length) continue;
+        const qty = Math.round(members.length * cfg.communal.reliefPerPersonPerDay);
+        const n = transfer(w, { t: "communal" }, { t: "household", id: hh.id }, "grain", qty, "relief", [elder.id]);
+        if (n > 0) w.emit("famine_relief", [elder.id], { household: hh.id, qty: n, elder: elder.id });
+      }
+    }
+  }
+
   if (env.season === 3 && env.minuteOfDay === cfg.communal.rationHour * 60) {
     const elder = w.maybePerson(w.elderId);
     if (elder && w.isActive(elder.id)) {

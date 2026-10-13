@@ -29,7 +29,15 @@ import { atHome, cand, homeDest, isDetained, isNight, onCooldown, travelTicks } 
 import type { ActionDef, CandidateAction } from "./types.ts";
 
 function canWork(w: World, p: Person, minAge = 14): boolean {
-  return w.ageYears(p) >= minAge && !isDetained(w, p) && p.carryingId === null && p.carriedById === null && !cannotWalk(p) && !p.mad;
+  return w.ageYears(p) >= minAge && !isDetained(w, p) && p.carryingId === null && p.carriedById === null && !cannotWalk(p) && !p.mad && !hungryHouse(w, p);
+}
+
+/** Building waits while the person, or their house, is going hungry. */
+function hungryHouse(w: World, p: Person): boolean {
+  if (p.survival.food < 0.3) return true;
+  const members = Math.max(1, householdMembers(w, p.householdId).length);
+  const st = w.households[p.householdId]!.store;
+  return (st.grain + st.fish + st.berries + st.meat) / members < 3;
 }
 
 /** Projects a person would work on: their own house's, and (grown-ups) the village's. */
@@ -176,6 +184,9 @@ export const construct: ActionDef = {
       const bringing = (left.wood > 0 && p.inventory.wood > 0) || (left.stone > 0 && p.inventory.stone > 0);
       const ready = left.wood === 0 && left.stone === 0 && pr.done < pr.work;
       if (!bringing && !ready) continue;
+      // Only so many hands fit on one job.
+      const crew = w.active().filter((o) => o.id !== p.id && o.plan?.cand.key === `construct:${pr.id}`).length;
+      if (ready && crew >= (isFurniture(pr.kind) ? w.config.construction.crewFurniture : w.config.construction.crewLarge)) continue;
       const { dest, reach } = siteDest(w, pr);
       const skill = projectSkill(pr.kind);
       const own = pr.householdId === p.householdId;

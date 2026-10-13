@@ -179,6 +179,7 @@ function openFight(id: number): void {
   const f = fights.fights.get(id);
   if (!f) return;
   bookOpen = false;
+  panelOpen = null;
   openFightId = id;
   $("mtitle").textContent = `⚔ Fight: ${world.person(f.a).name} and ${world.person(f.b).name}`;
   $("mbody").innerHTML =
@@ -213,7 +214,7 @@ function watch(a: Alert): void {
 // ---------- Setup ----------
 
 function newVillage(seed: number): void {
-  const log = new EventLog();
+  const log = new EventLog({ hash: false });
   feed = [];
   major = [];
   council = new CouncilBook();
@@ -226,7 +227,8 @@ function newVillage(seed: number): void {
   miniBase.img = null;
   $("toasts").innerHTML = "";
   log.addSink((e) => onEvent(e));
-  engine = createSimulation({ seed, log });
+  // The tests check invariants every tick; the viewer trusts them and saves the time.
+  engine = createSimulation({ seed, log, config: { checkInvariants: false } });
   world = engine.world;
   renderer.mapWidth = world.map.width;
   renderer.trails = new Map();
@@ -277,6 +279,24 @@ async function advance(n: number, ignorePause = false): Promise<void> {
   busy = false;
 }
 
+/** Simulation time allowed per frame, so drawing stays smooth at high speeds. */
+const FRAME_BUDGET_MS = 14;
+
+/** Runs whole ticks owed by the clock until the frame's budget is spent; a backlog the machine cannot keep up with is dropped. */
+async function advanceWithin(budget: number): Promise<void> {
+  busy = true;
+  const start = performance.now();
+  while (acc >= 1 && performance.now() - start < budget && !paused) {
+    prev = new Map(world.people.map((p) => [p.id, { x: p.x, y: p.y }]));
+    renderer.prevAnimals = new Map(world.animals.map((a) => [a.id, { x: a.x, y: a.y }]));
+    await engine.step();
+    renderer.trails = new Map(world.trails);
+    acc -= 1;
+  }
+  if (acc > 2) acc = 1.99;
+  busy = false;
+}
+
 function frame(now: number): void {
   resize();
   const dt = Math.min(0.25, (now - lastTime) / 1000);
@@ -284,12 +304,7 @@ function frame(now: number): void {
   const tps = SPEEDS[speed]!.tps;
   if (!paused && !busy) {
     acc += dt * tps;
-    const n = Math.min(Math.floor(acc), 12);
-    if (n > 0) {
-      acc -= n;
-      if (acc > 12) acc = 0;
-      void advance(n);
-    }
+    if (acc >= 1) void advanceWithin(FRAME_BUDGET_MS);
   }
   // Paused or not, people stay where they are drawn mid-step; acc only moves while running.
   const alpha = Math.min(1, acc);
@@ -373,7 +388,7 @@ function updateHud(force = false): void {
   });
   stores.push(`<div class="store"><em style="background:#7a5230"></em>Communal store<span>🌾 ${world.communal.grain}</span></div>`);
   $("stores").innerHTML = stores.join("");
-  if (hudThrottle % 30 === 0 || force) renderCulture();
+  if ((hudThrottle % 30 === 0 || force) && panelOpen && $("modal").classList.contains("open")) $("mbody").innerHTML = panelOpen === "culture" ? cultureHtml() : buildingHtml();
 
   if (hudThrottle % 12 === 0 || force) renderInspector();
   if (dirty.feed || force) renderFeed();
@@ -698,6 +713,7 @@ function renderFeed(): void {
 let bookOpen = false;
 function openBook(): void {
   bookOpen = true;
+  panelOpen = null;
   openFightId = null;
   $("mtitle").textContent = "📖 Chronicle";
   $("mbody").innerHTML = `<ul id="fullfeed">${feedHtml(400, false)}</ul>`;
@@ -727,25 +743,93 @@ function renderIntrigue(): void {
 }
 
 /** The village's ways: values, gods, the festival, and what is being built. */
-function renderCulture(): void {
+/** Which side panel the modal is showing, so it can refresh while open. */
+let panelOpen: "culture" | "building" | null = null;
+
+function openPanel(kind: "culture" | "building"): void {
+  bookOpen = false;
+  openFightId = null;
+  panelOpen = kind;
+  $("mtitle").textContent = kind === "culture" ? "🏛 Culture and faith" : "🔨 Building";
+  $("mbody").innerHTML = kind === "culture" ? cultureHtml() : buildingHtml();
+  $("modal").classList.add("open");
+}
+
+/** The village's ways: values, gods, festivals. */
+function cultureHtml(): string {
   const c = world.culture;
   const held = VALUES.map((v) => ({ v, x: c.values[v] })).sort((a, b) => b.x - a.x);
   const love = listJoin(held.slice(0, 3).map(({ v }) => VALUE_WORDS[v][0]));
   const scorn = listJoin(held.slice(-2).filter(({ x }) => x < -0.1).map(({ v }) => VALUE_WORDS[v][1]));
-  const gods = c.deities.map((d) => `<b>${esc(d.name)}</b> <small>(${esc(d.spheres.join(", "))})</small>`).join(" · ");
-  const fest = world.festival ? `<p>🎉 <b>${esc(world.festival.name)}</b> is under way in the square.</p>` : "";
-  const projects = world.projects
-    .filter((pr) => pr.status === "planned")
-    .map((pr) => {
-      const owner = pr.householdId === null ? "the village" : `the ${esc(world.households[pr.householdId]!.name)} house`;
-      const left = Math.max(0, pr.need.wood - pr.stock.wood), stone = Math.max(0, pr.need.stone - pr.stock.stone);
-      const mats = left + stone > 0 ? ` · needs ${left ? `${left} wood` : ""}${left && stone ? ", " : ""}${stone ? `${stone} stone` : ""}` : ` · ${Math.round((pr.done / pr.work) * 100)}% built`;
-      return `<li>${PROJECT_NAMES[pr.kind] ?? pr.kind} <small>for ${owner}${mats}</small></li>`;
+  const temple = world.buildings.some((b) => b.kind === "temple");
+  const people = world.active().filter((p) => world.ageYears(p) >= 12);
+  const gods = c.deities
+    .map((d) => {
+      const n = people.filter((p) => p.deityId === d.id).length;
+      return `<li><b>${esc(d.name)}</b>, god of ${esc(listJoin(d.spheres))} <small>· ${n} worshipper${n === 1 ? "" : "s"}</small></li>`;
     })
     .join("");
-  const temple = world.buildings.some((b) => b.kind === "temple");
-  $("culture").innerHTML = `<h3>Culture</h3><div class="desc"><p>${esc(c.name.charAt(0).toUpperCase() + c.name.slice(1))} ${love}${scorn ? `, but ${scorn}` : ""}.</p><p>They worship ${gods}${temple ? ", at the temple in town" : ""}.</p>${fest}</div>${projects ? `<h4>Being built</h4><ul>${projects}</ul>` : ""}`;
+  const scale = (x: number) => (x >= 0.5 ? "holds dear" : x >= 0.15 ? "values" : x > -0.15 ? "is indifferent to" : x > -0.5 ? "doubts" : "scorns");
+  const values = held.map(({ v, x }) => `<li>${scale(x)} <b>${VALUE_TOPICS[v]}</b> <small>(${x >= 0 ? "+" : ""}${x.toFixed(2)})</small></li>`).join("");
+  const houses = world.households
+    .map((h) => {
+      const m = people.filter((p) => p.householdId === h.id);
+      if (m.length === 0) return "";
+      const avg = (v: Value) => m.reduce((a, p) => a + p.values[v], 0) / m.length;
+      const top = VALUES.map((v) => ({ v, x: avg(v) })).sort((a, b) => b.x - a.x).slice(0, 2).map(({ v }) => VALUE_TOPICS[v]);
+      return `<li>The <b>${esc(h.name)}</b> house leans toward ${listJoin(top)}</li>`;
+    })
+    .join("");
+  const nextFest = world.config.culture.festivalFirstDay + Math.max(0, Math.ceil((world.env.day - world.config.culture.festivalFirstDay) / world.config.culture.festivalEveryDays)) * world.config.culture.festivalEveryDays;
+  const fest = world.festival ? `<p>🎉 <b>${esc(world.festival.name)}</b> is under way in the square.</p>` : `<p>The next festival is on day ${nextFest + 1}.</p>`;
+  return `<div class="desc"><p>${esc(c.name.charAt(0).toUpperCase() + c.name.slice(1))} ${love}${scorn ? `, but ${scorn}` : ""}.</p>${fest}</div>
+    <h4>Gods${temple ? " (worshipped at the temple in town)" : ""}</h4><ul>${gods}</ul>
+    <h4>Values</h4><ul>${values}</ul>
+    <h4>Houses</h4><ul>${houses}</ul>`;
 }
+
+/** What is being built, what has been finished, and how each house is furnished. */
+function buildingHtml(): string {
+  const owner = (hid: number | null) => (hid === null ? "the village" : `the ${esc(world.households[hid]!.name)} house`);
+  const active = world.projects
+    .filter((pr) => pr.status === "planned")
+    .map((pr) => {
+      const wood = Math.max(0, pr.need.wood - pr.stock.wood), stone = Math.max(0, pr.need.stone - pr.stock.stone);
+      const mats = wood + stone > 0 ? `waiting on ${wood ? `${wood} wood` : ""}${wood && stone ? " and " : ""}${stone ? `${stone} stone` : ""}` : `${Math.round((pr.done / pr.work) * 100)}% built`;
+      const builders = pr.builders.filter((id) => world.isActive(id)).map((id) => personLink(world.person(id))).join(", ");
+      return `<li><b>${PROJECT_NAMES[pr.kind] ?? pr.kind}</b> for ${owner(pr.householdId)} <small>· ${mats} · begun ${clock(world, pr.createdTick)}</small>${builders ? `<br><small>worked on by ${builders}</small>` : ""}</li>`;
+    })
+    .join("");
+  const done = world.projects
+    .filter((pr) => pr.status === "done")
+    .slice(-20)
+    .reverse()
+    .map((pr) => {
+      const f = world.furniture.find((x) => x.tick === pr.doneTick && x.x === pr.site.x && x.y === pr.site.y);
+      const q = f && f.quality > 0 ? `${QUALITY_WORDS[f.quality]} ` : "";
+      const by = f?.makerId ? ` by ${personLink(world.person(f.makerId))}` : "";
+      return `<li><time>${clock(world, pr.doneTick ?? pr.createdTick)}</time> ${q}${(PROJECT_NAMES[pr.kind] ?? pr.kind).replace(/^an? /, "")} for ${owner(pr.householdId)}${by}</li>`;
+    })
+    .join("");
+  const rows = world.households
+    .map((h) => {
+      const n = (k: string) => world.furniture.filter((f) => f.buildingId === h.buildingId && f.kind === k).length;
+      const people = world.active().filter((p) => p.householdId === h.id);
+      const bedless = people.filter((p) => world.ageYears(p) >= world.config.needs.infantAge && !hasBed(world, p)).length;
+      return `<tr><td>${esc(h.name)}</td><td>${n("bed")}${bedless ? ` <span class="bad">(${bedless} on the floor)</span>` : ""}</td><td>${n("table")}</td><td>${n("chair")}</td><td>${n("chest")}</td><td>${n("altar")}</td><td>${world.fenced.includes(h.id) ? "✓" : ""}</td></tr>`;
+    })
+    .join("");
+  return `<h4>Under way</h4><ul>${active || `<li class="hint">Nothing is being built right now.</li>`}</ul>
+    <h4>Furnishings</h4><table class="furn"><tr><th></th><th>Beds</th><th>Tables</th><th>Chairs</th><th>Chests</th><th>Altars</th><th>Palisade</th></tr>${rows}</table>
+    <h4>Recently finished</h4><ul>${done || `<li class="hint">Nothing yet.</li>`}</ul>`;
+}
+
+const VALUE_TOPICS: Record<Value, string> = {
+  law: "the law", family: "family", tradition: "tradition", craftsmanship: "craftsmanship", hard_work: "hard work", leisure: "leisure",
+  martial: "martial prowess", peace: "peace", nature: "nature", fairness: "fairness", cooperation: "cooperation", romance: "romance",
+  truth: "truth", merriment: "merriment", piety: "piety",
+};
+const QUALITY_WORDS = ["", "well-crafted", "finely-crafted", "superior", "exceptional", "masterful"];
 
 const PROJECT_NAMES: Record<string, string> = { bed: "a bed", table: "a table", chair: "a chair", chest: "a chest", altar: "a household altar", well: "a new well", pump: "a well pump", bridge: "a bridge over the river", extension: "new rooms", fence: "a palisade round the pen", temple: "a temple" };
 
@@ -777,6 +861,7 @@ const FINDING_WORDS: Record<string, string> = { murder: "ruled a murder: an inve
 
 function openSession(s: Session): void {
   bookOpen = false;
+  panelOpen = null;
   openFightId = null;
   $("mtitle").textContent = `⚖ Council: ${world.person(s.accused).name} accused of ${s.kind}`;
   $("mbody").innerHTML =
@@ -831,12 +916,14 @@ document.addEventListener("click", (ev) => {
 });
 $("mclose").onclick = () => {
   bookOpen = false;
+  panelOpen = null;
   openFightId = null;
   $("modal").classList.remove("open");
 };
 $("modal").addEventListener("click", (ev) => {
   if (ev.target === $("modal")) {
     bookOpen = false;
+    panelOpen = null;
     openFightId = null;
     $("modal").classList.remove("open");
   }
@@ -1055,6 +1142,8 @@ function setTab(name: string): void {
 }
 document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) => (b.onclick = () => setTab(b.dataset.tab!)));
 $("book").onclick = openBook;
+$("culturebtn").onclick = () => openPanel("culture");
+$("buildbtn").onclick = () => openPanel("building");
 
 // ---------- Phone layout: bottom bar, sheets and a menu ----------
 
@@ -1185,6 +1274,15 @@ window.addEventListener("keydown", (ev) => {
   },
   get camera() {
     return { ...cam };
+  },
+  get renderer() {
+    return renderer;
+  },
+  /** Times drawing the map alone, n frames, at the current camera. */
+  timeDraw: (n = 10) => {
+    const t0 = performance.now();
+    for (let i = 0; i < n; i++) renderer.draw(world, cam, opts, prev, 1, selected, performance.now() / 1000);
+    return (performance.now() - t0) / n;
   },
   select,
   draw: () => {

@@ -215,3 +215,11 @@ Added at the user's request after milestone 1. Where these conflict with entries
 
 **Inquests**
 - A found body (other than an executed convict's) brings the council: the elder and heads not kin to the dead go to examine it, each reading the signs for themselves. The council rules by majority (the graver reading on a tie): wolves (bury and hunt the pack), hunger, cold or sickness (bury), or murder (each judge opens a case). The body is buried once the council has ruled, or after two days regardless.
+
+**Map, famine and speed (fourth round)**
+- **A larger map.** 192 by 144 tiles (from 160 by 120), compounds 46 tiles from town, with more meadows, outcrops, deer herds, rabbits and foxes to fill it.
+- **Famine relief.** Outside winter, the elder opens the communal store to a house that has run out of food while most of its people go hungry (1 grain per person per day). On the larger map the poorest house could otherwise starve to the last child while the store sat full.
+- **Babies without a nursing mother are fed** by whoever carries them, from the baby's share, the carer's, or the house store at home. Infants cannot eat on their own, so before this, a baby whose mother had died starved in its father's arms.
+- **Searches cover the whole forest.** Searchers sweep around every compound and the town in turn, starting with the compound of anyone they saw take the child. On the larger map a kidnapper's hideout near his own compound was outside every ring a family searched around theirs.
+- **Building waits on hunger.** Nobody plans, hauls, quarries or builds while they or their house are going hungry. At most two people work a piece of furniture at once and three a larger work, and big works take longer (a temple is several days), so the whole village no longer raises a temple in an afternoon.
+- **Speed.** Paths: a search that cannot succeed (the other side of the river) stops at once, buffers are reused, and the A* heuristic is weighted 1.2, which halves the work for paths within a few per cent of the shortest. The viewer skips the stream hash and the per-tick invariant check (tests keep both), runs the simulation on a 14 ms budget per frame and drops what it cannot keep up with, caches roofs as bitmaps, counts building occupants once per frame, culls and simplifies water, and draws a half or quarter size ground image when zoomed out.

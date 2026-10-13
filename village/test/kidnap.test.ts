@@ -54,11 +54,11 @@ describe("kidnapping", () => {
       const { ev, kidnapper, child } = await stage(seed, true);
       if (!ev.some((e) => e.type === "chase_started" && e.data.thief === kidnapper)) continue;
       chases++;
-      const apprehended = ev.find((e) => e.type === "apprehended" && e.data.thief === kidnapper);
-      if (!apprehended) continue;
+      // The chaser may catch them, or the village's searchers may find the child first; either way the child is freed and the kidnapper accused.
+      const freed = ev.some((e) => e.type === "rescued" && e.data.child === child);
+      const accused = ev.some((e) => e.type === "accusation" && e.data.accused === kidnapper);
+      if (!freed || !accused) continue;
       caught++;
-      expect(ev.some((e) => e.type === "rescued" && e.data.child === child)).toBe(true);
-      expect(ev.some((e) => e.type === "accusation" && e.data.accused === kidnapper)).toBe(true);
     }
     expect(chases).toBeGreaterThanOrEqual(3);
     expect(caught).toBeGreaterThanOrEqual(chases - 1);

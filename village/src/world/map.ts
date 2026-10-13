@@ -298,7 +298,7 @@ export function findPath(map: GameMap, from: number, to: number, blocked?: (i: n
   };
   const h = (i: number) => {
     const x = i % map.width, y = Math.floor(i / map.width);
-    return (Math.abs(x - toPt.x) + Math.abs(y - toPt.y)) * 0.8;
+    return (Math.abs(x - toPt.x) + Math.abs(y - toPt.y)) * 1.2;
   };
   setG(from, 0, -1);
   push(h(from), from);

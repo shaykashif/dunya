@@ -193,6 +193,11 @@
   .tline.verdict { border-color: var(--gold); font-size: 20px; color: var(--gold); }
   .tline.truth { border-color: var(--red); color: #e8c0b0; }
   .liebadge { color: #ff8a7a; font-size: 14px; margin-left: 6px; }
+  .hbtns { float: right; display: flex; gap: 4px; }
+  .hbtns button { font-size: 15px; padding: 1px 6px; }
+  table.furn { border-collapse: collapse; font-size: 16px; }
+  table.furn td, table.furn th { padding: 1px 8px; text-align: left; border-bottom: 1px solid var(--edge); }
+  table.furn th { font: 11px "Silkscreen", monospace; color: var(--dim); }
   .mobile-only { display: none !important; }
   #mnav, #sheethead { display: none; }
   @media (min-width: 761px) and (max-width: 900px) {
@@ -277,11 +282,10 @@
   <aside>
     <div id="sheethead"><span id="sheettitle">People</span><button id="sheetclose" title="Back to the map">✕</button></div>
     <section>
-      <h1>⌂ VILLAGE <button id="book" title="Read the whole chronicle (B)" style="float:right">📖 Chronicle</button></h1>
+      <h1>⌂ VILLAGE <span class="hbtns"><button id="book" title="Read the whole chronicle (B)">📖 Chronicle</button><button id="culturebtn" title="The village's values, gods and festivals">🏛 Culture</button><button id="buildbtn" title="What is being built, and how each house is furnished">🔨 Building</button></span></h1>
       <form id="seedform"><input id="seed" type="number" min="1" value="42"><button type="submit">New village</button><button type="button" id="random" title="Random seed">🎲</button></form>
     </section>
     <section><div id="stats"></div><div id="stores" style="margin-top:6px"></div></section>
-    <section id="culture"></section>
     <div id="tabs">
       <button data-tab="people" class="on">👤 People</button>
       <button data-tab="intrigue">🗡 Intrigue</button>

@@ -42,8 +42,8 @@ export const DEFAULT_CONFIG = {
     startDayOfYear: 210,
     startHour: 6,
   },
-  /** One tile is about 20 m; compounds sit about 40 tiles (a bit under a km) from town. */
-  map: { width: 160, height: 120, compoundDistance: 40, compoundRadius: 13, townRadius: 14, meadows: 10, rockOutcrops: 9 },
+  /** One tile is about 20 m; compounds sit about 46 tiles (a little under a km) from town. */
+  map: { width: 192, height: 144, compoundDistance: 46, compoundRadius: 13, townRadius: 14, meadows: 14, rockOutcrops: 12 },
   light: {
     darkestHour: 2,
     moonlight: 0.03,
@@ -159,6 +159,8 @@ export const DEFAULT_CONFIG = {
     /** Grain per living person per day released from the communal store in winter. */
     winterRationPerPersonPerDay: 1.1,
     rationHour: 7,
+    /** Outside winter, grain per person per day for a house that has run out and is going hungry. */
+    reliefPerPersonPerDay: 1,
     /** The village keeps a night watch on the store that grows with each discovered theft. */
     watchPerTheft: 0.2,
     watchDecayPerDay: 0.03,
@@ -315,10 +317,10 @@ export const DEFAULT_CONFIG = {
     palisadeHolds: 0.85,
     /** Wild game: deer herds range the deep woods; rabbits and foxes are everywhere. */
     game: {
-      deerHerds: 6,
+      deerHerds: 7,
       deerPerHerd: [4, 6] as [number, number],
-      rabbits: 18,
-      foxes: 4,
+      rabbits: 22,
+      foxes: 5,
       herdRange: 14,
       /** Tiles per tick when running: deer and rabbits outrun wolves (13); a fox barely does. */
       speed: { deer: 17, rabbit: 15, fox: 14 },
@@ -451,14 +453,14 @@ export const DEFAULT_CONFIG = {
       chair: { wood: 1, stone: 0, work: 2 },
       chest: { wood: 2, stone: 0, work: 2 },
       altar: { wood: 0, stone: 3, work: 3 },
-      well: { wood: 1, stone: 6, work: 6 },
+      well: { wood: 1, stone: 6, work: 12 },
       pump: { wood: 3, stone: 2, work: 4 },
       /** Per tile of the span. */
-      bridge: { wood: 3, stone: 1, work: 2 },
-      extension: { wood: 10, stone: 4, work: 10 },
+      bridge: { wood: 3, stone: 1, work: 5 },
+      extension: { wood: 10, stone: 4, work: 24 },
       /** A palisade round the animal pen; wolves rarely get through it. */
       fence: { wood: 8, stone: 0, work: 5 },
-      temple: { wood: 12, stone: 16, work: 18 },
+      temple: { wood: 12, stone: 16, work: 60 },
     },
     workDuration: 6,
     carryMax: 4,
@@ -470,6 +472,9 @@ export const DEFAULT_CONFIG = {
     /** A house is crowded below this many floor tiles per person. */
     tilesPerPerson: 4,
     maxHouseProjects: 2,
+    /** At most this many people work one site at a time: furniture, and larger works. */
+    crewFurniture: 2,
+    crewLarge: 3,
     /** A compound this populous wants a second well. */
     secondWellAbove: 11,
     /** Projects nobody works on for this long are given up. */

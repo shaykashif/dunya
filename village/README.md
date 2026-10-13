@@ -57,6 +57,7 @@ Then open http://localhost:5173 (add `?seed=7` for another village).
 
 **Getting around**
 - Drag or use **WASD** to pan (hold Shift to go faster); the mouse wheel, a trackpad pinch-scroll or holding **Q/E** zooms smoothly, from the whole map down to close-ups.
+- 📖 Chronicle, 🏛 Culture (values, gods, festivals) and 🔨 Building (what is under way, furnishings by house, what was finished) open from the buttons at the top of the right panel.
 - The minimap in the corner jumps the camera. Wolf dens show on it as red squares, in the far corners of the forest; the dens are drawn on the map too.
 - On a phone the map fills the screen: a bottom bar opens People, Intrigue, Council, the Chronicle and the Village stats as sheets, ☰ holds the view toggles and powers, and pinching zooms.
 - Hover over a building to see inside.

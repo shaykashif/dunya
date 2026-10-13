@@ -1,5 +1,5 @@
 import { r3 } from "../log/events.ts";
-import { consume } from "../world/items.ts";
+import { bestFood, consume, foodValue, holderInv } from "../world/items.ts";
 import type { DeathCause, Person } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { kill } from "./death.ts";
@@ -85,6 +85,18 @@ export function updateNeeds(w: World): void {
         s.food = Math.max(s.food, 0.8);
       } else {
         s.food -= cfg.foodDecayPerDay / tpd;
+        // Without a nursing mother, whoever carries the baby feeds it: from its own share, the carer's, or the house store at home.
+        if (s.food < 0.45) {
+          const home = w.isInside(carer, w.house(p.householdId));
+          const sources = [{ t: "person" as const, id: p.id }, { t: "person" as const, id: carer.id }, ...(home ? [{ t: "household" as const, id: p.householdId }] : [])];
+          for (const src of sources) {
+            const kind = bestFood(holderInv(w, src));
+            if (!kind) continue;
+            consume(w, src, kind, 1, "fed_infant", [carer.id]);
+            s.food = clamp01(s.food + foodValue(w, kind));
+            break;
+          }
+        }
       }
     } else {
       s.food -= cfg.foodDecayPerDay / tpd;

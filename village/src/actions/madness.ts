@@ -117,10 +117,14 @@ export const search: ActionDef = {
       if (!child || !w.isActive(child.id)) continue;
       const hurt = child.captorId === null && needsRescue(w, child);
       if (child.captorId === null && !hurt) continue;
-      const c = w.compound(p.householdId).center;
+      // Search around whoever they saw take the child; otherwise around each compound and the town in turn.
+      const seen = p.beliefs.find((b) => b.subject.kind === "person" && b.subject.id !== child.id && b.predicate === "attacked" && typeof b.object === "object" && b.object.kind === "person" && b.object.id === child.id);
+      const suspect = seen && seen.subject.kind === "person" ? w.maybePerson(seen.subject.id) : null;
+      const centres = [...(suspect ? [w.compound(suspect.householdId).center] : []), w.compound(p.householdId).center, w.map.square, ...w.compounds.map((x) => x.center)];
+      const c = centres[(Math.floor(w.tick / 72) + p.id) % centres.length]!;
       // Everyone sweeps a different sector and ring, so a big search covers the whole forest.
       const turn = (Math.floor(w.tick / 18) + p.id * 5) % 12;
-      const r = 12 + ((Math.floor(w.tick / 72) + p.id) % 5) * 9;
+      const r = 10 + ((Math.floor(w.tick / 36) + p.id) % 4) * 7;
       const clamp = (x: number, y: number) => ({ x: Math.max(1, Math.min(w.map.width - 2, x)), y: Math.max(1, Math.min(w.map.height - 2, y)) });
       // The family knows roughly which way a hurt person went; a kidnapper could be anywhere in the woods.
       const dest = hurt

@@ -205,6 +205,9 @@ export class Renderer {
   private particles: { x: number; y: number; v: number; s: number }[] = [];
   private flash = 0;
   effects: Effect[] = [];
+  private readonly occupants = new Map<number, number>();
+  /** The ground at half and quarter size, for drawing zoomed out without sampling the full image. */
+  private terrainSmall: HTMLCanvasElement[] = [];
   hoverBuilding = -1;
   selectedAnimal: number | null = null;
   /** Progress through the current tick, for hit-testing moving creatures. */
@@ -305,9 +308,23 @@ export class Renderer {
       this.terrainKey = key;
       // Building can turn water into bridge.
       this.waterTiles = [];
+      this.terrainSmall = [2, 4].map((f) => {
+        const c = document.createElement("canvas");
+        c.width = Math.ceil(this.terrain!.width / f);
+        c.height = Math.ceil(this.terrain!.height / f);
+        const sg = c.getContext("2d")!;
+        sg.imageSmoothingEnabled = true;
+        sg.imageSmoothingQuality = "medium";
+        sg.drawImage(this.terrain!, 0, 0, c.width, c.height);
+        return c;
+      });
     }
-    g.drawImage(this.terrain, 0, 0);
-    this.drawWater(w, time);
+    // Zoomed out, a smaller copy of the ground is cheaper to draw and looks the same.
+    const vw0 = this.canvas.width / dpr / cam.zoom, vh0 = this.canvas.height / dpr / cam.zoom;
+    const small = cam.zoom <= 0.3 ? this.terrainSmall[1] : cam.zoom <= 0.6 ? this.terrainSmall[0] : undefined;
+    if (small) g.drawImage(small, 0, 0, this.terrain.width, this.terrain.height);
+    else g.drawImage(this.terrain, 0, 0);
+    this.drawWater(w, time, cam, vw0, vh0);
     for (const gr of w.graves) g.drawImage(gr.marked ? GRAVE : MOUND, gr.x * TILE + 4, gr.y * TILE + 4);
     if (opts.traces) for (const t of w.traces) this.drawTrace(t, w);
 
@@ -343,7 +360,13 @@ export class Renderer {
       this.drawPerson(w, p, pos, prev, p.id === selected, time);
     }
 
-    for (const b of w.buildings) this.drawBuilding(w, b, opts, time);
+    // How many people are inside each building, counted once for the frame.
+    this.occupants.clear();
+    for (const p of people) {
+      const id = w.map.buildingAt(p.x, p.y);
+      if (id >= 0 && w.map.roofed(p.x, p.y)) this.occupants.set(id, (this.occupants.get(id) ?? 0) + 1);
+    }
+    for (const b of w.buildings) if (inView((b.x0 + b.x1) * TILE / 2, (b.y0 + b.y1) * TILE / 2) || (b.x1 - b.x0) * TILE > vw) this.drawBuilding(w, b, opts, time);
 
     const sel = w.maybePerson(selected);
     if (sel && sel.alive && !sel.exiled && this.insideRoofed(w, sel, opts)) {
@@ -465,11 +488,28 @@ export class Renderer {
     g.translate(Math.round(px), Math.round(py));
     g.rotate(Math.PI / 2);
     g.globalAlpha = 0.85;
-    g.filter = a.skinned ? "sepia(1) saturate(4) hue-rotate(-40deg) brightness(0.7)" : "brightness(0.7)";
-    g.drawImage(spr, -spr.height + 2, -spr.width / 2);
+    g.drawImage(this.tinted(spr, a.kind, a.skinned), -spr.height + 2, -spr.width / 2);
     g.restore();
     g.fillStyle = "#8a1a1a";
     g.fillRect(Math.round(px) - 3, Math.round(py) + 1, 6, 1);
+  }
+
+  /** A darkened (or, skinned, reddened) copy of an animal sprite, made once. */
+  private readonly tintCache = new Map<string, HTMLCanvasElement>();
+  private tinted(spr: HTMLCanvasElement, kind: string, skinned: boolean): HTMLCanvasElement {
+    const key = `${kind}:${skinned ? 1 : 0}`;
+    let c = this.tintCache.get(key);
+    if (c) return c;
+    c = document.createElement("canvas");
+    c.width = spr.width;
+    c.height = spr.height;
+    const g = c.getContext("2d")!;
+    g.drawImage(spr, 0, 0);
+    g.globalCompositeOperation = "source-atop";
+    g.fillStyle = skinned ? "rgba(150,20,20,0.75)" : "rgba(0,0,0,0.3)";
+    g.fillRect(0, 0, c.width, c.height);
+    this.tintCache.set(key, c);
+    return c;
   }
 
   /** A wolf den: a heap of rocks round a dark hole, with bones scattered in front. */
@@ -511,17 +551,24 @@ export class Renderer {
     }
   }
 
-  private drawWater(w: World, time: number): void {
+  private drawWater(w: World, time: number, cam: Camera, vw: number, vh: number): void {
     const g = this.g;
     if (this.waterTiles.length === 0) {
       for (let i = 0; i < w.map.terrain.length; i++) if (w.map.terrain[i] === "water") this.waterTiles.push(i);
     }
     const icy = w.env.season === 3 && w.env.temperature < -2;
+    const ripples = cam.zoom >= 0.6;
+    if (!icy && !ripples) return;
     for (const i of this.waterTiles) {
       const tx = i % w.map.width, ty = Math.floor(i / w.map.width);
       const x0 = tx * TILE, y0 = ty * TILE;
-      g.fillStyle = icy ? "#9cc4e8" : "#3a7bd5";
-      g.fillRect(x0, y0, TILE, TILE);
+      if (x0 + TILE < cam.x || y0 + TILE < cam.y || x0 > cam.x + vw || y0 > cam.y + vh) continue;
+      // The ground layer already has open water; only ice changes the base colour.
+      if (icy) {
+        g.fillStyle = "#9cc4e8";
+        g.fillRect(x0, y0, TILE, TILE);
+      }
+      if (!ripples) continue;
       g.fillStyle = icy ? "#c8e0f4" : "#5c98e8";
       for (let k = 0; k < 2; k++) {
         const off = Math.floor((time * 6 + hash2(tx, ty, k) * 16 + k * 7) % 16);
@@ -660,7 +707,7 @@ export class Renderer {
     const g = this.g;
     const x0 = b.x0 * TILE, y0 = b.y0 * TILE;
     const wpx = (b.x1 - b.x0 + 1) * TILE, hpx = (b.y1 - b.y0 + 1) * TILE;
-    const occupants = w.active().filter((p) => w.isInside(p, b) && !w.isCarried(p)).length;
+    const occupants = this.occupants.get(b.id) ?? 0;
     const hh = b.householdId;
     if (this.roofHidden(b, opts)) {
       if (b.hearth) {
@@ -688,21 +735,7 @@ export class Renderer {
     const roofDark = b.kind === "hall" ? "#4e4a43" : b.kind === "temple" ? "#b0a68e" : hh === null ? "#553820" : HOUSEHOLD_DARK[hh % HOUSEHOLD_DARK.length]!;
     const winter = w.env.season === 3;
     const rx = x0 - 2, ry = y0 - 4, rw = wpx + 4, rh = hpx + 2;
-    g.fillStyle = roofDark;
-    g.fillRect(rx, ry, rw, rh);
-    for (let y = 0; y < rh - 2; y += 3) {
-      g.fillStyle = (y / 3) % 2 === 0 ? roof : roofDark;
-      g.fillRect(rx + 1, ry + y + 1, rw - 2, 2);
-      g.fillStyle = roofDark;
-      for (let x = ((y / 3) % 2) * 3; x < rw - 2; x += 6) g.fillRect(rx + 1 + x, ry + y + 1, 1, 2);
-    }
-    g.fillStyle = "#3a2a1a";
-    g.fillRect(rx, ry + Math.floor(rh / 2), rw, 1);
-    if (winter) {
-      g.fillStyle = "#f2f6f8";
-      g.fillRect(rx, ry, rw, 3);
-      for (let x = 0; x < rw; x += 5) g.fillRect(rx + x, ry + 3, 2, 1 + (x % 3));
-    }
+    g.drawImage(this.roofBitmap(roof, roofDark, rw, rh, winter), rx, ry);
     g.fillStyle = b.kind === "hall" ? "#8a8478" : "#7a5a3c";
     g.fillRect(x0, y0 + hpx - 6, wpx, 6);
     if (b.kind === "hall") {
@@ -757,6 +790,35 @@ export class Renderer {
       g.textAlign = "left";
       g.fillText(String(occupants), bx + 2, by + 7);
     }
+  }
+
+  /** Shingled roofs are drawn once into a bitmap per size, colour and season, then stamped each frame. */
+  private readonly roofCache = new Map<string, HTMLCanvasElement>();
+  private roofBitmap(roof: string, roofDark: string, rw: number, rh: number, winter: boolean): HTMLCanvasElement {
+    const key = `${roof}:${roofDark}:${rw}:${rh}:${winter ? 1 : 0}`;
+    let c = this.roofCache.get(key);
+    if (c) return c;
+    c = document.createElement("canvas");
+    c.width = rw;
+    c.height = rh;
+    const g = c.getContext("2d")!;
+    g.fillStyle = roofDark;
+    g.fillRect(0, 0, rw, rh);
+    for (let y = 0; y < rh - 2; y += 3) {
+      g.fillStyle = (y / 3) % 2 === 0 ? roof : roofDark;
+      g.fillRect(1, y + 1, rw - 2, 2);
+      g.fillStyle = roofDark;
+      for (let x = ((y / 3) % 2) * 3; x < rw - 2; x += 6) g.fillRect(1 + x, y + 1, 1, 2);
+    }
+    g.fillStyle = "#3a2a1a";
+    g.fillRect(0, Math.floor(rh / 2), rw, 1);
+    if (winter) {
+      g.fillStyle = "#f2f6f8";
+      g.fillRect(0, 0, rw, 3);
+      for (let x = 0; x < rw; x += 5) g.fillRect(x, 3, 2, 1 + (x % 3));
+    }
+    this.roofCache.set(key, c);
+    return c;
   }
 
   private drawSacks(w: World, b: Building): void {
