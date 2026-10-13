@@ -245,17 +245,23 @@ const LOOKS: Record<Building["kind"], Look> = {
   barn: { wallH: 21, wall: "#8a6440", wallDark: "#6a4a2e", trim: "#4a3020", roof: ["#a8905a", "#8c7646", "#6e5c36", "#463a22"], hip: false },
   cottage: { wallH: 17, wall: "#e6dece", wallDark: "#c2b8a4", trim: "#4a3020", roof: ["#78787e", "#606068", "#4c4c54", "#2e2e36"], hip: false },
   church: { wallH: 21, wall: "#b0aca0", wallDark: "#8e8a80", trim: "#3a3a3e", roof: ["#6a6a76", "#54545e", "#42424a", "#26262c"], hip: true },
+  house: { wallH: 16, wall: "#c8bca4", wallDark: "#a69a82", trim: "#3a3028", roof: ["#6e7078", "#585a62", "#46484e", "#2a2c30"], hip: false },
+  shop: { wallH: 17, wall: "#d8cfb8", wallDark: "#b2a890", trim: "#2e4a5a", roof: ["#a85a44", "#8e4632", "#723626", "#46201a"], hip: false },
 };
 
+/** Pixels each storey above the ground floor adds to a front wall. */
+const STOREY = 13;
+
+/** Height of a building's front wall in pixels: the ground floor, and a storey for each floor above it. */
 export function wallHeight(b: Building): number {
-  return LOOKS[b.kind].wallH;
+  return LOOKS[b.kind].wallH + (b.kind === "church" ? 0 : (b.floors - 1) * STOREY);
 }
 
 /** Pixel bounds of a building's three-quarter sprite, in world pixels. */
 export function buildingBounds(b: Building): { x: number; y: number; w: number; h: number } {
-  const L = LOOKS[b.kind];
-  const extra = b.kind === "church" ? 44 : 8;
-  return { x: b.x * TILE - 3, y: b.y * TILE - L.wallH - extra, w: b.w * TILE + 6, h: b.h * TILE + L.wallH + extra + 1 };
+  const WH = wallHeight(b);
+  const extra = b.kind === "church" ? 44 : 12;
+  return { x: b.x * TILE - 3, y: b.y * TILE - WH - extra, w: b.w * TILE + 6, h: b.h * TILE + WH + extra + 1 };
 }
 
 /**
@@ -273,20 +279,29 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
   };
   const ox = b.x * TILE - B.x, oy = b.y * TILE - B.y;
   const FW = b.w * TILE, FH = b.h * TILE;
-  const wallTop = oy + FH - L.wallH;
+  const WH = wallHeight(b);
+  const wallTop = oy + FH - WH;
   const south = b.y + b.h - 1;
+  const storeys = b.kind === "church" ? 1 : b.floors;
+  /** Top of the band of wall belonging to floor f (0 the ground floor, at the bottom). */
+  const bandTop = (f: number) => (f === 0 ? wallTop + WH - L.wallH : wallTop + (storeys - 1 - f) * STOREY);
 
   // The south wall, facing us.
-  px(ox, wallTop, L.wall, FW, L.wallH);
+  px(ox, wallTop, L.wall, FW, WH);
   for (let x = 0; x < FW; x++) {
-    for (let y = 0; y < L.wallH; y++) {
+    for (let y = 0; y < WH; y++) {
       const X = ox + x, Y = wallTop + y;
       if (b.kind === "barn") {
         if (x % 4 === 0) px(X, Y, L.wallDark);
         else if (hash2(x, y, b.id + 9) < 0.06) px(X, Y, "#9a7450");
       } else if (b.kind === "cottage") {
         // Norman half-timbering.
-        if (y === 1 || y === L.wallH - 3 || x % 8 === 0 || (x % 8 === y % 8 && y > 1 && y < L.wallH - 3)) px(X, Y, "#5a3a22");
+        const yy = y % STOREY;
+        if (yy === 1 || x % 8 === 0 || (x % 8 === yy % 8 && yy > 1 && yy < STOREY - 2)) px(X, Y, "#5a3a22");
+      } else if (b.kind === "house" || b.kind === "shop") {
+        // Rendered stone, dressed quoins at the corners.
+        if ((x < 3 || x >= FW - 3) && Math.floor(y / 3) % 2 === 0) px(X, Y, L.wallDark);
+        else if (hash2(x, y, b.id + 5) < 0.05) px(X, Y, L.wallDark);
       } else {
         const row = Math.floor(y / 3);
         if (y % 3 === 2 || (x + row * 3) % 7 === 0) px(X, Y, L.wallDark);
@@ -294,29 +309,40 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
       }
     }
   }
+  // A string course between the floors.
+  for (let f = 1; f < storeys; f++) px(ox, bandTop(f) + STOREY - 1, L.wallDark, FW, 1);
+  // A shop front: an awning over the ground floor.
+  if (b.kind === "shop") {
+    const ay = bandTop(0) + 1;
+    for (let x = 0; x < FW; x++) px(ox + x, ay, Math.floor(x / 4) % 2 ? "#e8e0d0" : "#a83a2a", 1, 3);
+    px(ox, ay + 3, "rgba(0,0,0,0.25)", FW, 1);
+  }
   // Shade under the eaves and at the right-hand corner; a plinth along the foot.
   px(ox, wallTop, "rgba(0,0,0,0.28)", FW, 2);
-  px(ox + FW - 2, wallTop, "rgba(0,0,0,0.18)", 2, L.wallH);
-  px(ox, wallTop + L.wallH - 2, b.kind === "barn" ? "#4a3420" : "#7a7266", FW, 2);
+  px(ox + FW - 2, wallTop, "rgba(0,0,0,0.18)", 2, WH);
+  px(ox, wallTop + WH - 2, b.kind === "barn" ? "#4a3420" : "#7a7266", FW, 2);
 
-  // Windows and doors where the sim has them in the south wall.
+  // Windows and doors where the sim has them in the south wall, a window on every floor above.
   for (let tx = b.x; tx < b.x + b.w; tx++) {
     const t = w.map.at(tx, south);
     const X = ox + (tx - b.x) * TILE;
-    if (t === "window") {
-      const wy = wallTop + Math.max(2, Math.floor(L.wallH / 2) - 4);
+    const window = (wy: number) => {
       px(X + 4, wy - 1, L.trim, 8, 8);
       px(X + 5, wy, "#2a3644", 6, 6);
       px(X + 5, wy, "#5a7a94", 2, 2);
       px(X + 7, wy, L.trim, 1, 6);
       px(X + 5, wy + 2, L.trim, 6, 1);
       // Shutters.
-      px(X + 2, wy - 1, b.kind === "cottage" ? "#3a6a5a" : "#6a3a28", 2, 8);
-      px(X + 12, wy - 1, b.kind === "cottage" ? "#3a6a5a" : "#6a3a28", 2, 8);
+      px(X + 2, wy - 1, b.kind === "cottage" ? "#3a6a5a" : b.kind === "house" ? "#4a5a6a" : "#6a3a28", 2, 8);
+      px(X + 12, wy - 1, b.kind === "cottage" ? "#3a6a5a" : b.kind === "house" ? "#4a5a6a" : "#6a3a28", 2, 8);
       px(X + 4, wy + 7, "#8a8478", 8, 1);
+    };
+    if (t === "window") {
+      window(bandTop(0) + Math.max(2, Math.floor(L.wallH / 2) - 4));
+      for (let f = 1; f < storeys; f++) window(bandTop(f) + 3);
     } else if (t === "door") {
       const dw = b.kind === "barn" ? 14 : 8, dh = Math.min(L.wallH - 2, b.kind === "barn" ? 15 : 11);
-      const dx = X + Math.floor((TILE - dw) / 2), dy = wallTop + L.wallH - 2 - dh;
+      const dx = X + Math.floor((TILE - dw) / 2), dy = wallTop + WH - 2 - dh;
       px(dx - 1, dy - 1, L.trim, dw + 2, dh + 1);
       px(dx, dy, b.kind === "barn" ? "#5a3a20" : "#6a4426", dw, dh);
       for (let k = 2; k < dw; k += 3) px(dx + k, dy, "#4a2e18", 1, dh);
@@ -324,16 +350,23 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
         px(dx + dw / 2, dy, "#2a1a10", 1, dh);
         for (let k = 0; k < dw; k++) px(dx + k, dy + Math.floor((k * dh) / dw), "#3a2414");
       } else px(dx + dw - 2, dy + Math.floor(dh / 2), "#c8a050");
+      // A barn's loft door above, a small window over a house door.
+      for (let f = 1; f < storeys; f++) {
+        if (b.kind === "barn") {
+          px(X + 4, bandTop(f) + 2, L.trim, 8, 9);
+          px(X + 5, bandTop(f) + 3, "#3a2414", 6, 8);
+        } else window(bandTop(f) + 3);
+      }
     } else if (t === "rubble") {
       // A shell has torn a breach in the wall.
       const by = wallTop + 2;
-      px(X + 2, by, "#2a2218", 12, L.wallH - 4);
-      for (let k = 0; k < 6; k++) px(X + 1 + Math.floor(hash2(tx, k, 4) * 14), by + Math.floor(hash2(tx, k, 5) * (L.wallH - 4)), L.wallDark, 2, 2);
+      px(X + 2, by, "#2a2218", 12, WH - 4);
+      for (let k = 0; k < 6; k++) px(X + 1 + Math.floor(hash2(tx, k, 4) * 14), by + Math.floor(hash2(tx, k, 5) * (WH - 4)), L.wallDark, 2, 2);
     }
   }
 
   // The roof, over the footprint and lifted by the wall.
-  const RX = ox - 3, RY = oy - L.wallH - 1, RW = FW + 6, RH = FH + 2;
+  const RX = ox - 3, RY = oy - WH - 1, RW = FW + 6, RH = FH + 2;
   const horiz = b.w >= b.h;
   const face = (x: number, y: number): number => {
     // 0 light slope, 1 front slope, 2 shaded slope, 3 back hip, -1 gable wall.
@@ -393,7 +426,7 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
   for (let yy = b.y; yy < b.y + b.h; yy++) {
     for (let xx = b.x; xx < b.x + b.w; xx++) {
       if (w.map.at(xx, yy) !== "rubble") continue;
-      const X = ox + (xx - b.x) * TILE, Y = oy + (yy - b.y) * TILE - L.wallH;
+      const X = ox + (xx - b.x) * TILE, Y = oy + (yy - b.y) * TILE - WH;
       px(X + 2, Y + 3, L.roof[3], 12, 10);
       px(X + 3, Y + 4, "#1a140e", 10, 8);
       px(X + 4, Y + 5, "#2e2418", 4, 3);
@@ -446,9 +479,9 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
 
 /** The shadow a building throws onto the ground, east of it. */
 export function buildingShadow(g: CanvasRenderingContext2D, b: Building): void {
-  const L = LOOKS[b.kind];
-  const x = (b.x + b.w) * TILE, y0 = b.y * TILE - L.wallH + 6, y1 = (b.y + b.h) * TILE;
-  const depth = Math.round(L.wallH * 0.6);
+  const WH = wallHeight(b);
+  const x = (b.x + b.w) * TILE, y0 = b.y * TILE - WH + 6, y1 = (b.y + b.h) * TILE;
+  const depth = Math.round(WH * 0.6);
   g.fillStyle = "rgba(12,20,8,0.3)";
   for (let y = y0; y < y1; y++) g.fillRect(x, y, Math.min(depth, Math.max(0, y - y0 + 3)), 1);
 }

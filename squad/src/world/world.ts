@@ -4,7 +4,7 @@ import type { EventLog, SimEvent } from "../log/events.ts";
 import type { SimConfig } from "../scenario/config.ts";
 import type { Building, Layout } from "./layout.ts";
 import { type GameMap, cheb, findPath } from "./map.ts";
-import type { BattlePhase, BattleResult, Corpse, Ordnance, Platoon, Point, Side, SmokeCloud, Soldier, Squad } from "./types.ts";
+import { MAX_FLOORS, type Weather, type BattlePhase, type BattleResult, type Corpse, type Impact, type Ordnance, type Platoon, type Point, type Side, type SmokeCloud, type Soldier, type Squad } from "./types.ts";
 
 export class World {
   readonly config: SimConfig;
@@ -23,8 +23,12 @@ export class World {
   corpses: Corpse[] = [];
   /** Visibility left on each tile after smoke, in [0, 1]. */
   smoke: Float32Array;
-  /** Soldier id standing on each tile, 0 if none. Ids start at 1. */
+  /** Soldier id standing in each cell (a tile on a floor), 0 if none. Ids start at 1. */
   occupancy: Int32Array;
+  /** The day's weather. */
+  weather: Weather;
+  /** Mortar and artillery rounds that came down lately, so men can react to shelling. */
+  impacts: Impact[] = [];
   /** How exposed each tile is to the enemies each side knows of, in [0, 1+]. */
   exposure: Record<Side, Float32Array>;
   phase: BattlePhase = "battle";
@@ -51,9 +55,10 @@ export class World {
     this.attacker = attacker;
     const n = this.map.width * this.map.height;
     this.smoke = new Float32Array(n).fill(1);
-    this.occupancy = new Int32Array(n);
+    this.occupancy = new Int32Array(n * MAX_FLOORS);
     this.exposure = { us: new Float32Array(n), de: new Float32Array(n) };
     this.platoons = {} as Record<Side, Platoon>;
+    this.weather = config.weather.kinds.clear;
   }
 
   nextId(kind: string): number {
@@ -108,46 +113,67 @@ export class World {
 
   // ---------- Tiles and occupancy ----------
 
-  isFree(x: number, y: number, self = 0): boolean {
-    if (!this.map.passable(x, y)) return false;
-    const o = this.occupancy[this.map.idx(x, y)]!;
+  isFree(x: number, y: number, self = 0, z = 0): boolean {
+    if (!this.map.passable(x, y, z)) return false;
+    const o = this.occupancy[this.map.cell(x, y, z)]!;
     return o === 0 || o === self;
   }
 
-  place(s: Soldier, x: number, y: number): void {
+  /** The cell a man stands in. */
+  cellOf(s: Point & { z?: number }): number {
+    return this.map.cell(s.x, s.y, s.z ?? 0);
+  }
+
+  /** Puts a man on a tile, on floor `z` (by default the floor he is on, if there is one there). */
+  place(s: Soldier, x: number, y: number, z?: number): void {
     this.vacate(s);
     s.x = x;
     s.y = y;
-    if (s.carriedById === null && (this.onField(s) || s.status === "surrendered" || s.status === "captured")) this.occupancy[this.map.idx(x, y)] = s.id;
+    s.z = z ?? (this.map.passable(x, y, s.z) ? s.z : 0);
+    if (s.carriedById === null && (this.onField(s) || s.status === "surrendered" || s.status === "captured")) this.occupancy[this.map.cell(x, y, s.z)] = s.id;
   }
 
   vacate(s: Soldier): void {
-    const i = this.map.idx(s.x, s.y);
+    const i = this.map.cell(s.x, s.y, s.z);
     if (this.occupancy[i] === s.id) this.occupancy[i] = 0;
   }
 
-  /** Nearest free passable tile within `radius`, ring by ring, scanning in a fixed order. */
+  /**
+   * Nearest free passable tile within `radius` on the point's floor, ring by
+   * ring, scanning in a fixed order. Upstairs, if the floor is full, it looks
+   * on the ground instead.
+   */
   freeTileNear(p: Point, radius: number, self = 0, accept?: (x: number, y: number) => boolean): Point | null {
+    const z = p.z ?? 0;
     for (let r = 0; r <= radius; r++) {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
           const x = p.x + dx, y = p.y + dy;
-          if (!this.isFree(x, y, self)) continue;
+          if (!this.isFree(x, y, self, z)) continue;
           if (accept && !accept(x, y)) continue;
-          if (r > 0 && this.map.passable(p.x, p.y) && !this.map.reachable(p, { x, y })) continue;
-          return { x, y };
+          if (r > 0 && this.map.passable(p.x, p.y, z) && !this.map.reachable({ x: p.x, y: p.y, z }, { x, y, z })) continue;
+          return z > 0 ? { x, y, z } : { x, y };
         }
       }
     }
+    if (z > 0) return this.freeTileNear({ x: p.x, y: p.y }, radius, self, accept);
     return null;
+  }
+
+  /** The floor a destination means: its own, or the man's floor if it is in the same building, else the ground. */
+  floorFor(s: Soldier, to: Point): number {
+    if (to.z !== undefined) return to.z;
+    if (s.z > 0 && this.map.passable(to.x, to.y, s.z)) return s.z;
+    return 0;
   }
 
   path(s: Soldier, to: Point, exposureWeight = 0): number[] | null {
     const ex = this.exposure[s.side];
+    const n = this.map.tiles;
     const wgt = exposureWeight;
-    return findPath(this.map, this.map.idx(s.x, s.y), this.map.idx(to.x, to.y), {
-      extra: wgt > 0 ? (i) => ex[i]! * wgt : undefined,
+    return findPath(this.map, this.cellOf(s), this.map.cell(to.x, to.y, this.floorFor(s, to)), {
+      extra: wgt > 0 ? (c) => ex[c % n]! * wgt : undefined,
       maxExpand: 30000,
     });
   }
@@ -155,9 +181,10 @@ export class World {
   /** A path that steps around anyone standing in the way. */
   detour(s: Soldier, to: Point, exposureWeight = 0): number[] | null {
     const ex = this.exposure[s.side];
-    return findPath(this.map, this.map.idx(s.x, s.y), this.map.idx(to.x, to.y), {
-      blocked: (i) => this.occupancy[i] !== 0 && this.occupancy[i] !== s.id,
-      extra: exposureWeight > 0 ? (i) => ex[i]! * exposureWeight : undefined,
+    const n = this.map.tiles;
+    return findPath(this.map, this.cellOf(s), this.map.cell(to.x, to.y, this.floorFor(s, to)), {
+      blocked: (c) => this.occupancy[c] !== 0 && this.occupancy[c] !== s.id,
+      extra: exposureWeight > 0 ? (c) => ex[c % n]! * exposureWeight : undefined,
       maxExpand: 12000,
     });
   }

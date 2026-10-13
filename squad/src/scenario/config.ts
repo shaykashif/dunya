@@ -1,7 +1,7 @@
 // Every tunable parameter lives here, so tuning never requires code changes.
 // One tick is one second; one tile is about 3 metres.
 
-import type { Terrain, WeaponId } from "../world/types.ts";
+import type { MapKind, Terrain, WeaponId, Weather, WeatherKind } from "../world/types.ts";
 
 export interface WeaponSpec {
   name: string;
@@ -34,7 +34,8 @@ const weapons: Record<WeaponId, WeaponSpec> = {
   thompson: { name: "Thompson submachine gun", capacity: 30, reload: 4, rate: 3, accuracy: 0.28, rangeScale: 18, maxRange: 50, severity: [0.3, 0.75], suppression: 0.035, noise: 110, automatic: true, heat: 0 },
   bar: { name: "Browning Automatic Rifle", capacity: 20, reload: 4, rate: 3.5, accuracy: 0.22, rangeScale: 55, maxRange: 150, severity: [0.45, 1], suppression: 0.06, noise: 150, automatic: true, heat: 0 },
   kar98k: { name: "Karabiner 98k", capacity: 5, reload: 4, rate: 0.4, accuracy: 0.55, rangeScale: 80, maxRange: 160, severity: [0.45, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
-  kar98k_scoped: { name: "scoped Karabiner 98k", capacity: 5, reload: 4, rate: 0.25, accuracy: 0.85, rangeScale: 170, maxRange: 200, severity: [0.5, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
+  kar98k_scoped: { name: "scoped Karabiner 98k", capacity: 5, reload: 4, rate: 0.25, accuracy: 0.75, rangeScale: 170, maxRange: 200, severity: [0.5, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
+  m1903_scoped: { name: "scoped M1903A4 Springfield", capacity: 5, reload: 4, rate: 0.25, accuracy: 0.75, rangeScale: 165, maxRange: 200, severity: [0.5, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
   mp40: { name: "MP 40", capacity: 32, reload: 4, rate: 3, accuracy: 0.26, rangeScale: 18, maxRange: 50, severity: [0.3, 0.75], suppression: 0.035, noise: 110, automatic: true, heat: 0 },
   mg42: { name: "MG 42", capacity: 50, reload: 6, rate: 8, accuracy: 0.17, rangeScale: 85, maxRange: 200, severity: [0.45, 1], suppression: 0.07, noise: 200, automatic: true, heat: 0.0045 },
   pistol: { name: "pistol", capacity: 8, reload: 3, rate: 0.6, accuracy: 0.35, rangeScale: 8, maxRange: 15, severity: [0.3, 0.7], suppression: 0.02, noise: 80, automatic: false, heat: 0 },
@@ -57,6 +58,10 @@ const moveCost: Record<Terrain, number> = {
   rubble: 2,
   crater: 1.4,
   foxhole: 1.4,
+  stairs: 1.5,
+  marsh: 2.2,
+  brush: 1.5,
+  ditch: 1.4,
 };
 
 export const DEFAULT_CONFIG = {
@@ -69,17 +74,93 @@ export const DEFAULT_CONFIG = {
     maxTicks: 60 * 60,
     date: "12 June 1944",
   },
-  map: { width: 144, height: 104, fieldWidth: [24, 40] as [number, number], fieldHeight: [13, 19] as [number, number], mergeChance: 0.14, gapWidth: [2, 3] as [number, number] },
+  map: {
+    width: 144,
+    height: 104,
+    fieldWidth: [24, 40] as [number, number],
+    fieldHeight: [13, 19] as [number, number],
+    mergeChance: 0.14,
+    gapWidth: [2, 3] as [number, number],
+    /** The kind of ground to fight over; null lets the seed choose. */
+    kind: null as MapKind | null,
+    /** How often the seed chooses each kind. */
+    kindWeights: { hamlet: 0.3, rural: 0.25, road: 0.2, town: 0.25 } as Record<MapKind, number>,
+  },
   terrain: {
     moveCost,
     /** Line-of-sight left after passing through one tile of each kind. */
-    seeThrough: { woods: 0.78, orchard: 0.9, wheat: 0.97, hedge: 0, wall: 0.85, building: 0, rubble: 0.92, window: 0.75, door: 0.75 } as Partial<Record<Terrain, number>>,
+    seeThrough: { woods: 0.78, orchard: 0.9, wheat: 0.97, hedge: 0, wall: 0.85, building: 0, rubble: 0.92, window: 0.75, door: 0.75, brush: 0.82 } as Partial<Record<Terrain, number>>,
     /** Protection from a hedge, wall or window between a man and the shooter, right beside him. */
-    edgeCover: { hedge: 0.85, wall: 0.65, window: 0.8, door: 0.55, rubble: 0.45, woods: 0.3, orchard: 0.15, building: 0.95 } as Partial<Record<Terrain, number>>,
+    edgeCover: { hedge: 0.85, wall: 0.65, window: 0.8, door: 0.55, rubble: 0.45, woods: 0.3, orchard: 0.15, building: 0.95, brush: 0.2 } as Partial<Record<Terrain, number>>,
     /** Protection from the tile he lies in. */
-    ownCover: { foxhole: 0.75, crater: 0.5, rubble: 0.3, woods: 0.2, orchard: 0.1 } as Partial<Record<Terrain, number>>,
-    /** Concealment: how much harder he is to spot on this ground. */
-    concealment: { woods: 0.5, orchard: 0.7, wheat: 0.6, rubble: 0.7, foxhole: 0.45, crater: 0.7, floor: 0.6 } as Partial<Record<Terrain, number>>,
+    ownCover: { foxhole: 0.75, crater: 0.5, rubble: 0.3, woods: 0.2, orchard: 0.1, ditch: 0.55, brush: 0.1 } as Partial<Record<Terrain, number>>,
+    /** Concealment: how much harder he is to spot on this ground. Foliage and dark rooms hide a man well. */
+    concealment: { woods: 0.35, orchard: 0.6, wheat: 0.6, rubble: 0.65, foxhole: 0.45, crater: 0.7, floor: 0.4, stairs: 0.4, door: 0.7, brush: 0.42, ditch: 0.5, marsh: 0.85 } as Partial<Record<Terrain, number>>,
+    /** How tall what grows or stands on each kind of ground is, in metres. */
+    height: { hedge: 2.6, wall: 1.8, woods: 9, orchard: 4.5, wheat: 1.1, brush: 1.6, rubble: 1 } as Partial<Record<Terrain, number>>,
+    floorHeight: 3,
+    eye: 1.5,
+    body: 1,
+    /** Uphill: each metre climbed in a step adds this share to its cost; downhill saves a little. */
+    climbCost: 0.45,
+    downhill: 0.06,
+    stairsCost: 3,
+    /** Fire from above comes in over the cover in front of a man: per unit of slope, this share of it is lost. */
+    plunge: 2.5,
+  },
+  weather: {
+    /** The weather to fight in; null lets the seed choose. */
+    kind: null as WeatherKind | null,
+    weights: { clear: 0.35, overcast: 0.3, rain: 0.2, fog: 0.15 } as Record<WeatherKind, number>,
+    kinds: {
+      clear: { kind: "clear", label: "a clear, bright morning", sight: 1, spot: 1, hearing: 1, mud: 1, fatigue: 1, aim: 1 },
+      overcast: { kind: "overcast", label: "a grey, overcast morning", sight: 0.9, spot: 0.92, hearing: 1, mud: 1, fatigue: 1, aim: 1 },
+      rain: { kind: "rain", label: "steady rain", sight: 0.65, spot: 0.78, hearing: 0.7, mud: 1.3, fatigue: 1.25, aim: 0.9 },
+      fog: { kind: "fog", label: "thick morning fog", sight: 0.32, spot: 0.7, hearing: 0.9, mud: 1.1, fatigue: 1, aim: 0.95 },
+    } as Record<WeatherKind, Weather>,
+  },
+  /** High ground: a shooter above his target hits a little more often, one below a little less. */
+  highGround: { perMetre: 0.025, max: 0.2 },
+  /** Running and climbing tire men out; rest brings them back. */
+  fatigue: {
+    perTile: { walk: 0.0015, crouch: 0.003, rush: 0.009, crawl: 0.004 },
+    /** Extra per metre climbed, and per flight of stairs. */
+    climbPerMetre: 0.012,
+    stairs: 0.012,
+    /** Recovered per tick while not moving. */
+    recover: 0.006,
+    /** At full fatigue a man moves this much slower, and aims this much worse. */
+    speedLoss: 0.45,
+    aimLoss: 0.3,
+    /** Above this, a man cannot rush any more: he can only jog. */
+    winded: 0.85,
+  },
+  sniper: {
+    /** How far from where he is a sniper looks for a hide, and the range band he wants to shoot over. */
+    hideRadius: 26,
+    minRange: 30,
+    maxRange: 130,
+    /** He moves on after this many shots from one hide, or when he is fired on. */
+    shotsPerHide: 3,
+    rethinkTicks: 150,
+    /** He only shoots when the chance of a hit is at least this, or this for a machine gunner or leader. */
+    minHit: 0.16,
+    priorityMinHit: 0.05,
+    /** He wants no friend nearer than this: alone, he is harder to find. */
+    alone: 5,
+  },
+  shelling: {
+    /** A squad reacts to rounds landing within this many tiles of its men, for this many ticks. */
+    radius: 13,
+    recent: 10,
+    /** How far it moves to get out of the beaten zone. */
+    displace: 18,
+    /** If at least this share of the men are in holes or indoors, they stay down instead. */
+    stayIfCovered: 0.6,
+    /** Attackers this close to the enemy position go forward through the fire. */
+    rushThrough: 26,
+    /** Ticks before the same squad moves for shelling again. */
+    cooldown: 60,
   },
   weapons,
   movement: {
@@ -169,6 +250,19 @@ export const DEFAULT_CONFIG = {
     shoutRange: 25,
     /** How often exposure maps are rebuilt, in ticks. */
     exposureEvery: 15,
+    /** A man firing from concealment gives himself away this much less; a sniper far less still. */
+    concealedFiring: 0.4,
+    sniperFiring: 0.15,
+    /** Heard positions are this much vaguer for a sniper, and for a man firing from concealment. */
+    sniperHearError: 4,
+    concealedHearError: 2,
+    /** Beyond this range a sniper's shot gives no bearing at all: just a crack overhead. */
+    sniperHeardWithin: 60,
+    /** A man fired on by someone he cannot see judges where it came from this far off, per tile of range. */
+    fireBearingError: 0.08,
+    /** Spotting a man inside a dark room from out in the light, past this range, is harder by this much. */
+    darkRoomRange: 15,
+    darkRoom: 0.6,
   },
   suppression: {
     decay: 0.045,
@@ -231,6 +325,8 @@ export const DEFAULT_CONFIG = {
     /** Chance the Germans attack and the Americans defend. */
     germanAttackChance: 0.25,
     sniperChance: 0.45,
+    /** Chance the American platoon headquarters has a sniper with it. */
+    usSniperChance: 0.5,
   },
   /** Run invariant checks every tick. */
   checkInvariants: true,

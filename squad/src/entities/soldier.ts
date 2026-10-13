@@ -21,11 +21,18 @@ export function note(w: World, s: Soldier, text: string): void {
   if (s.recent.length > 24) s.recent.shift();
 }
 
-/** Tiles per tick at a pace, after fitness, wounds and any load. */
+/** Tiles per tick at a pace, after fitness, wounds, any load and how blown he is. A winded man cannot run. */
 export function speedOf(w: World, s: Soldier, pace: Pace): number {
-  let v = w.config.movement.speed[pace] * (0.85 + 0.3 * s.traits.fitness) * mobility(s);
+  const f = w.config.fatigue;
+  const p = pace === "rush" && s.fatigue >= f.winded ? "walk" : pace;
+  let v = w.config.movement.speed[p] * (0.85 + 0.3 * s.traits.fitness) * mobility(s) * (1 - f.speedLoss * s.fatigue);
   if (s.carryingId !== null) v *= w.config.movement.carrySpeed;
   return v;
+}
+
+/** Where a man is, as a point that keeps his floor. */
+export function spotOf(s: Soldier): Point {
+  return s.z > 0 ? { x: s.x, y: s.y, z: s.z } : { x: s.x, y: s.y };
 }
 
 export function postureFor(pace: Pace): "stand" | "crouch" | "prone" {

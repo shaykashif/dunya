@@ -4,7 +4,31 @@
 export interface Point {
   x: number;
   y: number;
+  /** Floor of a building, 0 for the ground; left out, it means the ground (or wherever the man already is). */
+  z?: number;
 }
+
+/** Most floors any building has. Upper floors exist only inside buildings. */
+export const MAX_FLOORS = 3;
+
+/** The weather on the day. */
+export type WeatherKind = "clear" | "overcast" | "rain" | "fog";
+
+export interface Weather {
+  kind: WeatherKind;
+  /** "a clear morning", for the chronicle. */
+  label: string;
+  /** Multipliers: how far men can see, how easily they spot, how far shots carry, how heavy the going is off the roads, how fast men tire, how well they shoot. */
+  sight: number;
+  spot: number;
+  hearing: number;
+  mud: number;
+  fatigue: number;
+  aim: number;
+}
+
+/** The kinds of ground a battle can be fought over. */
+export type MapKind = "hamlet" | "rural" | "road" | "town";
 
 /** The two armies. "us" is a US Army rifle platoon, "de" a German infantry Zug. */
 export type Side = "us" | "de";
@@ -31,7 +55,15 @@ export type Terrain =
   | "bridge"
   | "rubble"
   | "crater"
-  | "foxhole";
+  | "foxhole"
+  /** A staircase inside a building, linking its floors. */
+  | "stairs"
+  /** Wet meadow by a stream: heavy going. */
+  | "marsh"
+  /** Scrub and bramble: some concealment, slow. */
+  | "brush"
+  /** A roadside ditch: a ready-made trench. */
+  | "ditch";
 
 // ---------- Bodies and wounds (kept from the village simulation) ----------
 
@@ -114,7 +146,7 @@ export interface Traits {
   leadership: number;
 }
 
-export type WeaponId = "m1_garand" | "m1_carbine" | "thompson" | "bar" | "kar98k" | "kar98k_scoped" | "mp40" | "mg42" | "pistol";
+export type WeaponId = "m1_garand" | "m1_carbine" | "thompson" | "bar" | "kar98k" | "kar98k_scoped" | "m1903_scoped" | "mp40" | "mg42" | "pistol";
 
 export type Pace = "walk" | "crouch" | "rush" | "crawl";
 
@@ -211,6 +243,8 @@ export interface Soldier {
   traits: Traits;
   x: number;
   y: number;
+  /** Floor he is on: 0 the ground, 1 and up the upper floors of a building. */
+  z: number;
   /** -1 faces left, 1 right (sprites only). */
   dir: number;
   posture: Posture;
@@ -246,6 +280,11 @@ export interface Soldier {
   suppression: number;
   /** In [0, 1]: the will to keep fighting. */
   morale: number;
+  /** In [0, 1]: how blown he is from running and climbing. Slows him and spoils his aim. */
+  fatigue: number;
+  /** A sniper's chosen hide, and when he chose it. */
+  hide: Point | null;
+  hideTick: number;
   pinned: boolean;
   broken: boolean;
   act: Activity | null;
@@ -278,6 +317,7 @@ export interface Contact {
   id: number;
   x: number;
   y: number;
+  z: number;
   /** Last tick seen or heard. */
   tick: number;
   /** True if someone in the squad has eyes on them now. */
@@ -286,6 +326,8 @@ export interface Contact {
   identified: boolean;
   /** A machine gun or automatic rifle: the first thing to deal with. */
   automatic: boolean;
+  /** A sniper, once seen for what he is. */
+  sniper: boolean;
   /** Believed out of the fight (seen to fall). */
   down: boolean;
 }
@@ -302,7 +344,9 @@ export type SquadState =
   | "fall_back"
   | "withdraw"
   | "broken"
-  | "support";
+  | "support"
+  /** Getting out from under mortar fire. */
+  | "displace";
 
 export type FirePolicy = "hold" | "return" | "free";
 
@@ -354,6 +398,15 @@ export interface Squad {
   intent: string;
   firstContactTick: number | null;
   casualtiesSeen: number;
+  /** The state to go back to once out from under mortar fire, and when it last moved for shelling. */
+  resume: SquadState | null;
+  shelledTick: number;
+  /** Where it is heading to get out of a barrage. */
+  refuge: Point | null;
+  /** When it last fell back: a squad that has just done so holds rather than running again. */
+  fellBackTick: number;
+  /** A sniper is working on the squad: where they think he is, and when he last fired. */
+  sniperAlert: { x: number; y: number; tick: number } | null;
 }
 
 export interface FireMission {
@@ -400,9 +453,23 @@ export interface Ordnance {
   from: Point;
   x: number;
   y: number;
+  /** Floor it bursts on: a grenade lobbed through an upper window, or a shell through a roof. */
+  z: number;
   /** Tick it bursts. */
   burstTick: number;
   thrownTick: number;
+  /** The first, ranging round of a fire mission: the warning that more is coming. */
+  spotting: boolean;
+}
+
+/** Where a mortar or artillery round came down, remembered a little while so men can react. */
+export interface Impact {
+  x: number;
+  y: number;
+  tick: number;
+  kind: OrdnanceKind;
+  side: Side | null;
+  spotting: boolean;
 }
 
 export interface SmokeCloud {

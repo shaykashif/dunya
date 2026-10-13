@@ -10,13 +10,19 @@ import type { Soldier } from "../src/world/types.ts";
 import type { World } from "../src/world/world.ts";
 
 function setup(): { w: World; us: Soldier; de: Soldier } {
-  const w = createSimulation({ seed: 3 }).world;
+  // The original bocage, so these set pieces stay on the ground they were written for.
+  const w = createSimulation({ seed: 3, config: { map: { kind: "hamlet" }, weather: { kind: "clear" } } }).world;
   return { w, us: w.soldiers.find((s) => s.side === "us" && s.role === "rifleman")!, de: w.soldiers.find((s) => s.side === "de" && s.role === "rifleman")! };
 }
 
-/** Clears a patch of ground, with a hedge across it at row `hedgeY`. */
+/** Clears a patch of ground and levels it, with a hedge across it at row `hedgeY`. */
 function field(w: World, x0: number, y0: number, x1: number, y1: number, hedgeY: number | null): void {
-  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) w.map.set(x, y, y === hedgeY ? "hedge" : "grass");
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      w.map.set(x, y, y === hedgeY ? "hedge" : "grass");
+      w.map.elev[w.map.idx(x, y)] = 0;
+    }
+  }
   w.map.finalize();
 }
 

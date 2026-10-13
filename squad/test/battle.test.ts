@@ -60,6 +60,13 @@ describe("battles", () => {
     }
   });
 
+  it("squads get out from under mortar fire, and snipers find hides", () => {
+    const all = runs.flatMap((r) => r.events);
+    expect(all.some((e) => e.type === "shelled")).toBe(true);
+    expect(all.some((e) => e.type === "squad_state" && e.data.to === "displace")).toBe(true);
+    expect(all.some((e) => e.type === "sniper_hide")).toBe(true);
+  });
+
   it("medics treat the wounded, and men take over a fallen leader's squad", () => {
     expect(runs.some((r) => r.events.some((e) => e.type === "wounds_treated" && r.world.maybe(e.data.by as number)?.role === "medic"))).toBe(true);
     expect(runs.some((r) => r.events.some((e) => e.type === "takes_command"))).toBe(true);

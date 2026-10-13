@@ -243,7 +243,8 @@ function newBattle(seed: number): void {
   acc = 0;
   paused = false;
   dirty = { feed: true, events: true };
-  $("date").textContent = world.config.time.date.toUpperCase();
+  $("date").textContent = `${world.config.time.date} · ${world.weather.kind}`.toUpperCase();
+  $("date").title = `${world.layout.name}, ${world.weather.label}`;
   fitCamera();
   renderRoster();
   syncControls();
@@ -573,6 +574,18 @@ function describeBody(s: Soldier): string {
   return parts.join("");
 }
 
+const FLOOR_NAMES = ["ground floor", "first floor", "second floor"];
+
+/** Where a man is: indoors and on which floor, or on what ground, and how high. */
+function whereText(s: Soldier): string {
+  const b = world.map.building[world.map.idx(s.x, s.y)]!;
+  const up = Math.round(world.map.heightAt(s.x, s.y, s.z));
+  if (b >= 0 && world.map.indoors(s.x, s.y, s.z)) return `In ${world.buildings[b]!.name}, ${FLOOR_NAMES[s.z] ?? `floor ${s.z}`}${s.role === "sniper" && s.hide && s.hide.x === s.x && s.hide.y === s.y ? " (his hide)" : ""} · ${up} m above the stream`;
+  const t = world.map.at(s.x, s.y);
+  const ground: Record<string, string> = { grass: "in a pasture", wheat: "in the wheat", road: "on the road", orchard: "in an orchard", woods: "in the woods", hedge: "in a hedgerow", wall: "at a wall", water: "in the stream", bridge: "on the bridge", rubble: "in rubble", crater: "in a shell hole", foxhole: "in a foxhole", marsh: "in wet meadow", brush: "in the brambles", ditch: "in a ditch", floor: "indoors", door: "in a doorway", stairs: "on the stairs" };
+  return `${(ground[t] ?? t).replace(/^./, (c) => c.toUpperCase())} · ${up} m above the stream`;
+}
+
 function renderInspector(): void {
   const el = $("inspector");
   const s = world.maybe(selected);
@@ -593,8 +606,10 @@ function renderInspector(): void {
     ${bar("Morale", s.morale, "#6ab0f0")}
     ${bar("Suppressed", s.suppression, "#f0963a")}
     ${bar("Pain", fightingPain(s), "#e07a9a", s.morphineTick >= 0 ? "morphine" : "")}
+    ${bar("Fatigue", s.fatigue, "#c8b060", s.fatigue >= world.config.fatigue.winded ? "winded" : "")}
     ${bleeding > 0 ? bar("Bleeding", Math.min(1, bleeding), "#c01818") : ""}
     <div class="traits">${esc(ammo)}${kit ? ` · ${esc(kit)}` : ""} · aim ${Math.round(aimFactor(s) * 100)}%</div>
+    <div class="traits">${esc(whereText(s))}</div>
     <div class="pp-mid"><canvas id="bodydiag" class="bodydiag"></canvas><div class="desc">${describeBody(s)}</div></div>
     ${after ? `<h4>A MONTH LATER</h4><p>${esc(after.outcome)}.</p>` : ""}
     <div class="traits">${s.shots} rounds fired · ${s.hits} hits · ${s.kills} killed${s.treated ? ` · ${s.treated} men treated` : ""}</div>
@@ -606,7 +621,7 @@ function renderInspector(): void {
   });
 }
 
-const STATE_NAMES: Record<string, string> = { deploy: "forming up", advance: "advancing", react: "contact", fix: "fixing", flank: "flanking", assault: "assault", consolidate: "consolidating", hold: "holding", fall_back: "falling back", withdraw: "withdrawing", broken: "broken", support: "support" };
+const STATE_NAMES: Record<string, string> = { displace: "displacing", deploy: "forming up", advance: "advancing", react: "contact", fix: "fixing", flank: "flanking", assault: "assault", consolidate: "consolidating", hold: "holding", fall_back: "falling back", withdraw: "withdrawing", broken: "broken", support: "support" };
 
 function renderSquads(): void {
   const out: string[] = [];
@@ -784,6 +799,12 @@ canvas.addEventListener("pointerup", (ev) => {
   const rect = canvas.getBoundingClientRect();
   const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
   const tx = Math.floor((sx / cam.zoom + cam.x) / TILE), ty = Math.floor((sy / cam.zoom + cam.y) / TILE);
+  // The floor button by a house: show the next floor up.
+  const house = renderer.buttonAt(sx, sy);
+  if (house >= 0) {
+    renderer.cycleFloor(world, house);
+    return;
+  }
   if (power === "artillery" || power === "smoke") {
     if (world.map.inBounds(tx, ty)) engine.intervene({ kind: power, x: tx, y: ty });
     setPower("inspect");

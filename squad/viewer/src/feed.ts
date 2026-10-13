@@ -64,7 +64,7 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
   switch (e.type) {
     case "battle_start": {
       const att = w.platoons[w.attacker], def = w.platoons[w.attacker === "us" ? "de" : "us"];
-      return line(`${w.config.time.date}, dawn. ${att.name} (${w.side(att.side).length} men) moves up through the hedgerows to take the crossroads hamlet, held by ${def.name} (${w.side(def.side).length} men).`, "battle", [], true);
+      return line(`${w.config.time.date}, dawn: ${w.weather.label}. ${att.name} (${w.side(att.side).length} men) moves up through the hedgerows on ${w.layout.name} to take ${w.layout.objectiveName}, held by ${def.name} (${w.side(def.side).length} men).`, "battle", [], true);
     }
     case "contact": {
       const sq = w.squads[d.squad as number]!;
@@ -139,7 +139,7 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
     }
     case "open_fire": {
       const sq = w.squads[d.squad as number]!;
-      return line(`${sq.name} opens fire from the hedgerow.`, sq.side, [], true);
+      return line(`${sq.name} opens fire.`, sq.side, [], true);
     }
     case "platoon_order": {
       const sq = w.squads[d.squad as number]!, help = w.squads[d.help as number]!;
@@ -188,6 +188,23 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
     case "rally": {
       const p = s("by");
       return p ? line(`${label(p)} rallies ${d.men as number} men.`, p.side, [p.id]) : null;
+    }
+    case "sniper_alert": {
+      const p = s("by");
+      const sq = w.squads[d.squad as number]!;
+      return p ? line(`${sq.name} is under sniper fire: ${label(p)} yells a warning and they go to ground, searching for him.`, sq.side, [p.id], true) : null;
+    }
+    case "sniper_hide": {
+      const p = s("by");
+      if (!p) return null;
+      const [x, y] = d.at as [number, number];
+      const b = w.map.building[w.map.idx(x, y)]!;
+      const where = b >= 0 ? `${(d.z as number) > 0 ? "an upstairs window of " : ""}${w.buildings[b]!.name}` : `${w.map.at(x, y) === "woods" ? "the edge of a wood" : w.map.besideCover(x, y) ? "a hedgerow" : "cover"}`;
+      return line(`${label(p)}, ${roleName(p)}, ${d.moving ? "slips away to a new hide in" : "settles into a hide in"} ${where}.`, p.side, [p.id]);
+    }
+    case "shelled": {
+      const sq = w.squads[d.squad as number]!;
+      return line(`${d.ranging ? "A ranging round" : "Mortar rounds"} ${d.ranging ? "lands" : "land"} among ${sq.name}.`, "fire", [], false);
     }
     case "infection":
       return null;

@@ -144,6 +144,7 @@ export function pickUp(w: World, carrier: Soldier, p: Soldier): void {
   w.vacate(p);
   p.x = carrier.x;
   p.y = carrier.y;
+  p.z = carrier.z;
   w.emit("picked_up", [carrier.id], { carrier: carrier.id, person: p.id, at: [carrier.x, carrier.y] });
   note(w, p, `${label(carrier)} carried them`);
 }
@@ -154,8 +155,9 @@ export function setDown(w: World, carrier: Soldier, reason: string): Soldier | n
   carrier.carryingId = null;
   if (!p || p.carriedById !== carrier.id) return null;
   p.carriedById = null;
-  const spot = w.freeTileNear(carrier, 6, p.id) ?? w.freeTileNear(carrier, 12, p.id);
-  if (spot) w.place(p, spot.x, spot.y);
+  const near = { x: carrier.x, y: carrier.y, z: carrier.z };
+  const spot = w.freeTileNear(near, 6, p.id) ?? w.freeTileNear(near, 12, p.id);
+  if (spot) w.place(p, spot.x, spot.y, spot.z ?? 0);
   p.posture = "prone";
   w.emit("set_down", [carrier.id], { carrier: carrier.id, person: p.id, reason, at: [p.x, p.y] });
   return p;

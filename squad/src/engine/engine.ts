@@ -103,16 +103,18 @@ export class Engine {
 
   // ---------- Movement ----------
 
-  /** Walks a man one tick toward `dest` (or beside it, with `reach` 1). Returns true on arrival. */
+  /** Walks a man one tick toward `dest` (or beside it, with `reach` 1), up and down stairs as needed. Returns true on arrival. */
   private travel(s: Soldier, act: Activity, dest: Point, reach: number, pace: Pace): boolean | "fail" {
     const w = this.world;
     const cfg = w.config.movement;
-    if (cheb(s, dest) <= reach && (reach > 0 || (s.x === dest.x && s.y === dest.y))) return true;
-    const here = w.map.idx(s.x, s.y);
+    const destZ = w.floorFor(s, dest);
+    if (cheb(s, dest) <= reach && (reach > 0 || (s.x === dest.x && s.y === dest.y && s.z === destZ))) return true;
+    const here = w.cellOf(s);
     if (act.goal < 0 || (w.occupancy[act.goal] !== 0 && w.occupancy[act.goal] !== s.id)) {
-      const spot = reach === 0 && w.isFree(dest.x, dest.y, s.id) ? dest : w.freeTileNear(dest, Math.max(1, reach) + 1, s.id, reach > 0 ? (x, y) => cheb({ x, y }, dest) <= reach : undefined) ?? w.freeTileNear(dest, 4, s.id);
+      const target = { x: dest.x, y: dest.y, z: destZ };
+      const spot = reach === 0 && w.isFree(dest.x, dest.y, s.id, destZ) ? target : w.freeTileNear(target, Math.max(1, reach) + 1, s.id, reach > 0 ? (x, y) => cheb({ x, y }, dest) <= reach : undefined) ?? w.freeTileNear(target, 4, s.id);
       if (!spot) return "fail";
-      const g = w.map.idx(spot.x, spot.y);
+      const g = w.map.cell(spot.x, spot.y, spot.z ?? 0);
       if (g !== act.goal) {
         act.goal = g;
         act.path = null;
@@ -121,13 +123,13 @@ export class Engine {
     }
     if (!act.path) {
       const weight = pace === "walk" ? 0 : cfg.exposureWeight;
-      act.path = w.path(s, w.map.pt(act.goal), weight);
+      act.path = w.path(s, w.map.ptz(act.goal), weight);
       act.pathIdx = 0;
       if (!act.path) return "fail";
     }
     if (act.ticks > cfg.maxTravelTicks) return "fail";
     // Rushing under fire: a few seconds up, then down again.
-    const threatened = (s.underFire !== null && w.tick - s.underFire.tick < 10) || w.exposure[s.side][here]! > 0.4;
+    const threatened = (s.underFire !== null && w.tick - s.underFire.tick < 10) || w.exposure[s.side][w.map.idx(s.x, s.y)]! > 0.4;
     if (pace === "rush" && threatened && act.ticks % (cfg.rushTicks + 2) >= cfg.rushTicks) {
       s.posture = "prone";
       return false;
@@ -138,43 +140,52 @@ export class Engine {
     let idx = act.pathIdx;
     let stopAt = -1;
     let budget = act.moveAcc;
+    let prevCell = here;
     while (idx < path.length) {
       const next = path[idx]!;
-      const cost = w.map.cost(next);
-      if (!Number.isFinite(cost)) {
+      if (!Number.isFinite(w.map.cellCost(next))) {
         act.path = null;
         break;
       }
+      const cost = w.map.stepCost(prevCell, next);
       if (budget < cost) break;
       budget -= cost;
       idx++;
+      prevCell = next;
       const occ = w.occupancy[next]!;
       if (occ === 0 || occ === s.id) stopAt = idx;
     }
     if (stopAt > act.pathIdx) {
-      for (let i = act.pathIdx; i < stopAt; i++) act.moveAcc -= w.map.cost(path[i]!);
-      act.moveAcc = Math.max(0, act.moveAcc);
+      const n = w.map.tiles;
       const trail = w.trails.get(s.id) ?? [];
-      trail.push(...path.slice(act.pathIdx, stopAt));
+      let from = here;
+      for (let i = act.pathIdx; i < stopAt; i++) {
+        const c = path[i]!;
+        act.moveAcc -= w.map.stepCost(from, c);
+        tire(w, s, from, c, pace);
+        trail.push(c % n);
+        from = c;
+      }
+      act.moveAcc = Math.max(0, act.moveAcc);
       w.trails.set(s.id, trail);
       act.pathIdx = stopAt;
       act.blocked = 0;
-      const last = path[stopAt - 1]!;
-      const nx = last % w.map.width;
-      if (nx !== s.x) s.dir = nx < s.x ? -1 : 1;
-      w.place(s, nx, Math.floor(last / w.map.width));
+      const last = w.map.ptz(path[stopAt - 1]!);
+      if (last.x !== s.x) s.dir = last.x < s.x ? -1 : 1;
+      w.place(s, last.x, last.y, last.z);
       if (w.map.at(s.x, s.y) === "hedge") s.posture = "stand";
       const carried = w.maybe(s.carryingId);
       if (carried) {
         carried.x = s.x;
         carried.y = s.y;
+        carried.z = s.z;
       }
     } else if (idx > act.pathIdx || act.pathIdx >= path.length) {
       // Everywhere within reach this tick is taken.
       act.blocked++;
       act.moveAcc = Math.min(act.moveAcc, 3);
       if (act.blocked % (cfg.detourAfterTicks + 1) === cfg.detourAfterTicks) {
-        const detour = w.detour(s, w.map.pt(act.goal), pace === "walk" ? 0 : cfg.exposureWeight);
+        const detour = w.detour(s, w.map.ptz(act.goal), pace === "walk" ? 0 : cfg.exposureWeight);
         if (detour) {
           act.path = detour;
           act.pathIdx = 0;
@@ -182,7 +193,7 @@ export class Engine {
       }
       if (act.blocked > 40) return "fail";
     }
-    return w.map.idx(s.x, s.y) === act.goal || (reach > 0 && cheb(s, dest) <= reach);
+    return w.cellOf(s) === act.goal || (reach > 0 && cheb(s, dest) <= reach);
   }
 
   // ---------- Activities ----------
@@ -278,7 +289,7 @@ export class Engine {
         s.posture = p.id === s.id ? "prone" : "crouch";
         if (p.id !== s.id && cheb(s, p) > 1) return end();
         if (act.ticks >= act.work) {
-          treat(w, s, p, w.rng.get("injuries"), w.map.indoors(p.x, p.y) ? "indoors" : "in the field", p.id === s.id ? 0.6 : 1);
+          treat(w, s, p, w.rng.get("injuries"), w.map.indoors(p.x, p.y, p.z) ? "indoors" : "in the field", p.id === s.id ? 0.6 : 1);
           end();
         }
         return;
@@ -477,6 +488,7 @@ export class Engine {
     }
     this.prisonerStep();
     stumbleStep(w);
+    restStep(w);
     // 7. Is it over?
     checkBattleEnd(w);
     if (w.config.checkInvariants) checkInvariants(w);
@@ -496,6 +508,26 @@ export class Engine {
   }
 }
 
+/** Each step tires a man: more at a run, more uphill, more on the stairs, more in the mud. */
+function tire(w: World, s: Soldier, from: number, to: number, pace: Pace): void {
+  const f = w.config.fatigue;
+  const n = w.map.tiles;
+  let add = f.perTile[pace];
+  if (from % n === to % n) add += f.stairs;
+  else add += Math.max(0, w.map.elev[to % n]! - w.map.elev[from % n]!) * f.climbPerMetre;
+  if (s.carryingId !== null) add *= 2;
+  s.fatigue = Math.min(1, s.fatigue + add * w.weather.fatigue * (1.3 - 0.6 * s.traits.fitness));
+}
+
+/** Men who are not moving get their breath back. */
+function restStep(w: World): void {
+  const rec = w.config.fatigue.recover;
+  for (const s of w.soldiers) {
+    if (s.fatigue <= 0 || (w.trails.get(s.id)?.length ?? 0) > 0) continue;
+    s.fatigue = Math.max(0, s.fatigue - rec * (s.posture === "stand" ? 0.7 : 1) * (0.7 + 0.6 * s.traits.fitness));
+  }
+}
+
 function pick(w: World, xs: readonly string[]): string {
   return xs[w.rng.get("command").int(xs.length)]!;
 }
@@ -512,7 +544,7 @@ function restPosture(w: World, s: Soldier, firing: boolean): void {
     return;
   }
   const t = w.map.at(s.x, s.y);
-  if (t === "foxhole" || w.map.besideCover(s.x, s.y) || w.map.indoors(s.x, s.y)) s.posture = "crouch";
+  if (t === "foxhole" || t === "ditch" || w.map.besideCover(s.x, s.y) || w.map.indoors(s.x, s.y, s.z)) s.posture = "crouch";
   else if (firing || Object.keys(w.squad(s.squadId).contacts).length > 0 || s.suppression > 0.2) s.posture = "prone";
   else s.posture = "crouch";
 }
@@ -575,7 +607,7 @@ export function checkBattleEnd(w: World): void {
     w.objectiveHeld = near >= 2 && !held ? w.objectiveHeld + 1 : 0;
     if (w.objectiveHeld >= w.config.battle.holdTicks) {
       winner = att;
-      reason = `${att === "us" ? "the Americans" : "the Germans"} took the crossroads`;
+      reason = `${att === "us" ? "the Americans" : "the Germans"} took ${w.layout.objectiveName}`;
     } else if (w.tick >= w.config.time.maxTicks) {
       winner = null;
       reason = "the attack stalled; both sides dug in as the morning wore on";

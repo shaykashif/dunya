@@ -4,6 +4,7 @@
 // split into a base-of-fire team and a manoeuvre team; the German Gruppe
 // around its MG 42, with a gun team and a rifle team.
 import { emptyOrder } from "../ai/command.ts";
+import { vantage } from "../ai/tactics.ts";
 import { Rng } from "../engine/rng.ts";
 import type { EventLog } from "../log/events.ts";
 import { generateLayout, type Layout } from "../world/layout.ts";
@@ -89,15 +90,18 @@ function deSquad(rng: Rng, sniper: boolean): Slot[] {
   return slots;
 }
 
-function hqSlots(side: Side): Slot[] {
+function hqSlots(side: Side, sniper: boolean): Slot[] {
   if (side === "us") {
     const r = US_RANKS;
-    return [
+    const slots: Slot[] = [
       { role: "platoon_leader", element: "HQ", rank: r.lt!, weapon: "m1_carbine", ammo: 60, grenades: 2, smokes: 1 },
       { role: "platoon_sergeant", element: "HQ", rank: r.tsgt!, weapon: "m1_garand", ammo: 88, grenades: 2, smokes: 1 },
       { role: "radioman", element: "HQ", rank: r.t5!, weapon: "m1_carbine", ammo: 45, grenades: 1 },
       { role: "medic", element: "HQ", rank: r.t5!, weapon: null, ammo: 0, grenades: 0 },
     ];
+    // A sniper from the battalion's scout pool, working with the platoon.
+    if (sniper) slots.push({ role: "sniper", element: "HQ", rank: r.pfc!, weapon: "m1903_scoped", ammo: 50, grenades: 1 });
+    return slots;
   }
   const r = DE_RANKS;
   return [
@@ -143,6 +147,14 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
   const layout = generateLayout(cfg, new Rng(seed, "map"));
   const attacker: Side = rng.chance(cfg.forces.germanAttackChance) ? "de" : "us";
   const w = new World(cfg, seed, log, layout, attacker);
+  // The weather, from its own stream so it does not shift the rest of the battle.
+  const sky = new Rng(seed, "weather");
+  const kinds = Object.keys(cfg.weather.weights) as (keyof typeof cfg.weather.weights)[];
+  let roll = sky.next() * kinds.reduce((a, k) => a + cfg.weather.weights[k], 0);
+  let wk = cfg.weather.kind ?? kinds[kinds.length - 1]!;
+  if (!cfg.weather.kind) for (const k of kinds) if ((roll -= cfg.weather.weights[k]) < 0) { wk = k; break; }
+  w.weather = cfg.weather.kinds[wk];
+  w.map.mud = w.weather.mud;
   const W = w.map.width, H = w.map.height;
   const usedNames = new Set<string>();
   let nextSoldier = 1;
@@ -174,6 +186,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       traits,
       x: 0,
       y: 0,
+      z: 0,
       dir: 1,
       posture: "stand",
       status: "active",
@@ -198,6 +211,9 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       morphineTick: -1,
       suppression: 0,
       morale: Math.min(1, cfg.morale.start[exp] + (traits.nerve - 0.5) * 0.2),
+      fatigue: 0,
+      hide: null,
+      hideTick: -1000,
       pinned: false,
       broken: false,
       act: null,
@@ -248,6 +264,11 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       intent: isHQ ? "platoon headquarters" : "forming up",
       firstContactTick: null,
       casualtiesSeen: 0,
+      resume: null,
+      shelledTick: -1000,
+      refuge: null,
+      fellBackTick: -1000,
+      sniperAlert: null,
     };
     w.squads.push(sq);
     for (const slot of slots) {
@@ -265,7 +286,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
   const counts: Record<Side, number> = { us: attacker === "us" ? nUs : Math.min(nUs, 2), de: attacker === "de" ? Math.max(nDe, 3) : nDe };
   for (const side of [attacker, defender] as const) {
     const role = side === attacker ? "attack" : "defend";
-    const hq = makeSquad(side, side === "us" ? "Platoon HQ" : "Zugtrupp", "#c8c8c8", true, hqSlots(side), "hq");
+    const hq = makeSquad(side, side === "us" ? "Platoon HQ" : "Zugtrupp", "#c8c8c8", true, hqSlots(side, side === "us" && rng.chance(cfg.forces.usSniperChance)), "hq");
     const squadIds: number[] = [];
     for (let i = 0; i < counts[side]; i++) {
       const slots = side === "us" ? usSquad(rng) : deSquad(rng, rng.chance(cfg.forces.sniperChance));
@@ -301,6 +322,8 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
 
   w.emit("battle_start", [], {
     seed,
+    map: layout.kind,
+    weather: w.weather.kind,
     date: cfg.time.date,
     clock: w.clock(),
     attacker,
@@ -313,7 +336,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
 
 function placeAt(w: World, s: Soldier, p: Point): void {
   const spot = w.freeTileNear(p, 6, s.id) ?? p;
-  w.place(s, spot.x, spot.y);
+  w.place(s, spot.x, spot.y, spot.z ?? 0);
 }
 
 function deployAttackers(w: World, side: Side, rng: Rng): void {
@@ -328,7 +351,7 @@ function deployAttackers(w: World, side: Side, rng: Rng): void {
     sq.members.forEach((mid, k) => placeAt(w, w.soldier(mid), { x: cx - 4 + (k % 4) * 2, y: cy - Math.floor(k / 4) * 2 + (reserve ? 0 : 1) }));
   });
   const hq = w.squad(pl.hqSquadId);
-  hq.members.forEach((mid, k) => placeAt(w, w.soldier(mid), { x: pl.objective.x - 2 + k * 2, y: H - 3 }));
+  hq.members.forEach((mid, k) => placeAt(w, w.soldier(mid), { x: pl.objective.x - 4 + k * 2, y: H - 3 }));
   hq.state = "advance";
 }
 
@@ -336,8 +359,9 @@ function deployDefenders(w: World, side: Side, layout: Layout, rng: Rng): void {
   const pl = w.platoons[side];
   const W = w.map.width;
   const road = layout.roadX[layout.line.y] ?? Math.round(W / 2);
-  // Machine guns in field corners along the line, spread out to cross their fire.
-  const mgs = [...layout.mgPositions].sort((a, b) => Math.abs(a.x - road) - Math.abs(b.x - road) || a.x - b.x);
+  // Machine guns in field corners along the line, spread out to cross their fire, the best fields of fire first.
+  const view = (p: Point) => vantage(w, p, { x: p.x, y: Math.min(w.map.height - 1, p.y + 45) });
+  const mgs = [...layout.mgPositions].map((p) => ({ p, v: view(p) - Math.abs(p.x - road) * 0.004 })).sort((a, b) => b.v - a.v || a.p.x - b.p.x).map((x) => x.p);
   const chosen: Point[] = [];
   for (const p of mgs) if (chosen.length < pl.squadIds.length && chosen.every((c) => Math.abs(c.x - p.x) >= 22)) chosen.push(p);
   for (let k = 0; chosen.length < pl.squadIds.length && k < 50; k++) {
@@ -379,7 +403,9 @@ function deployDefenders(w: World, side: Side, layout: Layout, rng: Rng): void {
     // Fallback: the hamlet positions nearest this squad's side of the road.
     const mine = hamlet.filter((p) => (i === 0 ? p.x <= layout.objective.x + 2 : p.x >= layout.objective.x - 2));
     const pool = mine.length >= 3 ? mine : hamlet;
-    sq.fallback = pool.length > 0 ? pool.sort((a, b) => cheb(a, mg) - cheb(b, mg) || a.x - b.x)[Math.min(2, pool.length - 1)]! : { x: layout.objective.x, y: layout.objective.y - 3 };
+    // Upstairs windows make the best second line: they see over the hedges.
+    const score = (p: Point) => cheb(p, mg) - ((p.z ?? 0) > 0 ? 6 : 0);
+    sq.fallback = pool.length > 0 ? pool.sort((a, b) => score(a) - score(b) || a.x - b.x || (a.z ?? 0) - (b.z ?? 0))[Math.min(2, pool.length - 1)]! : { x: layout.objective.x, y: layout.objective.y - 3 };
     // Orders: hold, fire discipline until the enemy is in the open.
     for (const el of ["A", "B"] as const) {
       const keep: Record<number, Point> = {};
@@ -390,6 +416,6 @@ function deployDefenders(w: World, side: Side, layout: Layout, rng: Rng): void {
   const hq = w.squad(pl.hqSquadId);
   const post = w.freeTileNear({ x: layout.objective.x, y: layout.objective.y - 4 }, 6) ?? layout.objective;
   hq.post = post;
-  hq.members.forEach((mid, k) => placeAt(w, w.soldier(mid), { x: post.x - 2 + k * 2, y: post.y }));
+  hq.members.forEach((mid, k) => placeAt(w, w.soldier(mid), { x: post.x - 3 + k * 2, y: post.y }));
   hq.state = "hold";
 }
