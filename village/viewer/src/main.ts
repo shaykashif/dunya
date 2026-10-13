@@ -22,7 +22,10 @@ const SPEEDS = [
   { label: "100x", tps: 40 },
   { label: "300x", tps: 120 },
 ];
-const ZOOMS = [0.25, 0.35, 0.5, 0.65, 0.8, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4, 5, 6];
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 6;
+/** Zoom the camera is easing toward, and the screen point that stays put while it does. */
+let zoomGoal: { zoom: number; sx: number; sy: number } | null = null;
 const POSITIVE = new Set(["happy", "grateful", "in love", "joyful", "relieved", "proud", "comforted", "content", "hopeful", "triumphant", "vindicated"]);
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -191,6 +194,7 @@ function watch(a: Alert): void {
   }
   if (a.at) {
     const rect = canvas.getBoundingClientRect();
+    zoomGoal = null;
     cam.zoom = 3;
     cam.x = a.at[0] * TILE + 8 - rect.width / cam.zoom / 2;
     cam.y = a.at[1] * TILE + 8 - rect.height / cam.zoom / 2;
@@ -240,6 +244,7 @@ function fitCamera(): void {
   const rect = canvas.getBoundingClientRect();
   if (!world || rect.width === 0 || rect.height === 0) return;
   // Start looking at the town, close enough to see people.
+  zoomGoal = null;
   cam.zoom = 1.5;
   cam.x = world.map.square.x * TILE - rect.width / cam.zoom / 2;
   cam.y = world.map.square.y * TILE - rect.height / cam.zoom / 2;
@@ -297,6 +302,7 @@ function frame(now: number): void {
     }
   }
   panCamera(dt);
+  easeZoom(dt);
   renderer.draw(world, cam, opts, prev, alpha, selected, now / 1000);
   const rect = canvas.getBoundingClientRect();
   drawMinimap(minimap, world, cam, rect.width, rect.height, miniBase);
@@ -779,14 +785,42 @@ function pickAt(sx: number, sy: number): Hit | null {
 }
 
 let dragging = false, dragMoved = false, dragX = 0, dragY = 0;
+/** Fingers on the map, for pinch zoom: the world point under their midpoint stays put. */
+const touches = new Map<number, { x: number; y: number }>();
+let pinch: { d: number; zoom: number; wx: number; wy: number } | null = null;
+
+function pinchFrame(): { d: number; mx: number; my: number } {
+  const [a, b] = [...touches.values()] as [{ x: number; y: number }, { x: number; y: number }];
+  const rect = canvas.getBoundingClientRect();
+  return { d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), mx: (a.x + b.x) / 2 - rect.left, my: (a.y + b.y) / 2 - rect.top };
+}
+
 canvas.addEventListener("pointerdown", (ev) => {
+  touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  canvas.setPointerCapture(ev.pointerId);
+  if (touches.size === 2) {
+    const f = pinchFrame();
+    pinch = { d: f.d, zoom: cam.zoom, wx: f.mx / cam.zoom + cam.x, wy: f.my / cam.zoom + cam.y };
+    zoomGoal = null;
+    dragMoved = true;
+    return;
+  }
   dragging = true;
   dragMoved = false;
   dragX = ev.clientX;
   dragY = ev.clientY;
-  canvas.setPointerCapture(ev.pointerId);
 });
 canvas.addEventListener("pointermove", (ev) => {
+  if (touches.has(ev.pointerId)) touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (pinch && touches.size >= 2) {
+    const f = pinchFrame();
+    cam.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, (pinch.zoom * f.d) / pinch.d));
+    cam.x = pinch.wx - f.mx / cam.zoom;
+    cam.y = pinch.wy - f.my / cam.zoom;
+    follow = false;
+    userCamera = true;
+    return;
+  }
   const rect = canvas.getBoundingClientRect();
   const wx = (ev.clientX - rect.left) / cam.zoom + cam.x, wy = (ev.clientY - rect.top) / cam.zoom + cam.y;
   const tx = Math.floor(wx / TILE), ty = Math.floor(wy / TILE);
@@ -804,6 +838,18 @@ canvas.addEventListener("pointermove", (ev) => {
   }
 });
 canvas.addEventListener("pointerup", (ev) => {
+  touches.delete(ev.pointerId);
+  if (pinch) {
+    // One finger lifted: the other carries on panning from where it is.
+    if (touches.size < 2) pinch = null;
+    const rest = [...touches.values()][0];
+    dragging = rest !== undefined;
+    if (rest) {
+      dragX = rest.x;
+      dragY = rest.y;
+    }
+    return;
+  }
   dragging = false;
   if (dragMoved) return;
   const rect = canvas.getBoundingClientRect();
@@ -832,6 +878,17 @@ canvas.addEventListener("pointerup", (ev) => {
     selectedAnimal = null;
     select(person);
   }
+  // On a phone, tapping someone opens their sheet; tapping empty ground goes back to the map.
+  if (phone.matches) {
+    document.body.classList.remove("menu-open");
+    if (hit) openSheet("people");
+    else if (sheet !== "none") openSheet("none");
+  }
+});
+canvas.addEventListener("pointercancel", (ev) => {
+  dragging = false;
+  touches.delete(ev.pointerId);
+  if (touches.size < 2) pinch = null;
 });
 canvas.addEventListener("pointerleave", () => {
   renderer.hoverBuilding = -1;
@@ -841,15 +898,9 @@ canvas.addEventListener(
   (ev) => {
     ev.preventDefault();
     const rect = canvas.getBoundingClientRect();
-    const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
-    const wx = mx / cam.zoom + cam.x, wy = my / cam.zoom + cam.y;
-    let i = ZOOMS.findIndex((z) => z >= cam.zoom - 1e-6);
-    if (i < 0) i = ZOOMS.length - 1;
-    i = Math.max(0, Math.min(ZOOMS.length - 1, i + (ev.deltaY < 0 ? 1 : -1)));
-    cam.zoom = ZOOMS[i]!;
-    userCamera = true;
-    cam.x = wx - mx / cam.zoom;
-    cam.y = wy - my / cam.zoom;
+    // Wheels report pixels, lines or pages; a mouse notch is about 100 px, a trackpad sends many small ones.
+    const px = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? rect.height : 1);
+    zoomToward((zoomGoal?.zoom ?? cam.zoom) * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.0018), ev.clientX - rect.left, ev.clientY - rect.top);
   },
   { passive: false },
 );
@@ -872,6 +923,7 @@ function setSpeed(i: number): void {
 
 function syncControls(): void {
   $("pause").textContent = paused ? "▶" : "⏸";
+  $("mspeed").textContent = SPEEDS[speed]!.label;
   document.querySelectorAll<HTMLButtonElement>("[data-speed]").forEach((b) => b.classList.toggle("on", !paused && Number(b.dataset.speed) === speed));
   document.querySelectorAll<HTMLButtonElement>("[data-toggle]").forEach((b) => b.classList.toggle("on", opts[b.dataset.toggle as keyof ViewOptions]));
   $("chronicle").classList.toggle("hidden", !opts.chronicle);
@@ -896,6 +948,28 @@ function setTab(name: string): void {
 }
 document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) => (b.onclick = () => setTab(b.dataset.tab!)));
 $("book").onclick = openBook;
+
+// ---------- Phone layout: bottom bar, sheets and a menu ----------
+
+const phone = window.matchMedia("(max-width: 760px)");
+const SHEET_TITLES: Record<string, string> = { people: "👤 People", intrigue: "🗡 Intrigue", council: "⚖ Council", village: "⌂ Village" };
+let sheet = "none";
+
+function openSheet(name: string): void {
+  sheet = name;
+  document.body.dataset.sheet = name;
+  document.body.classList.toggle("sheet-open", name !== "none");
+  document.querySelectorAll<HTMLButtonElement>("[data-sheet]").forEach((b) => b.classList.toggle("on", b.dataset.sheet === name));
+  if (name === "none") return;
+  $("sheettitle").textContent = SHEET_TITLES[name] ?? name;
+  if (name !== "village") setTab(name);
+  else updateHud(true);
+}
+document.querySelectorAll<HTMLButtonElement>("[data-sheet]").forEach((b) => (b.onclick = () => openSheet(sheet === b.dataset.sheet ? "none" : b.dataset.sheet!)));
+$("sheetclose").onclick = () => openSheet("none");
+$("mbook").onclick = openBook;
+$("menubtn").onclick = () => document.body.classList.toggle("menu-open");
+$("mspeed").onclick = () => setSpeed((speed + 1) % SPEEDS.length);
 $("alertprefs").innerHTML = (Object.keys(ALERT_LABELS) as AlertKind[])
   .map((k) => `<label><input type="checkbox" data-alert="${k}" ${pauseOn[k] ? "checked" : ""}> ${ALERT_LABELS[k]}</label>`)
   .join("");
@@ -930,13 +1004,18 @@ $("random").onclick = () => {
 };
 const held = new Set<string>();
 
-/** WASD pans (shift for faster); Q and E step the zoom about the middle of the view. */
+/** WASD pans (shift for faster); holding Q or E zooms smoothly about the middle of the view. */
 function panCamera(dt: number): void {
   let dx = 0, dy = 0;
   if (held.has("a")) dx -= 1;
   if (held.has("d")) dx += 1;
   if (held.has("w")) dy -= 1;
   if (held.has("s")) dy += 1;
+  const zoomDir = (held.has("e") ? 1 : 0) - (held.has("q") ? 1 : 0);
+  if (zoomDir !== 0) {
+    const rect = canvas.getBoundingClientRect();
+    zoomToward((zoomGoal?.zoom ?? cam.zoom) * Math.exp(zoomDir * 2.2 * dt), rect.width / 2, rect.height / 2);
+  }
   if (dx === 0 && dy === 0) return;
   const speed = (held.has("shift") ? 1100 : 520) / cam.zoom;
   const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1;
@@ -946,16 +1025,22 @@ function panCamera(dt: number): void {
   userCamera = true;
 }
 
-function stepZoom(dir: 1 | -1): void {
-  const rect = canvas.getBoundingClientRect();
-  const wx = cam.x + rect.width / cam.zoom / 2, wy = cam.y + rect.height / cam.zoom / 2;
-  let i = ZOOMS.findIndex((z) => z >= cam.zoom - 1e-6);
-  if (i < 0) i = ZOOMS.length - 1;
-  i = Math.max(0, Math.min(ZOOMS.length - 1, i + dir));
-  cam.zoom = ZOOMS[i]!;
-  cam.x = wx - rect.width / cam.zoom / 2;
-  cam.y = wy - rect.height / cam.zoom / 2;
+/** Sets the zoom to ease toward, keeping the world point under screen point (sx, sy) in place. */
+function zoomToward(zoom: number, sx: number, sy: number): void {
+  zoomGoal = { zoom: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom)), sx, sy };
   userCamera = true;
+}
+
+/** Eases the zoom toward its goal in log space, so zooming in and out feel the same speed. */
+function easeZoom(dt: number): void {
+  if (!zoomGoal) return;
+  const { zoom: goal, sx, sy } = zoomGoal;
+  const wx = sx / cam.zoom + cam.x, wy = sy / cam.zoom + cam.y;
+  const gap = Math.log(goal / cam.zoom);
+  cam.zoom = Math.abs(gap) < 0.002 ? goal : cam.zoom * Math.exp(gap * (1 - Math.exp(-dt * 14)));
+  if (cam.zoom === goal) zoomGoal = null;
+  cam.x = wx - sx / cam.zoom;
+  cam.y = wy - sy / cam.zoom;
 }
 
 window.addEventListener("keyup", (ev) => {
@@ -965,12 +1050,8 @@ window.addEventListener("blur", () => held.clear());
 window.addEventListener("keydown", (ev) => {
   if ((ev.target as HTMLElement).tagName === "INPUT" || ev.ctrlKey || ev.metaKey || ev.altKey) return;
   const k = ev.key.toLowerCase();
-  if ("wasd".includes(k) && k.length === 1 || k === "shift") {
+  if ("wasdqe".includes(k) && k.length === 1 || k === "shift") {
     held.add(k);
-    return;
-  }
-  if (k === "q" || k === "e") {
-    stepZoom(k === "e" ? 1 : -1);
     return;
   }
   if (ev.key === " ") { ev.preventDefault(); paused = !paused; syncControls(); }
@@ -995,6 +1076,9 @@ window.addEventListener("keydown", (ev) => {
   get engine() {
     return engine;
   },
+  get camera() {
+    return { ...cam };
+  },
   select,
   draw: () => {
     renderer.draw(world, cam, opts, prev, 1, selected, performance.now() / 1000);
@@ -1004,6 +1088,7 @@ window.addEventListener("keydown", (ev) => {
   },
   look: (x: number, y: number, zoom = 2) => {
     const rect = canvas.getBoundingClientRect();
+    zoomGoal = null;
     cam.zoom = zoom;
     cam.x = x * TILE - rect.width / zoom / 2;
     cam.y = y * TILE - rect.height / zoom / 2;

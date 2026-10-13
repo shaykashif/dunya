@@ -2,8 +2,38 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Village Viewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Village Simulation · Shay Kashif</title>
+<meta name="description" content="A living village of fifty-odd people, simulated in your browser: they farm, steal, feud, fall in love, get hurt and stand before a council that judges from what it believes, not what is true.">
+<meta name="author" content="Shay Kashif">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://sim.shaykas.com/">
+<meta property="og:title" content="Village Simulation">
+<meta property="og:description" content="A living village of fifty-odd people, simulated in your browser: they farm, steal, feud, fall in love, get hurt and stand before a council that judges from what it believes, not what is true.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://sim.shaykas.com/">
+<meta property="og:site_name" content="Shay Kashif">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Village Simulation">
+<meta name="twitter:description" content="A living village of fifty-odd people, simulated in your browser: they farm, steal, feud, fall in love, get hurt and stand before a council that judges from what it believes, not what is true.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#1b1712">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "Village Simulation",
+  "url": "https://sim.shaykas.com/",
+  "description": "A living village of fifty-odd people, simulated in your browser: they farm, steal, feud, fall in love, get hurt and stand before a council that judges from what it believes, not what is true.",
+  "applicationCategory": "GameApplication",
+  "genre": "Simulation",
+  "operatingSystem": "Any (web browser)",
+  "browserRequirements": "Requires JavaScript",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "Shay Kashif", "url": "https://shaykas.com/" }
+}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=VT323&display=swap" rel="stylesheet">
 <style>
@@ -163,13 +193,57 @@
   .tline.verdict { border-color: var(--gold); font-size: 20px; color: var(--gold); }
   .tline.truth { border-color: var(--red); color: #e8c0b0; }
   .liebadge { color: #ff8a7a; font-size: 14px; margin-left: 6px; }
-  @media (max-width: 900px) {
+  .mobile-only { display: none !important; }
+  #mnav, #sheethead { display: none; }
+  @media (min-width: 761px) and (max-width: 900px) {
     body { grid-template-columns: 1fr; grid-template-rows: 60vh auto; overflow: auto; }
     aside { border-left: 0; border-top: 3px solid var(--edge); }
+  }
+  /* Phones: the map fills the screen; everything else folds into a bottom bar, sheets and a menu. */
+  @media (max-width: 760px) {
+    :root { --nav: calc(58px + env(safe-area-inset-bottom)); }
+    html, body { height: 100dvh; }
+    body { display: block; overflow: hidden; }
+    .mobile-only { display: revert !important; }
+    #stage { position: fixed; left: 0; right: 0; top: 0; bottom: var(--nav); }
+    #topbar { left: 8px; right: 8px; top: calc(8px + env(safe-area-inset-top)); gap: 6px; }
+    #clock { font-size: 11px; padding: 6px 8px; }
+    #topbar button { min-height: 36px; min-width: 36px; font-size: 18px; }
+    #speeds, #step, #help, #chronicle { display: none !important; }
+    #toggles, #powers { display: none; }
+    body.menu-open #toggles, body.menu-open #powers { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+    #settings { top: auto; bottom: 12px; left: 8px; right: 8px; }
+    #minimap { width: 104px; height: 78px; right: 8px; bottom: 8px; }
+    #toasts { left: 8px; right: 8px; width: auto; top: calc(58px + env(safe-area-inset-top)); }
+    .toast:nth-child(n+3) { display: none; }
+    aside { position: fixed; left: 0; right: 0; bottom: var(--nav); height: 64dvh; z-index: 6; border-left: 0; border-top: 3px solid var(--gold);
+      transform: translateY(110%); transition: transform .22s ease-out; box-shadow: 0 -6px 0 #0008; }
+    body.sheet-open aside { transform: none; }
+    #sheethead { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; border-bottom: 2px solid #1b1712; font: 13px "Silkscreen", monospace; color: var(--gold); }
+    #sheethead button { min-height: 34px; }
+    aside > section, #tabs { display: none; }
+    body[data-sheet="village"] aside > section { display: block; }
+    body[data-sheet="village"] #tabwrap { display: none; }
+    #tabwrap { padding: 6px 10px calc(6px + env(safe-area-inset-bottom)); }
+    #roster { max-height: 64px; }
+    .pp-mid { flex-wrap: wrap; }
+    #mnav { display: flex; position: fixed; left: 0; right: 0; bottom: 0; height: var(--nav); padding-bottom: env(safe-area-inset-bottom); z-index: 7;
+      background: var(--panel); border-top: 3px solid var(--edge); }
+    #mnav button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 0; box-shadow: none; background: none; font-size: 22px; padding: 0; }
+    #mnav button small { font: 9px "Silkscreen", monospace; color: var(--dim); }
+    #mnav button.on small { color: var(--gold); }
+    #mnav button.on { background: var(--panel2); }
+    #modal .box { width: 100vw; height: 100dvh; max-height: 100dvh; border: 0; }
+    #modal header { padding-top: calc(10px + env(safe-area-inset-top)); }
   }
 </style>
 </head>
 <body>
+  <noscript>
+    <h1>Village Simulation</h1>
+    <p>A pixel-art simulation of a village of about fifty-five people in five family houses, a short walk through the forest from a town with a courthouse. Hunger pushes people to steal and grudges push them to kill. Crimes leave traces, witnesses hold partial and sometimes false beliefs, and a council of elders judges from what it believes, not what is true. Wounds are tracked part by part and can heal badly; wolves hunt anyone left alone at night.</p>
+    <p>The whole simulation runs in your browser, so this page needs JavaScript. By <a href="https://shaykas.com/">Shay Kashif</a>.</p>
+  </noscript>
   <div id="stage">
     <canvas id="world"></canvas>
     <div id="topbar">
@@ -178,6 +252,8 @@
         <button id="pause" title="Pause (space)">⏸</button>
         <button id="step" title="Step one hour">⏭</button>
         <span id="speeds"></span>
+        <button id="mspeed" class="mobile-only" title="Speed">1x</button>
+        <button id="menubtn" class="mobile-only" title="Views and powers">☰</button>
       </div>
       <div class="chip" id="toggles">
         <button data-toggle="roofs" title="Roofs (R)">Roofs</button>
@@ -199,6 +275,7 @@
     <div id="help" class="chip">drag to pan · wheel to zoom · click a villager or animal · WASD pan · Q/E zoom · space pause · 1–6 speed · hover a house to look inside</div>
   </div>
   <aside>
+    <div id="sheethead"><span id="sheettitle">People</span><button id="sheetclose" title="Back to the map">✕</button></div>
     <section>
       <h1>⌂ VILLAGE <button id="book" title="Read the whole chronicle (B)" style="float:right">📖 Chronicle</button></h1>
       <form id="seedform"><input id="seed" type="number" min="1" value="42"><button type="submit">New village</button><button type="button" id="random" title="Random seed">🎲</button></form>
@@ -215,6 +292,13 @@
       <ul class="tab" id="council"></ul>
     </div>
   </aside>
+  <nav id="mnav">
+    <button data-sheet="people">👤<small>People</small></button>
+    <button data-sheet="intrigue">🗡<small>Intrigue</small></button>
+    <button data-sheet="council">⚖<small>Council</small></button>
+    <button id="mbook">📖<small>Chronicle</small></button>
+    <button data-sheet="village">⌂<small>Village</small></button>
+  </nav>
   <div id="modal"><div class="box"><header><h2 id="mtitle">Council</h2><button id="mclose">✕ close</button></header><div class="body" id="mbody"></div></div></div>
   <script src="dist/viewer.js"></script>
 </body>

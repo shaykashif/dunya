@@ -277,6 +277,8 @@ export class Renderer {
     const vw = this.canvas.width / dpr / cam.zoom, vh = this.canvas.height / dpr / cam.zoom;
     const inView = (x: number, y: number) => x > cam.x - 32 && y > cam.y - 32 && x < cam.x + vw + 32 && y < cam.y + vh + 32;
 
+    for (const den of wolfDens(w)) if (inView(den.x * TILE + 8, den.y * TILE + 8)) this.drawDen(den.x, den.y);
+
     for (const a of w.animals) {
       if (!a.alive || a.riderId !== null) continue;
       const { x: px, y: py } = this.animalWorld(a, alpha);
@@ -322,6 +324,26 @@ export class Renderer {
         g.fillText(name, sx, sy);
       }
     }
+  }
+
+  /** A wolf den: a heap of rocks round a dark hole, with bones scattered in front. */
+  private drawDen(tx: number, ty: number): void {
+    const g = this.g;
+    const x = tx * TILE - 8, y = ty * TILE - 4;
+    g.fillStyle = "#4e4a43";
+    g.fillRect(x + 2, y + 6, 28, 14);
+    g.fillRect(x + 6, y + 2, 20, 6);
+    g.fillStyle = "#7a746a";
+    g.fillRect(x + 4, y + 5, 8, 5);
+    g.fillRect(x + 18, y + 3, 7, 5);
+    g.fillRect(x + 23, y + 10, 6, 5);
+    g.fillStyle = "#14110d";
+    g.fillRect(x + 11, y + 10, 10, 10);
+    g.fillRect(x + 13, y + 8, 6, 2);
+    g.fillStyle = "#e8e0cc";
+    g.fillRect(x + 6, y + 21, 5, 1);
+    g.fillRect(x + 22, y + 22, 1, 3);
+    g.fillRect(x + 21, y + 22, 3, 1);
   }
 
   private drawAnimal(a: Animal, px: number, py: number, time: number): void {
@@ -695,6 +717,16 @@ export class Renderer {
   }
 }
 
+/** Each pack's den, while any of its wolves live. */
+export function wolfDens(w: World): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  for (const a of w.animals) {
+    if (a.kind !== "wolf" || !a.alive || out.some((d) => d.x === a.home.x && d.y === a.home.y)) continue;
+    out.push({ x: a.home.x, y: a.home.y });
+  }
+  return out;
+}
+
 /** Minimap: one pixel per tile, plus people and wolves, plus the camera's view. */
 export function drawMinimap(canvas: HTMLCanvasElement, w: World, cam: Camera, viewW: number, viewH: number, base: { img: ImageData | null; season: number }): void {
   const g = canvas.getContext("2d")!;
@@ -729,10 +761,14 @@ export function drawMinimap(canvas: HTMLCanvasElement, w: World, cam: Camera, vi
     base.season = w.env.season;
   }
   g.putImageData(base.img, 0, 0);
+  // Dens as dark rings, wolves as red dots: easy to spot in the far corners of the forest.
+  g.strokeStyle = "#ff5040";
+  g.lineWidth = 1;
+  for (const den of wolfDens(w)) g.strokeRect(den.x - 2.5, den.y - 2.5, 5, 5);
   for (const a of w.animals) {
     if (!a.alive || a.kind !== "wolf") continue;
     g.fillStyle = "#ff3030";
-    g.fillRect(a.x, a.y, 1, 1);
+    g.fillRect(a.x - 0.5, a.y - 0.5, 2, 2);
   }
   for (const p of w.active()) {
     g.fillStyle = p.mad ? "#e070ff" : HOUSEHOLD_COLORS[p.householdId % HOUSEHOLD_COLORS.length]!;

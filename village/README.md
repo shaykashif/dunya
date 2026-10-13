@@ -53,8 +53,9 @@ npm run viewer
 Then open http://localhost:5173 (add `?seed=7` for another village).
 
 **Getting around**
-- Drag or use **WASD** to pan (hold Shift to go faster); the mouse wheel or **Q/E** zooms through 16 steps, from the whole map down to close-ups.
-- The minimap in the corner jumps the camera.
+- Drag or use **WASD** to pan (hold Shift to go faster); the mouse wheel, a trackpad pinch-scroll or holding **Q/E** zooms smoothly, from the whole map down to close-ups.
+- The minimap in the corner jumps the camera. Wolf dens show on it as red squares, in the far corners of the forest; the dens are drawn on the map too.
+- On a phone the map fills the screen: a bottom bar opens People, Intrigue, Council, the Chronicle and the Village stats as sheets, ☰ holds the view toggles and powers, and pinching zooms.
 - Hover over a building to see inside.
 - Space pauses; keys 1 to 6 set the speed. At 1x, one tick (10 game minutes) passes every 2.5 seconds, and people walk along the roads they actually take.
 - Toggle roofs (R), traces (T), names (N) and the chronicle overlay (C).
