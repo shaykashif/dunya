@@ -34,8 +34,10 @@ export function hash2(x: number, y: number, salt = 0): number {
 }
 
 export const SIDE_COLORS: Record<Side, { coat: string; coatDark: string; trousers: string; helmet: string; helmetDark: string; boots: string; tracer: string; name: string }> = {
-  us: { coat: "#6e6a3c", coatDark: "#545029", trousers: "#7a6c48", helmet: "#5c6034", helmetDark: "#43462a", boots: "#5a3e24", tracer: "#ffb040", name: "#e8d890" },
-  de: { coat: "#6a7262", coatDark: "#4e5548", trousers: "#5e6458", helmet: "#56604f", helmetDark: "#3c4438", boots: "#262420", tracer: "#c8ff70", name: "#c8d8c0" },
+  // Americans in warm khaki and olive drab, with canvas leggings and a netted M1 helmet;
+  // Germans in cool field grey, with a dark flared helmet, black straps and jackboots.
+  us: { coat: "#a08a56", coatDark: "#7a6840", trousers: "#76603e", helmet: "#5e6c30", helmetDark: "#44501f", boots: "#5a3e24", tracer: "#ffb040", name: "#e8d890" },
+  de: { coat: "#5e6e6c", coatDark: "#435250", trousers: "#6c7470", helmet: "#3c4644", helmetDark: "#262e2e", boots: "#16161a", tracer: "#c8ff70", name: "#c8d8c0" },
 };
 
 const SKINS = ["#f2c9a0", "#e8b890", "#d9a57a", "#c98e62", "#a86f48"];
@@ -46,7 +48,7 @@ export function skinOf(id: number): string {
 
 const US_STAND = [
   "..HHHH..",
-  ".HHHHHH.",
+  ".HnHHnH.",
   ".hSSSSh.",
   "..SESE..",
   ".cCCCCc.",
@@ -61,10 +63,10 @@ const US_STAND = [
 const DE_STAND = [
   "..HHHH..",
   ".HHHHHH.",
-  "hHSSSSHh",
-  "..SESE..",
-  ".cCCCCc.",
-  "SCCCCCCS",
+  "hhSSSShh",
+  ".hSESEh.",
+  ".cyCCyc.",
+  "SCyCCyCS",
   "SCbbbbCS",
   ".cCCCCc.",
   "..PPPP..",
@@ -73,7 +75,7 @@ const DE_STAND = [
   "..B..B..",
 ];
 const walkRows = (rows: readonly string[]) => [...rows.slice(0, 9), ".P....P.", rows[10]!.includes("L") ? ".L....L." : ".B....B.", ".B....B."];
-const CROUCH = (rows: readonly string[]) => [rows[0]!, rows[1]!, rows[2]!, rows[3]!, ".cCCCCc.", "SCCCCCCS", "SCbbbbCS", ".PPPPPP.", "PP....PP", "B......B"];
+const CROUCH = (rows: readonly string[]) => [rows[0]!, rows[1]!, rows[2]!, rows[3]!, rows[4]!, rows[5]!, rows[6]!, ".PPPPPP.", "PP....PP", "B......B"];
 const PRONE = ["......cCCHH.", "BPPPPbCCCSHH", "BPPPPCCCCSSH", "..P...c....."];
 const SURRENDER = (rows: readonly string[]) => ["S.HHHH.S", "SHHHHHHS", "C" + rows[2]!.slice(1, 7) + "C", "c.SESE.c", ".cCCCCc.", "..CCCC..", "..bbbb..", ".cCCCCc.", ...rows.slice(8)];
 
@@ -104,10 +106,12 @@ export function soldierSprite(l: SoldierLook): HTMLCanvasElement {
     E: "#2a1a10",
     C: c.coat,
     c: c.coatDark,
-    b: l.side === "us" ? "#8a7a4a" : "#2e2a22",
+    b: l.side === "us" ? "#c4ac70" : "#1e1e1c",
     P: c.trousers,
-    L: "#a89870",
+    L: "#c8b888",
     B: c.boots,
+    n: "#7e8a4a",
+    y: "#1e1e1c",
   };
   if (l.dead) {
     pal.C = shade(c.coat, 0.75);
@@ -137,7 +141,25 @@ export function soldierSprite(l: SoldierLook): HTMLCanvasElement {
       g.fillRect(l.flip ? 7 : 0, 5, 1, 1);
     }
   }
-  return spr;
+  return outlined(spr);
+}
+
+/** The sprite with a one-pixel dark rim, so men stand out from busy ground. */
+function outlined(src: HTMLCanvasElement): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = src.width + 2;
+  c.height = src.height + 2;
+  const g = c.getContext("2d")!;
+  const data = src.getContext("2d")!.getImageData(0, 0, src.width, src.height).data;
+  const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < src.width && y < src.height && data[(y * src.width + x) * 4 + 3]! > 0;
+  g.fillStyle = "rgba(16,16,12,0.7)";
+  for (let y = -1; y <= src.height; y++) {
+    for (let x = -1; x <= src.width; x++) {
+      if (!solid(x, y) && (solid(x - 1, y) || solid(x + 1, y) || solid(x, y - 1) || solid(x, y + 1))) g.fillRect(x + 1, y + 1, 1, 1);
+    }
+  }
+  g.drawImage(src, 1, 1);
+  return c;
 }
 
 export function shade(hex: string, f: number): string {

@@ -6,6 +6,7 @@ import { createSimulation } from "../../src/sim.ts";
 import type { BodyPart, Injury, Side, Soldier, Squad } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
 import { clock, describe, label, roleName, worstWound, type FeedLine } from "./feed.ts";
+import { BLAST_SECONDS } from "./fx.ts";
 import { Renderer, drawMinimap, type Camera, type ViewOptions } from "./render.ts";
 import { BODY_RECTS, SIDE_COLORS, TILE, appearance, faceCanvas, hash2, skinOf } from "./sprites.ts";
 
@@ -107,8 +108,13 @@ function effectsFor(e: SimEvent): void {
     }
     case "explosion": {
       const [x, y] = d.at as [number, number];
-      const r = d.kind === "artillery" ? 34 : d.kind === "mortar" ? 24 : 14;
-      renderer.addEffect({ kind: "boom", x: x * TILE + 8, y: y * TILE + 8, r, born: t, dur: 0.9, delay: 0 });
+      const size = d.kind === "artillery" ? 2 : d.kind === "mortar" ? 1 : 0;
+      renderer.addEffect({ kind: "boom", x: x * TILE + 8, y: y * TILE + 8, size, seed: e.seq, born: t, dur: BLAST_SECONDS[size]!, delay: 0 });
+      break;
+    }
+    case "smoke": {
+      const [x, y] = d.at as [number, number];
+      renderer.addEffect({ kind: "pop", x: x * TILE + 8, y: y * TILE + 8, seed: e.seq, born: t, dur: 1.2, delay: 0 });
       break;
     }
     case "callout": {
