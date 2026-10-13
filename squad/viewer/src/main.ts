@@ -775,7 +775,7 @@ canvas.addEventListener(
     ev.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const px = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? rect.height : 1);
-    zoomToward((zoomGoal?.zoom ?? cam.zoom) * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.0018), ev.clientX - rect.left, ev.clientY - rect.top);
+    zoomToward((zoomGoal?.zoom ?? cam.zoom) * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.004), ev.clientX - rect.left, ev.clientY - rect.top);
   },
   { passive: false },
 );
@@ -800,7 +800,7 @@ function easeZoom(dt: number): void {
   const { sx, sy } = zoomGoal;
   // The world point under the cursor stays put while the zoom eases in.
   const wx = sx / cam.zoom + cam.x, wy = sy / cam.zoom + cam.y;
-  cam.zoom += (zoomGoal.zoom - cam.zoom) * (1 - Math.exp(-dt * 14));
+  cam.zoom += (zoomGoal.zoom - cam.zoom) * (1 - Math.exp(-dt * 22));
   if (Math.abs(cam.zoom - zoomGoal.zoom) < 0.002) {
     cam.zoom = zoomGoal.zoom;
     zoomGoal = null;
@@ -838,7 +838,7 @@ window.addEventListener("keydown", (ev) => {
 window.addEventListener("keyup", (ev) => keys.delete(ev.key.toLowerCase()));
 
 function panCamera(dt: number): void {
-  const v = (keys.has("shift") ? 1400 : 600) * dt / cam.zoom;
+  const v = (keys.has("shift") ? 2500 : 1100) * dt / cam.zoom;
   let moved = false;
   if (keys.has("w") || keys.has("arrowup")) { cam.y -= v; moved = true; }
   if (keys.has("s") || keys.has("arrowdown")) { cam.y += v; moved = true; }
@@ -846,7 +846,7 @@ function panCamera(dt: number): void {
   if (keys.has("d") || keys.has("arrowright")) { cam.x += v; moved = true; }
   if (keys.has("q") || keys.has("e")) {
     const rect = canvas.getBoundingClientRect();
-    const f = Math.exp((keys.has("e") ? 1 : -1) * dt * 1.6);
+    const f = Math.exp((keys.has("e") ? 1 : -1) * dt * 3.5);
     zoomToward(cam.zoom * f, rect.width / 2, rect.height / 2);
   }
   if (moved) {
