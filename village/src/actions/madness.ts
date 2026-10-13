@@ -165,7 +165,7 @@ export const search: ActionDef = {
         const info = { kind: "violence" as const, victim: { kind: "person" as const, id: child.id }, place: { x: child.x, y: child.y }, timeFrom: w.tick - w.days(3), timeTo: w.tick };
         const c4 = findMatchingCase(w, p, info) ?? openCase(w, p, info, belief);
         if (!c4.beliefIds.includes(belief.id)) c4.beliefIds.push(belief.id);
-        c4.suspects = [{ personId: captor.id, means: 1, motive: 0.5, opportunity: 1, score: 2.5 }];
+        c4.suspects = [{ personId: captor.id, means: 1, motive: 0.5, opportunity: 1, score: 2.5, direct: true }];
         if (c4.status === "open") fileAccusation(w, p, captor.id, c4);
       }
     }

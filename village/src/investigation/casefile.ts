@@ -7,6 +7,8 @@ export interface SuspectScore {
   motive: number;
   opportunity: number;
   score: number;
+  /** There is direct evidence (someone saw it, blood on them, a confession), not only that they were nearby or disliked. */
+  direct?: boolean;
 }
 
 export interface CaseFile {

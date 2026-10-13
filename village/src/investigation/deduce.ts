@@ -32,8 +32,8 @@ function round(x: number): number {
  * Each criterion is the strongest supporting belief's confidence; the score is their sum.
  */
 export function deduce(caseFile: Readonly<CaseFile>, beliefs: readonly Readonly<Belief>[], k: AgentKnowledge): SuspectScore[] {
-  const scores: Record<number, { means: number; motive: number; opportunity: number; eyewitness: number; accounts: Set<string> }> = {};
-  const get = (id: number) => (scores[id] ??= { means: 0, motive: 0, opportunity: 0, eyewitness: 0, accounts: new Set() });
+  const scores: Record<number, { means: number; motive: number; opportunity: number; eyewitness: number; accounts: Set<string>; direct: boolean }> = {};
+  const get = (id: number) => (scores[id] ??= { means: 0, motive: 0, opportunity: 0, eyewitness: 0, accounts: new Set(), direct: false });
   const from = caseFile.timeFrom;
   const to = caseFile.timeTo;
   const near = 12;
@@ -50,6 +50,7 @@ export function deduce(caseFile: Readonly<CaseFile>, beliefs: readonly Readonly<
         const s = get(sid);
         // A confession (the subject telling it of themselves) is taken at full weight.
         const conf = b.fromId === sid ? 1 : b.confidence;
+        s.direct = true;
         s.means = Math.max(s.means, conf);
         s.opportunity = Math.max(s.opportunity, conf);
         if (b.fromId === sid) s.motive = Math.max(s.motive, 0.5);
@@ -68,12 +69,14 @@ export function deduce(caseFile: Readonly<CaseFile>, beliefs: readonly Readonly<
       if (dist <= k.meansRadius && b.time >= from - k.ticksPerDay && b.time <= to + k.ticksPerDay) s.means = Math.max(s.means, b.confidence * 0.6);
     } else if (b.predicate === "trace_found" && b.object === "object_left" && sid !== null && dist <= k.meansRadius) {
       const s = get(sid);
+      s.direct = true;
       s.means = Math.max(s.means, b.confidence);
       s.opportunity = Math.max(s.opportunity, b.confidence * 0.7);
     } else if (b.predicate === "trace_found" && b.object === "footprint" && dist <= k.meansRadius && b.detail?.size) {
       sizes.push({ size: String(b.detail.size), conf: b.confidence });
     } else if ((b.predicate === "seen_bloody" || b.predicate === "washing_blood") && sid !== null && caseFile.kind === "violence" && b.time >= from - near && b.time <= to + k.ticksPerDay) {
       const s = get(sid);
+      s.direct = true;
       const weight = b.predicate === "seen_bloody" && b.object === "tool" ? 0.9 : 0.6;
       s.means = Math.max(s.means, b.confidence * weight);
       s.opportunity = Math.max(s.opportunity, b.confidence * weight * 0.6);
@@ -125,7 +128,7 @@ export function deduce(caseFile: Readonly<CaseFile>, beliefs: readonly Readonly<
     const corroboration = Math.min(0.6, 0.25 * Math.max(0, s.accounts.size - 1));
     const score = s.means + s.motive + s.opportunity + s.eyewitness + corroboration;
     if (score <= 0) continue;
-    out.push({ personId: id, means: round(s.means), motive: round(s.motive), opportunity: round(s.opportunity), score: round(score) });
+    out.push({ personId: id, means: round(s.means), motive: round(s.motive), opportunity: round(s.opportunity), score: round(score), ...(s.direct ? { direct: true } : {}) });
   }
   out.sort((a, b) => b.score - a.score || a.personId - b.personId);
   return out;

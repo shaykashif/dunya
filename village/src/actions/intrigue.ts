@@ -530,7 +530,7 @@ export const chase: ActionDef = {
         const info = { kind: "violence" as const, victim: { kind: "person" as const, id: child.id }, place: { x: t.x, y: t.y }, timeFrom: ch.startTick - 6, timeTo: w.tick };
         const c3 = findMatchingCase(w, p, info) ?? openCase(w, p, info, belief);
         if (!c3.beliefIds.includes(belief.id)) c3.beliefIds.push(belief.id);
-        c3.suspects = [{ personId: t.id, means: 1, motive: 0.5, opportunity: 1, score: 2.5 }];
+        c3.suspects = [{ personId: t.id, means: 1, motive: 0.5, opportunity: 1, score: 2.5, direct: true }];
         if (c3.status === "open") fileAccusation(w, p, t.id, c3);
         ctx.emit("apprehended", [p.id, t.id], { chaser: p.id, thief: t.id, returned: 0, resisted: answer === "fight", kidnapping: true });
         return ctx.events;
@@ -559,7 +559,7 @@ export const chase: ActionDef = {
     const info = { kind: "theft" as const, victim: { kind: "holder" as const, holder: ch.victim }, place: { x: t.x, y: t.y }, timeFrom: ch.startTick - 6, timeTo: w.tick };
     const c2 = findMatchingCase(w, p, info) ?? openCase(w, p, info, belief);
     if (!c2.beliefIds.includes(belief.id)) c2.beliefIds.push(belief.id);
-    c2.suspects = [{ personId: t.id, means: 1, motive: 0.5, opportunity: 1, score: 2.5 }];
+    c2.suspects = [{ personId: t.id, means: 1, motive: 0.5, opportunity: 1, score: 2.5, direct: true }];
     if (c2.status === "open") fileAccusation(w, p, t.id, c2);
     return ctx.events;
   },

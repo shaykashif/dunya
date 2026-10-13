@@ -287,7 +287,8 @@ export function conductHearing(w: World, h: Hearing): void {
     if (jc) jc.suspects = suspects;
     const accusedScore = suspects.find((s) => s.personId === h.accusedId)?.score ?? 0;
     const top = suspects[0] ?? null;
-    const guilty = accusedScore >= cfg.convictThreshold && accusedScore >= (top?.score ?? 0) - 0.1;
+    const direct = suspects.find((s) => s.personId === h.accusedId)?.direct === true;
+    const guilty = accusedScore >= cfg.convictThreshold && accusedScore >= (top?.score ?? 0) - 0.1 && (h.kind !== "violence" || direct);
     votes.push({ judge: judge.id, accusedScore, top: top?.personId ?? null, topScore: top?.score ?? 0, guilty });
   }
   const guiltyVotes = votes.filter((v) => v.guilty).length;

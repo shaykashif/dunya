@@ -138,7 +138,7 @@ Added at the user's request after milestone 1. Where these conflict with entries
 - **Muskets.** Each comfortable house's hunter keeps a musket. It helps hunting and can kill from up to 6 tiles, then needs 3 ticks to reload. A shot is heard 35 tiles away; one fired outside the forest sends people who hear it to investigate. Who owns a musket is common knowledge.
 
 **Daily life**
-- **Tasks.** Each house assigns tasks daily: caretaker (if there are young children), farmer, hunter, fisher, woodcutter, builder, herder, foragers; elders and children too. Work matching one's task carries a sense of duty in scoring. Farm work and foraging go better with a tool; the poorest house has none.
+- **Tasks.** Each house assigns tasks daily: caretaker (if there are young children), farmer, hunter, fisher, woodcutter, carpenter, stonemason, healer, night watchman, herder, foragers; elders and children too. Work matching one's task carries a sense of duty in scoring. Farm work and foraging go better with a tool; the poorest house has none.
 - **Feelings.** Feelings are recorded with their causes ("felt grateful because...") and nudge a mood value. This stays deliberately simple, not a full appraisal system.
 
 **Madness and player interventions**
@@ -148,3 +148,38 @@ Added at the user's request after milestone 1. Where these conflict with entries
 **Tuning**
 - **Tuning.** With five houses the village is better fed, so crime comes mostly from the poorest house and from feuds. Across seeds, 90-day runs see a few deaths, roughly 100 to 170 thefts, and 60 to 90 accusations.
 - **Interventions dominate.** A player-maddened musket owner can kill most of his house in an afternoon, which is the point of the power.
+
+## Injuries, retribution and justice (second round)
+
+**Injuries (Dwarf Fortress style)**
+- **Wounds are per body part.** Fights, wolf bites, gunshots, falls from horses, slipped axes and twisted ankles on roads hurt a specific part (head, face, eyes, torso, arms, hands, legs, feet). A wound has a kind (bruise, cut, gash, bite, sprain, fracture, gunshot, lost) and a severity that falls as it heals, faster when tended. Open wounds can fester and kill. Some heal badly into a lasting mark: a limp, a crooked arm, a maimed hand, a scarred or ruined face. A lost eye is permanent at once.
+- **Injuries hinder.** `src/entities/body.ts` turns wounds into numbers that everything else reads: walking speed (a crutch takes weight off a bad leg), grip and arm strength (work and fighting), sight range (one eye, no eyes), pain (mood) and disfigurement (attraction and how quickly strangers warm to someone).
+- **Rescue.** Someone who cannot walk calls out; anyone who hears or sees them may come and carry them home or to the infirmary in the courthouse, where the best nearby healer tends them. A family that sees someone has not come home by 20:00 goes looking. Left outside, the fallen are the first prey wolves look for. Family and healers nurse the bedridden.
+- **Roles replace "builder".** Healer (tends wounds), carpenter (makes crutches), stonemason (repairs the courthouse and store, carves headstones for unmarked graves) and night watchman (evening patrol that finds the fallen and scares off wolves).
+- **Accident rates are deliberately low.** Per-tile road and ground rates are tiny; hunting trips (0.4% each) and woodcutting (2%) carry the work risk. A 90-day village sees roughly 40 to 55 accidents, 5 to 11 of them leaving someone unable to walk. Earlier settings (1.5% per hunt) made nearly one person a day stumble.
+- **Animals keep a history** of what they did and what was done to them, and livestock get hungry; the viewer shows it.
+
+**Retribution**
+- **Acquittals of a guilty person breed resentment.** When the council acquits someone the victim's side knows (by their own beliefs) did it, each aggrieved person adds 1 to their `injustice` toward them (1.5 for a killing of kin). At 2 or more, they may plan vengeance: threaten, maim or kill. Usually they threaten first and turn violent only as more acquittals follow. Resentment fades 0.01 a day.
+- **Vengeance is a crime.** Each threat or blow is recorded as a crime (`intimidation`, `assault`, `murder`) and can be witnessed, investigated and judged like any other.
+
+**Murder and the council**
+- **First-degree murder** is a killing planned beforehand (a murder plot, or vengeance meant to kill). If the council convicts, the sentence is execution unless the council's sympathy for the killer reaches 0.4, in which case it is a 30-day imprisonment. Sympathy per judge is 0.4 x bond + 0.25 x trust + 0.35 x empathy, +0.15 for kin, +0.08 for a clean record (-0.1 otherwise), minus 0.3 x bond to the victim; the council's value is the mean. A parent of young children is always spared the rope. Other killings keep the older rule.
+- **Eyewitnesses count.** `deduce` takes the strongest single signal per category, so an innocent who was nearby and disliked could outscore a direct witness. A direct sighting now adds weight (full for what the investigator saw, half for what others claim), and independent accounts corroborate (+0.25 each, up to +0.6). Identical claims from different tellers merge into one belief that remembers who told it (`tellers`), so three witnesses count as three accounts.
+- **Witnesses recognise attackers.** Violence holds the eye: witnesses of an attack get +0.3 to the chance of recognising the attacker (config `detection.violenceIdentBonus`).
+- **Bodies.** Someone who saw or heard of the killing is never fooled into thinking a wolf did it, and ordinary passers-by misread less often (about 15% instead of 30%).
+- **No accusations by proximity.** Violence cases need direct evidence (a sighting, a confession, blood, a left object) to accuse or convict; being nearby, disliked or hungry is not enough. A case whose identified culprit is already dead is closed. Before this, someone who killed a rampaging neighbour in self-defence could go on to accuse a bystander of violence on weak circumstantial grounds.
+- **Theft** keeps circumstantial reasoning, since that is how the hungry get wrongly accused.
+
+**Kidnapping**
+- A snatch seen by anyone raises the alarm at once. Otherwise the child is missed within three hours or at nightfall. The family, the elder and the child's friends take up the search, sweeping different sectors and rings of the forest.
+- The nearest able adult who saw it gives chase (up to four times longer than a thief chase, and the kidnapper is slowed while dragging a child). A caught kidnapper frees the child and is accused. A child found by searchers also leads to an accusation.
+
+**Winter**
+- **The village starts with winter stores.** Households start with 70 days of food per member (10 for the strained house, 30 for the communal store) and 200 grain standing per farm. The village starts in autumn, so the first winter has to be survived on what is stored, and the earlier 20 days did not last: stores ran out by day 80 to 100, adults starved, and children left without anyone to fetch wood froze. Seeds 42, 7, 3 and 11 now keep 45 to 56 of 49 to 59 people through the first winter and spring.
+- This also makes the village calmer: a 90-day run of seed 42 has 2 deaths and about 3 attacks, where the old numbers were 20 deaths and 64 attacks. Raise `scenario.foodDaysNormal` or lower it to tune.
+
+**Viewer**
+- The chronicle is a transparent overlay on the left (C toggles, B or the book button opens it in full). Intrigue, Council and People are side buttons that fill the lower right; the People panel holds the person panel (pixel face, body-damage diagram, written description, wounds) and, for animals, their needs and history.
+- A fight is one alert that updates as it goes on; "Fight log" lists every blow, choice and wound. Smite moved from S to X because S now pans.
+

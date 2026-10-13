@@ -53,27 +53,25 @@ npm run viewer
 Then open http://localhost:5173 (add `?seed=7` for another village).
 
 **Getting around**
-- Drag to pan; the mouse wheel zooms through 16 steps, from the whole map down to close-ups.
+- Drag or use **WASD** to pan (hold Shift to go faster); the mouse wheel or **Q/E** zooms through 16 steps, from the whole map down to close-ups.
 - The minimap in the corner jumps the camera.
 - Hover over a building to see inside.
 - Space pauses; keys 1 to 6 set the speed. At 1x, one tick (10 game minutes) passes every 2.5 seconds, and people walk along the roads they actually take.
-- Toggle roofs (R), traces (T) and names (N).
+- Toggle roofs (R), traces (T), names (N) and the chronicle overlay (C).
 
-**The inspector.** Click a villager to see:
-- their task, needs, mood and madness
-- what they felt and why ("felt grateful because Tor gave them food when they were hungry")
-- what they did recently
-- what they are plotting or investigating, and their closest relationships
+**The chronicle** floats over the left of the map with no background of its own. The 📖 button on the right (or B) opens the whole thing.
 
-**The sidebar tabs**
-- **Chronicle** tells the story.
-- **Intrigue** tracks every plot (theft, murder, raid) from planning to its outcome, alongside the major events.
-- **Council** lists every hearing. Each one opens a transcript of the accusation and the testimony. Statements the speaker knew to be false are marked as lies, and the judges' votes and the truth are shown at the end.
+**Side buttons** (right): People, Intrigue and Council share the lower right, and People gets most of the space.
+- **People** lists everyone (🩹 marks the hurt) and shows the person you clicked: a pixel face that shows scars, bruises and lost eyes; a body diagram coloured by injury (minor to grave, festering, lasting, lost); a written description in the manner of Dwarf Fortress ("limps on a crutch", "face is a ruin of scar tissue"); every wound with how well it was tended; their needs, mood and pain; what they felt and why; what they did recently; what they are plotting or investigating; grudges against people the council let go; and their closest relationships.
+- **Intrigue** tracks every plot (theft, murder, raid, vengeance) from planning to its outcome, alongside the major events.
+- **Council** lists every hearing. Each one opens a transcript of the accusation and the testimony. Statements the speaker knew to be false are marked as lies, and the judges' votes and the truth are shown at the end. For first-degree murder the transcript also shows how sympathetic the council was and why the sentence was execution or imprisonment.
 
-**Alerts.** Fights, deaths, raids, kidnappings, wolf attacks, madness and council sessions pause the game and raise an alert, Dwarf Fortress style. "Watch" flies the camera to the scene and replays the blows; "Read transcript" opens a council session. ⚙ Alerts chooses which events pause the game.
+**Animals.** Click any animal (sheep, cow, chicken, horse, wolf) to see its health, hunger, what it needs and a short history of what it has been doing and what has been done to it. Click targets are generous, and wider for anything moving.
+
+**Alerts.** Fights, deaths, raids, kidnappings, wolf attacks, madness, vengeance, crippling injuries and council sessions pause the game and raise an alert, Dwarf Fortress style. A fight is one alert however many rounds it lasts; "Fight log" lists every blow, every choice to fight, run or give in, every decision to keep attacking, and every wound. "Watch" flies the camera to the scene and replays the blows; "Read transcript" opens a council session. ⚙ Alerts chooses which events pause the game.
 
 **Powers**
-- ⚡ **Smite** (S) strikes down a person or an animal. The villagers find a body with no mark on it, and it gets investigated like any suspicious death.
+- ⚡ **Smite** (X) strikes down a person or an animal. The villagers find a body with no mark on it, and it gets investigated like any suspicious death.
 - 🌀 **Madden** (M) drives a person mad. Depending on their temperament, they go on a rampage, kidnap a child, steal compulsively, or wander into the woods.
 
 Interventions are logged and replay exactly.
@@ -105,25 +103,28 @@ That runs the strict typecheck of the engine and the viewer, and every test. Eac
 | 14.13 weather effects | `test/weather.test.ts` |
 | 14.14 bonding integrity | `test/bonding.test.ts` (20 seeds x 90 days) |
 | 14.15 romance | `test/bonding.test.ts` |
+| injuries, rescue, retribution | `test/injuries.test.ts` |
+| first-degree sentencing, witnesses and body reads, no accusation by proximity | `test/firstdegree.test.ts` |
+| kidnapping: search, chase, rescue, accusation | `test/kidnap.test.ts` |
 
 The engine also checks, every tick, that no two people stand on the same tile. `test/purity.test.ts` checks that the engine never uses Node or DOM APIs, `Math.random` or `Date.now`, and that the NanoJev decision source is still a stub. The full suite takes about 15 minutes, almost all of it the 20-seed, 90-day bonding test; `npx vitest run --exclude test/bonding.test.ts` runs everything else in about 3.
 
 ## Sample run: seed 42, 90 days
 
 ```
-Village simulation, seed 42, 90 days (12960 ticks, 61509 ms)
-  population   34 (started 56, births 0, exiled 2)
-  deaths       20 (wounds 16, starvation 3, execution 1)
-  thefts       203 (+53 caught in the act)
-  attacks      64
-  accusations  87
-  verdicts     74 (9 guilty, 5 convicted the wrong person)
+Village simulation, seed 42, 90 days (12960 ticks, 18448 ms)
+  population   54 (started 56, births 0, exiled 0)
+  deaths       2 (exposure 1, starvation 1)
+  thefts       47 (+24 caught in the act)
+  attacks      3
+  accusations  17
+  verdicts     15 (2 guilty, 0 convicted the wrong person)
   pair bonds   0 formed, 0 break-ups
-  events       377645
-  hash         fdf415124218a5c1
+  events       335609
+  hash         b2749c9fe2953ba1
 ```
 
-A hard season. The poorest house, with no tools and little food, starts plotting thefts within days: 53 thieves are caught in the act and 6 are run down in 44 chases. One villager goes mad on a killing rampage (15 of the 64 attacks). Two feuding houses raid each other five times (16 attacks), and families avenge verdicts they think unjust (16 more). Of the 20 deaths, 16 are from wounds. The council sits 74 times, convicts 9, and gets 5 of those wrong. Other seeds are quieter: typically 3 to 12 deaths, with wolf attacks, a marriage or two, and fewer raids.
+A quiet autumn with plenty of stored food. The poorest house still starts plotting thefts: 24 thieves are caught in the act, and the council sits 15 times. Other seeds see more: wolf attacks, accidents that leave someone crippled and carried home, vengeance after acquittals, and the occasional rampage if the player drives someone mad. The first winter (days 60 to 150) now takes a few lives rather than most of the village; run `npm run simulate -- --seed 42 --days 270` to see it.
 
 ## Layout
 
@@ -131,9 +132,9 @@ A hard season. The poorest house, with no tools and little food, starts plotting
 src/
   engine/        tick loop, plans, RNG streams, invariants, player interventions
   world/         map and pathfinding, environment, items, traces, production, animals, horses and muskets
-  entities/      people, needs, death, obligations, bonding and births, tasks, madness
+  entities/      people, needs, death, obligations, bonding and births, tasks, madness, injuries and what they do to the body (body.ts, injuries.ts)
   actions/       action definitions: survival, work, chores, social, crime, fights, intrigue, investigation, justice, bonding, madness
-  plots/         plots (theft, murder, raid), chases, feuds
+  plots/         plots (theft, murder, raid, retribution), chases (thieves and kidnappers), feuds
   perception/    detection, perception step, belief store, testimony and lying
   investigation/ case files, case opening, deduction (beliefs only)
   justice/       norms, the council, accusations, hearings, verdicts, sentences

@@ -104,3 +104,23 @@ describe("reading a body", () => {
     expect(aware.every((c) => c === "person")).toBe(true);
   });
 });
+
+describe("accusations need evidence, not just proximity", () => {
+  it("someone merely seen near a violent scene scores as a suspect but not as directly implicated", async () => {
+    const { deduce } = await import("../src/investigation/deduce.ts");
+    const { knowledgeOf } = await import("../src/investigation/cases.ts");
+    const w = createSimulation({ seed: 42 }).world;
+    const [owner, bystander, culprit] = w.active();
+    const place = { x: 30, y: 30 };
+    const c = { id: 1, ownerId: owner!.id, kind: "violence" as const, victim: null, place, timeFrom: 100, timeTo: 110, openedTick: 110, originBeliefId: 1, beliefIds: [], traceIds: [], suspects: [], interviewed: [], examined: 0, status: "open" as const, accusedId: null, hearingId: null, dirty: true, key: "k" };
+    const near = { id: 1, subject: { kind: "person" as const, id: bystander!.id }, predicate: "was_at", object: "near_body", time: 105, confidence: 0.9, source: "saw" as const, sourceSeq: 0, place };
+    const k = knowledgeOf(w, owner!);
+    const onlyNear = deduce(c, [near], k).find((s) => s.personId === bystander!.id)!;
+    expect(onlyNear.score).toBeGreaterThan(1.2);
+    expect(onlyNear.direct).toBeUndefined();
+    const saw = { id: 2, subject: { kind: "person" as const, id: culprit!.id }, predicate: "killed", object: { kind: "person" as const, id: 99 }, time: 105, confidence: 0.9, source: "saw" as const, sourceSeq: 0, place };
+    const withEye = deduce(c, [near, saw], k);
+    expect(withEye[0]!.personId).toBe(culprit!.id);
+    expect(withEye[0]!.direct).toBe(true);
+  });
+});

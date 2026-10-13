@@ -141,6 +141,8 @@ export const accuse: ActionDef = {
       if (c.status !== "open") continue;
       const top = c.suspects[0];
       if (!top || top.score < cfg.accuseThreshold || top.personId === p.id) continue;
+      // Nobody is accused of violence only for having been nearby.
+      if (c.kind === "violence" && !top.direct) continue;
       const second = c.suspects[1];
       if (second && top.score - second.score < cfg.accuseMargin) continue;
       if (!w.isActive(top.personId)) continue;

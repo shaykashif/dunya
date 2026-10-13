@@ -148,6 +148,14 @@ export function runDeductions(w: World): void {
     for (const c of p.caseFiles) {
       if (!c.dirty || c.status === "closed") continue;
       c.dirty = false;
+      // Someone who knows who did it, and that they are dead, has nobody left to accuse.
+      const tpd = w.config.time.ticksPerDay;
+      const known = p.beliefs.find((b) => CRIME_PREDICATES.includes(b.predicate) && b.confidence >= 0.7 && personOf(b.subject) !== null && relevantToCase(b, c, tpd));
+      const culprit = known ? personOf(known.subject) : null;
+      if (culprit !== null && culprit !== p.id && w.census[culprit] && !w.census[culprit]!.alive) {
+        closeCase(w, p, c, "culprit dead");
+        continue;
+      }
       const prevTop = c.suspects[0]?.personId ?? null;
       c.suspects = deduce(c, p.beliefs, knowledgeOf(w, p));
       const top = c.suspects[0] ?? null;
