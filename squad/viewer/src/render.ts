@@ -305,6 +305,8 @@ export class Renderer {
     this.terrain = null;
     this.effects = [];
     this.houses.clear();
+    // Soldier ids restart with every battle, and the same id may be on the other side now.
+    this.spriteCache.clear();
   }
 
   addEffect(e: Effect): void {
@@ -328,7 +330,7 @@ export class Renderer {
   private sprite(s: Soldier, walking: boolean): HTMLCanvasElement {
     const dead = s.status === "dead";
     const posture = dead || s.status === "casualty" || s.carriedById !== null ? "prone" : s.posture;
-    const key = `${s.id}|${posture}|${walking ? 1 : 0}|${s.dir}|${s.status}`;
+    const key = `${s.id}|${s.side}|${s.role === "medic" ? 1 : 0}|${posture}|${walking ? 1 : 0}|${s.dir}|${s.status}`;
     let spr = this.spriteCache.get(key);
     if (!spr) {
       spr = soldierSprite({ side: s.side, posture, walking, medic: s.role === "medic", surrendered: s.status === "surrendered" || s.status === "captured", flip: s.dir < 0, dead, id: s.id });

@@ -131,9 +131,10 @@ function effectsFor(e: SimEvent): void {
   }
 }
 
-function toast(kind: string, title: string, text: string, people: number[] = []): void {
+function toast(kind: string, title: string, text: string, people: number[] = [], accent: string | null = null): void {
   const el = document.createElement("div");
   el.className = `toast ${kind}`;
+  if (accent) el.style.borderLeft = `6px solid ${accent}`;
   el.innerHTML = `<b>${esc(title)}</b>${linkNames(esc(text), people)}`;
   const box = $("toasts");
   box.prepend(el);
@@ -141,10 +142,43 @@ function toast(kind: string, title: string, text: string, people: number[] = [])
   setTimeout(() => el.remove(), 9000);
 }
 
+/** What each change of squad state reads as in an alert: a title, and what the squad "is" doing. */
+const SQUAD_ALERTS: Record<string, [string, string]> = {
+  react: ["Contact", "has made contact and is returning fire"],
+  fix: ["Pinning", "is pinning the enemy down with fire"],
+  flank: ["Flanking", "is working round the flank"],
+  assault: ["Assault", "is assaulting the position"],
+  consolidate: ["Objective", "is digging in on the objective"],
+  fall_back: ["Falling back", "is falling back"],
+  withdraw: ["Retreating", "is retreating"],
+  broken: ["Broken", "has broken and is drifting back"],
+  displace: ["Under mortar fire", "is displacing out of the barrage"],
+  hold: ["New line", "is holding a new line"],
+  advance: ["Advancing", "is pushing on"],
+};
+const lastSquadAlert = new Map<number, { state: string; tick: number }>();
+
+function squadAlert(e: SimEvent): void {
+  const d = e.data;
+  const sq = world.squads[d.squad as number];
+  const to = d.to as string, from = d.from as string;
+  const words = SQUAD_ALERTS[to];
+  if (!sq || !words) return;
+  // Not the opening orders, nor a squad that is only picking up its advance again.
+  if (from === "deploy" || (to === "hold" && from !== "fall_back") || (to === "advance" && from !== "assault")) return;
+  const last = lastSquadAlert.get(sq.id);
+  if (last && last.state === to && e.tick - last.tick < 30) return;
+  lastSquadAlert.set(sq.id, { state: to, tick: e.tick });
+  toast("squad", `${words[0]} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} ${words[1]}.`, [], sq.color);
+}
+
 function toastFor(e: SimEvent): void {
   const d = e.data;
   const s = (k: string) => world.maybe(d[k] as number);
   switch (e.type) {
+    case "squad_state":
+      squadAlert(e);
+      break;
     case "death": {
       const p = s("person");
       if (p && (p.role === "squad_leader" || p.role === "platoon_leader" || p.role === "medic" || p.role === "machine_gunner" || p.role === "auto_rifleman")) toast("death", "Killed", `${label(p)}, ${roleName(p)}, is dead.`, [p.id]);
@@ -192,6 +226,7 @@ function newBattle(seed: number): void {
   feed = [];
   reportShown = false;
   renderer.reset();
+  lastSquadAlert.clear();
   miniBase.img = null;
   $("toasts").innerHTML = "";
   log.addSink((e) => onEvent(e));
