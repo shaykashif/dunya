@@ -12,6 +12,8 @@ export interface Chase {
   victim: HolderRef;
   crimeId: number | null;
   startTick: number;
+  /** A kidnapper being chased: the child they carry off. */
+  kidnappedId?: number;
 }
 
 export function activePlots(w: World, p: Person, kind?: PlotKind): Plot[] {
@@ -163,7 +165,7 @@ export function plotStep(w: World): void {
 
   for (const chase of w.chases.slice()) {
     const chaser = w.maybePerson(chase.chaserId);
-    const done = !chaser || !w.isActive(chaser.id) || !w.isActive(chase.thiefId) || w.tick - chase.startTick > w.config.chase.maxTicks;
+    const done = !chaser || !w.isActive(chaser.id) || !w.isActive(chase.thiefId) || w.tick - chase.startTick > w.config.chase.maxTicks * (chase.kidnappedId !== undefined ? 4 : 1);
     if (!done) continue;
     w.chases.splice(w.chases.indexOf(chase), 1);
     if (chaser && w.isActive(chaser.id) && w.isActive(chase.thiefId)) {

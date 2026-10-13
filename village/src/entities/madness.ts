@@ -33,6 +33,34 @@ export function recover(w: World, p: Person): void {
   releaseCaptives(w, p.id, "the kidnapper came to their senses");
 }
 
+/**
+ * The village notices a missing child: the family, the elder and the child's friends take up the search, and the head reports it.
+ * Called at once when someone saw the snatch, and otherwise when the child has been gone long enough to be missed.
+ */
+export function raiseMissingAlarm(w: World, child: Person, witnesses: readonly number[] = []): void {
+  if (child.cooldowns["alarm"] !== undefined && w.tick < child.cooldowns["alarm"]) return;
+  child.cooldowns["alarm"] = w.tick + w.days(3);
+  const searchers = new Map<number, Person>();
+  for (const m of householdMembers(w, child.householdId)) searchers.set(m.id, m);
+  for (const id of witnesses) {
+    const o = w.maybePerson(id);
+    if (o) searchers.set(o.id, o);
+  }
+  const elder = w.maybePerson(w.elderId);
+  if (elder && w.isActive(elder.id)) searchers.set(elder.id, elder);
+  for (const o of w.active()) if ((o.relationships[child.id]?.bond ?? 0) >= 0.4) searchers.set(o.id, o);
+  let reported = false;
+  for (const m of searchers.values()) {
+    if (m.id === child.id || !w.isActive(m.id) || w.ageYears(m) < 14 || m.captorId !== null) continue;
+    if (!m.cooldowns[`search:${child.id}`]) feel(w, m, "afraid", `${firstName(child)} has gone missing`, 0.8);
+    m.cooldowns[`search:${child.id}`] = w.tick + w.days(3);
+    if (!reported && m.householdId === child.householdId && m.isHead) {
+      w.emit("missing_person", [m.id], { person: child.id, reportedBy: m.id });
+      reported = true;
+    }
+  }
+}
+
 export function releaseCaptives(w: World, captorId: number, reason: string): void {
   for (const c of w.people) {
     if (c.captorId !== captorId) continue;
@@ -58,24 +86,19 @@ export function madnessStep(w: World): void {
       continue;
     }
     c.plan = null;
+    // A child gone for a few hours is missed, whether or not anyone saw them taken.
+    if (c.cooldowns["captured"] !== undefined && w.tick - c.cooldowns["captured"]! >= 18) raiseMissingAlarm(w, c);
     if (cheb(c, captor) > 1) {
       const spot = w.freeTileNear(captor, 2, c.id);
       if (spot) w.place(c, spot.x, spot.y);
     }
   }
 
-  // At nightfall, a family notices a child who has not come home.
+  // At nightfall, everyone notices a child who has not come home.
   if (w.env.minuteOfDay === 20 * 60) {
     for (const c of w.people) {
       if (c.captorId === null || !c.alive || c.exiled) continue;
-      for (const m of householdMembers(w, c.householdId)) {
-        if (m.id === c.id || w.ageYears(m) < 14) continue;
-        if (!m.cooldowns[`search:${c.id}`]) {
-          feel(w, m, "afraid", `${firstName(c)} has gone missing`, 0.8);
-          if (m.isHead) w.emit("missing_person", [m.id], { person: c.id, reportedBy: m.id });
-        }
-        m.cooldowns[`search:${c.id}`] = w.tick + w.days(3);
-      }
+      raiseMissingAlarm(w, c);
     }
   }
 

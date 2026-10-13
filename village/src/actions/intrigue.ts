@@ -483,7 +483,8 @@ export const chase: ActionDef = {
           follow: true,
           duration: 1,
           risk: clamp01(0.5 - odds * 0.4),
-          effects: { justice: 0.8, security: 0.4, status: 0.1 },
+          // Chasing someone who has snatched a child comes before everything else.
+          effects: ch.kidnappedId !== undefined ? { justice: 1.6, duty: 2, security: 1, status: 0.2 } : { justice: 0.8, security: 0.4, status: 0.1 },
         }),
       );
     }
@@ -516,6 +517,25 @@ export const chase: ActionDef = {
       }
       if (r.defenderDied) return ctx.events;
     }
+    if (ch.kidnappedId !== undefined) {
+      // Caught a kidnapper: the child is freed, and the council hears of it.
+      const child = w.maybePerson(ch.kidnappedId);
+      if (child && child.captorId === t.id) {
+        child.captorId = null;
+        const rev = ctx.emit("rescued", [p.id, child.id], { rescuer: p.id, child: child.id, captor: t.id, chased: true });
+        feel(w, p, "proud", `caught ${firstName(t)} and freed ${firstName(child)}`, 0.7);
+        feel(w, child, "relieved", `${firstName(p)} caught the one who took them`, 0.9);
+        for (const o of w.people) delete o.cooldowns[`search:${child.id}`];
+        const belief = addBelief(w, p, { subject: { kind: "person", id: t.id }, predicate: "attacked", object: { kind: "person", id: child.id }, time: w.tick, confidence: 1, source: "saw", place: { x: t.x, y: t.y } }, rev.seq, ch.crimeId);
+        const info = { kind: "violence" as const, victim: { kind: "person" as const, id: child.id }, place: { x: t.x, y: t.y }, timeFrom: ch.startTick - 6, timeTo: w.tick };
+        const c3 = findMatchingCase(w, p, info) ?? openCase(w, p, info, belief);
+        if (!c3.beliefIds.includes(belief.id)) c3.beliefIds.push(belief.id);
+        c3.suspects = [{ personId: t.id, means: 1, motive: 0.5, opportunity: 1, score: 2.5 }];
+        if (c3.status === "open") fileAccusation(w, p, t.id, c3);
+        ctx.emit("apprehended", [p.id, t.id], { chaser: p.id, thief: t.id, returned: 0, resisted: answer === "fight", kidnapping: true });
+        return ctx.events;
+      }
+    }
     // Caught: goods go back and the chaser takes them to the council.
     let returned = 0;
     for (let i = 0; i < 4; i++) {
@@ -546,12 +566,13 @@ export const chase: ActionDef = {
 };
 
 /** Called when a thief is caught in the act: the person who noticed may give chase, and the thief runs. */
-export function startChase(w: World, chaser: Person, thief: Person, victim: HolderRef, crimeId: number | null): void {
+export function startChase(w: World, chaser: Person, thief: Person, victim: HolderRef, crimeId: number | null, kidnappedId?: number): void {
   if (w.chases.some((c) => c.thiefId === thief.id)) return;
   if (w.ageYears(chaser) < 12 || !w.isActive(chaser.id)) return;
-  w.chases.push({ chaserId: chaser.id, thiefId: thief.id, victim, crimeId, startTick: w.tick });
-  chaser.cooldowns[`chase:${thief.id}`] = w.tick + w.config.chase.maxTicks;
-  thief.cooldowns["fleeing"] = w.tick + w.config.chase.maxTicks;
+  w.chases.push({ chaserId: chaser.id, thiefId: thief.id, victim, crimeId, startTick: w.tick, ...(kidnappedId !== undefined ? { kidnappedId } : {}) });
+  const span = w.config.chase.maxTicks * (kidnappedId !== undefined ? 4 : 1);
+  chaser.cooldowns[`chase:${thief.id}`] = w.tick + span;
+  thief.cooldowns["fleeing"] = w.tick + span;
   if (chaser.plan) {
     chaser.plan = null;
     chaser.asleep = false;

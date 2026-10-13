@@ -60,6 +60,8 @@ export function speedOf(w: World, p: Person): number {
   // Bad legs slow a person on foot; someone who cannot walk barely moves at all.
   if (p.ridingHorseId === null) s *= cannotWalk(p) ? 0.05 : mobility(p);
   if (p.carryingId !== null) s *= w.config.injuries.carrySpeed;
+  // A kidnapper dragging a child along is slowed the same way.
+  else if (p.mad === "kidnapper" && w.people.some((c) => c.captorId === p.id)) s *= w.config.injuries.carrySpeed;
   if (p.ridingHorseId !== null && !w.map.roofed(p.x, p.y)) s *= w.config.animals.horseSpeedFactor;
   const kind = p.plan?.cand.kind;
   if (kind === "chase" || kind === "flee") s *= (0.9 + w.config.chase.sprintBold * p.personality.boldness) * (0.6 + 0.4 * p.survival.health) * (kind === "chase" ? 1.15 : 1);
