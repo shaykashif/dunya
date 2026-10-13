@@ -4,7 +4,7 @@ import { cannotWalk } from "../../src/entities/body.ts";
 import type { Building } from "../../src/world/layout.ts";
 import type { Soldier, Terrain } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
-import { blastShake, drawBlast, drawSmokeCloud, dustSpurt, muzzleFlash, shellShadow, smokePop } from "./fx.ts";
+import { blastShake, drawBlast, shotShake, drawSmokeCloud, dustSpurt, muzzleFlash, shellShadow, smokePop } from "./fx.ts";
 import { Flora, buildingBounds, buildingShadow, buildingSprite, groundShadow, pick, type Prop } from "./scenery.ts";
 import { SIDE_COLORS, TILE, hash2, soldierSprite } from "./sprites.ts";
 
@@ -327,9 +327,10 @@ export class Renderer {
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.fillStyle = "#1a1c14";
     g.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    const shake = this.shake(time);
-    const sx = cam.x + Math.round(Math.sin(time * 97) * shake), sy = cam.y + Math.round(Math.cos(time * 83) * shake);
-    g.setTransform(dpr * cam.zoom, 0, 0, dpr * cam.zoom, -sx * dpr * cam.zoom, -sy * dpr * cam.zoom);
+    // Gunfire and blasts jolt the view, in whole screen pixels.
+    const shake = this.shake(time, cam, vw, vh);
+    const kx = Math.round(Math.sin(time * 97) * shake), ky = Math.round(Math.cos(time * 83) * shake);
+    g.setTransform(dpr * cam.zoom, 0, 0, dpr * cam.zoom, (kx - cam.x * cam.zoom) * dpr, (ky - cam.y * cam.zoom) * dpr);
     g.imageSmoothingEnabled = false;
     g.drawImage(this.terrain.canvas, 0, 0);
     const x0 = cam.x - 32, y0 = cam.y - 32, x1 = cam.x + vw / cam.zoom + 32, y1 = cam.y + vh / cam.zoom + 32;
@@ -466,12 +467,26 @@ export class Renderer {
     this.g.drawImage(c.img, B.x, B.y);
   }
 
-  /** Strongest shake from blasts still going off, in world pixels. */
-  private shake(time: number): number {
-    let s = 0;
-    for (const e of this.effects) if (e.kind === "boom") s = Math.max(s, blastShake(e.size, time - e.born - e.delay));
-    return s;
+  /**
+   * How far gunfire and blasts shake the view, in screen pixels: hardest for
+   * what is near the middle of the view, and only felt when zoomed in close.
+   */
+  private shake(time: number, cam: Camera, vw: number, vh: number): number {
+    const close = Math.max(0, Math.min(1, (cam.zoom - 1.2) / 2.8));
+    if (close === 0) return 0;
+    const cx = cam.x + vw / cam.zoom / 2, cy = cam.y + vh / cam.zoom / 2;
+    const reach = Math.hypot(vw, vh) / cam.zoom / 2;
+    let blast = 0, shots = 0;
+    for (const e of this.effects) {
+      if (e.kind !== "boom" && e.kind !== "flash") continue;
+      const T = time - e.born - e.delay;
+      const d = Math.hypot(e.x - cx, e.y - cy);
+      if (e.kind === "boom") blast = Math.max(blast, blastShake(e.size, T) * Math.max(0, 1 - d / (reach * 2.5)));
+      else shots += shotShake(e.r > 2.75, T) * Math.max(0, 1 - d / (reach * 1.3));
+    }
+    return (blast + Math.min(3, shots)) * close;
   }
+
 
   private drawSmoke(w: World, time: number): void {
     for (const c of w.clouds) drawSmokeCloud(this.g, c, w.tick, time);

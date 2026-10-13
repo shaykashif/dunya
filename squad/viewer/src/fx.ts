@@ -206,10 +206,18 @@ export function drawBlast(g: CanvasRenderingContext2D, b: Blast, T: number): voi
   blocks.flush(g);
 }
 
-/** How hard a blast shakes the view at `T` seconds, in world pixels. */
+/** How hard a blast shakes the view `T` seconds after it, in screen pixels at full zoom. */
 export function blastShake(size: number, T: number): number {
-  if (size === 0 || T > 0.45) return 0;
-  return size * 1.6 * (1 - T / 0.45) ** 2;
+  const span = 0.35 + size * 0.15;
+  if (T < 0 || T > span) return 0;
+  return [3, 6, 9][size]! * (1 - T / span) ** 2;
+}
+
+/** The small jolt of a shot going off, in screen pixels at full zoom. */
+export function shotShake(automatic: boolean, T: number): number {
+  const span = 0.09;
+  if (T < 0 || T > span) return 0;
+  return (automatic ? 1.8 : 1.4) * (1 - T / span);
 }
 
 // ---------- Small stuff ----------
