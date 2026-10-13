@@ -36,12 +36,14 @@ export function detectionProbability(w: World, observer: Person, actor: Person, 
 }
 
 /** What the observer actually saw of the actor: a name, a wrong name, or a figure. */
-export function perceiveIdentity(w: World, observer: Person, actor: Person, rng: Rng): { subject: EntityRef; confidence: number } {
+export function perceiveIdentity(w: World, observer: Person, actor: Person, rng: Rng, identBonus = 0): { subject: EntityRef; confidence: number } {
   const pc = w.config.perception;
   const range = Math.max(1, sightRange(w, observer));
   const d = cheb(observer, actor);
   let pIdent = w.config.detection.identifyBase + (1 - w.config.detection.identifyBase) * w.env.light * Math.max(0, 1 - d / (range + 1));
   if (d <= 1) pIdent = Math.max(pIdent, 0.75);
+  // A violent act holds the eye: people look at the face of whoever is doing it, in a village where everyone knows everyone.
+  if (identBonus > 0 && d <= range) pIdent = Math.min(1, pIdent + identBonus);
   if (w.ageYears(observer) < pc.childAge) pIdent *= pc.childIdentFactor;
   const size = sizeClassOfAge(w.ageYears(actor));
   if (rng.chance(pIdent)) return { subject: { kind: "person", id: actor.id }, confidence: 0.6 + 0.4 * pIdent };
@@ -69,6 +71,8 @@ export function witnessAction(
     object?: EntityRef | string;
     crimeId: number | null;
     boost?: number;
+    /** Extra chance witnesses recognize the actor (violence is conspicuous). */
+    identBonus?: number;
     exclude?: readonly number[];
     detail?: Record<string, string | number>;
   },
@@ -78,7 +82,7 @@ export function witnessAction(
     if (o.id === actor.id || opts.exclude?.includes(o.id)) continue;
     const p = detectionProbability(w, o, actor, opts.boost ?? 1);
     if (p <= 0 || !rng.chance(p)) continue;
-    const ident = perceiveIdentity(w, o, actor, rng);
+    const ident = perceiveIdentity(w, o, actor, rng, opts.identBonus ?? 0);
     const ev = w.emit("action_witnessed", [o.id], {
       observer: o.id,
       perceived: ident.subject,

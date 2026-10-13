@@ -367,6 +367,8 @@ export interface Crime {
   actionSeq: number;
   traceIds: number[];
   qty: number;
+  /** A killing planned beforehand (a murder plot, or vengeance meant to kill): first-degree murder. */
+  premeditated?: boolean;
 }
 
 export type ObligationKind = "food_share" | "protection" | "debt" | "kin_duty" | "pair_duty" | "childcare";
@@ -413,6 +415,8 @@ export interface Sentence {
   executorId: number;
   victim: EntityRef | null;
   qty: number;
+  /** Imprisonment: how many days it lasts (the council's default if absent). */
+  days?: number;
   status: "pending" | "enforced" | "failed" | "void";
   attempts: number;
   createdTick: number;

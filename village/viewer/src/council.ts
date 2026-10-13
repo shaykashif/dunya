@@ -114,7 +114,11 @@ export class CouncilBook {
         }
         s.verdict = String(d.verdict);
         s.sentence = (d.sentence as string | null) ?? null;
-        s.lines.push({ kind: "verdict", text: `Verdict: ${first(w, s.accused)} is ${d.verdict === "guilty" ? `guilty, sentenced to ${d.sentence}` : "not guilty"}.` });
+        if (d.degree === "first") {
+          const sym = Number(d.sympathy);
+          s.lines.push({ kind: "note", text: `Premeditated killing: first-degree murder. The council's sympathy for ${first(w, s.accused)} is ${sym.toFixed(2)}, so ${d.sentence === "imprisonment" ? "they cannot bring themselves to hang the killer: a long imprisonment instead" : "there is no mercy: execution"}.` });
+        }
+        s.lines.push({ kind: "verdict", text: `Verdict: ${first(w, s.accused)} is ${d.verdict === "guilty" ? `guilty${d.degree === "first" ? " of first-degree murder" : ""}, sentenced to ${d.sentence}` : "not guilty"}.` });
         const truth = d.truth as { correct: boolean | null; culprit: number | null };
         s.correct = truth.correct;
         s.lines.push({ kind: "truth", text: truth.culprit === null ? "The truth: nobody can say what really happened." : `The truth: ${first(w, truth.culprit)} did it. The council was ${truth.correct ? "right" : "WRONG"}.` });

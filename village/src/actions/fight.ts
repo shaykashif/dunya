@@ -123,7 +123,7 @@ export function fight(
   attacker: Person,
   defender: Person,
   choice: DefenseChoice,
-  opts: { lethal: boolean; motive: string; robbery?: boolean; raidPlotId?: number; lawful?: boolean; maim?: boolean },
+  opts: { lethal: boolean; motive: string; robbery?: boolean; raidPlotId?: number; lawful?: boolean; maim?: boolean; premeditated?: boolean },
   ctx: ResolveCtx,
 ): FightOutcome {
   const cfg = w.config.fight;
@@ -197,6 +197,7 @@ export function fight(
     weapon: shot ? "musket" : attacker.inventory.tool > 0 ? "tool" : "hands",
   });
   const crime = recordCrime(w, defenderDied ? "murder" : "assault", attacker.id, { t: "person", id: defender.id }, place, ev.seq, 0);
+  if (defenderDied && opts.premeditated) crime.premeditated = true;
   const victimRef: EntityRef = { kind: "person", id: defender.id };
   const traces = [
     createTrace(w, "sound", place, [{ kind: "person", id: attacker.id }, victimRef], { what: shot ? "gunshot" : "struggle" }, crime.id),
@@ -205,7 +206,7 @@ export function fight(
   if (total >= 0.1 || attackerDied) traces.push(createTrace(w, "blood", place, [victimRef], {}, crime.id));
   for (const tr of traces) crime.traceIds.push(tr.id);
 
-  witnessAction(w, attacker, rng, { predicate: defenderDied ? "killed" : "attacked", object: victimRef, crimeId: crime.id, boost: w.config.detection.attackBoost, exclude: [defender.id] });
+  witnessAction(w, attacker, rng, { predicate: defenderDied ? "killed" : "attacked", object: victimRef, crimeId: crime.id, boost: w.config.detection.attackBoost, identBonus: w.config.detection.violenceIdentBonus, exclude: [defender.id] });
   selfKnowledge(w, attacker, defenderDied ? "killed" : "attacked", victimRef, place, ev.seq, crime.id);
   attacker.emotions.guilt = clamp01(attacker.emotions.guilt + 0.3 * attacker.personality.empathy);
   rel(defender, attacker.id, w.tick).negative += 0.5;

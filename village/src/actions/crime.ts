@@ -293,8 +293,10 @@ export const attack: ActionDef = {
     }
     const choice = (ctx.responses[0]?.option.option ?? "fight") as DefenseChoice;
     const maim = c.option === "maim";
-    const r = fight(w, p, t, choice, { lethal: c.option === "lethal", maim, motive: c.motive ?? "unknown", robbery: c.motive === "robbery" }, ctx);
     const pl = c.plotId !== undefined ? w.plots.find((x) => x.id === c.plotId) ?? null : null;
+    // Killing someone you planned to kill, in cold blood, is first-degree murder.
+    const premeditated = !!pl && (pl.kind === "murder" || (pl.kind === "retribution" && pl.severity === "kill"));
+    const r = fight(w, p, t, choice, { lethal: c.option === "lethal", maim, motive: c.motive ?? "unknown", robbery: c.motive === "robbery", premeditated }, ctx);
     if (pl) {
       const crippled = maim && !r.defenderFled && !r.attackerDied && t.injuries.some((i) => i.byId === p.id && i.tick === w.tick && i.severity >= 0.45);
       const outcome = r.defenderDied

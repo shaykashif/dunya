@@ -21,8 +21,12 @@ const CONFUSED: Record<string, string[]> = {
 };
 
 /** What an observer makes of a body: usually right, sometimes misled, better when examined carefully. */
-export function readBody(w: World, observer: Person, trueCause: string, rng: Rng, careful: boolean): { cause: string; confidence: number } {
-  const p = 0.55 + 0.3 * observer.personality.vigilance + (careful ? 0.2 : 0) + (observer.role === "elder" ? 0.05 : 0);
+export function readBody(w: World, observer: Person, trueCause: string, rng: Rng, careful: boolean, victimId: number | null = null): { cause: string; confidence: number } {
+  // Whoever saw the killing (or was told of it, or did it) is not fooled by the marks on the body.
+  if (trueCause === "person" && victimId !== null && observer.beliefs.some((b) => b.predicate === "killed" && typeof b.object === "object" && b.object.kind === "person" && b.object.id === victimId && b.confidence >= 0.4)) {
+    return { cause: "person", confidence: 0.95 };
+  }
+  const p = 0.7 + 0.25 * observer.personality.vigilance + (careful ? 0.2 : 0) + (observer.role === "elder" ? 0.05 : 0);
   if (rng.chance(p)) return { cause: trueCause, confidence: 0.6 + 0.3 * p };
   const alts = CONFUSED[trueCause] ?? [trueCause];
   return { cause: rng.pick(alts), confidence: 0.4 + 0.2 * rng.next() };
@@ -40,7 +44,7 @@ export function traceBelief(w: World, trace: Trace, rng: Rng, observer?: Person,
         detail: { traceId: trace.id, item: String(trace.details.item), qty: Number(trace.details.qty) },
       };
     case "body": {
-      const read = observer ? readBody(w, observer, String(trace.details.cause), rng, careful) : { cause: String(trace.details.cause), confidence: 0.6 };
+      const read = observer ? readBody(w, observer, String(trace.details.cause), rng, careful, firstPerson?.kind === "person" ? firstPerson.id : null) : { cause: String(trace.details.cause), confidence: 0.6 };
       return { ...base, subject: firstPerson ?? { kind: "place", ...trace.location }, confidence: read.confidence, detail: { traceId: trace.id, cause: read.cause } };
     }
     case "wound":

@@ -17,6 +17,9 @@ export interface AgentKnowledge {
   meansRadius: number;
 }
 
+/** How much more a direct sighting of the act counts than circumstance (who was nearby, who is disliked). */
+const EYEWITNESS_WEIGHT = 0.9;
+
 function round(x: number): number {
   return Math.round(x * 1000) / 1000;
 }
@@ -29,8 +32,8 @@ function round(x: number): number {
  * Each criterion is the strongest supporting belief's confidence; the score is their sum.
  */
 export function deduce(caseFile: Readonly<CaseFile>, beliefs: readonly Readonly<Belief>[], k: AgentKnowledge): SuspectScore[] {
-  const scores: Record<number, { means: number; motive: number; opportunity: number }> = {};
-  const get = (id: number) => (scores[id] ??= { means: 0, motive: 0, opportunity: 0 });
+  const scores: Record<number, { means: number; motive: number; opportunity: number; eyewitness: number; accounts: Set<string> }> = {};
+  const get = (id: number) => (scores[id] ??= { means: 0, motive: 0, opportunity: 0, eyewitness: 0, accounts: new Set() });
   const from = caseFile.timeFrom;
   const to = caseFile.timeTo;
   const near = 12;
@@ -50,6 +53,11 @@ export function deduce(caseFile: Readonly<CaseFile>, beliefs: readonly Readonly<
         s.means = Math.max(s.means, conf);
         s.opportunity = Math.max(s.opportunity, conf);
         if (b.fromId === sid) s.motive = Math.max(s.motive, 0.5);
+        else {
+          // Someone saw them do it. What the investigator saw themself counts fully; what others claim they saw counts for half.
+          s.eyewitness = Math.max(s.eyewitness, conf * (b.source === "saw" ? EYEWITNESS_WEIGHT : EYEWITNESS_WEIGHT / 2));
+          s.accounts.add(b.source === "saw" ? "self" : `from:${b.fromId ?? "?"}`);
+        }
       } else if (b.subject.kind === "unknown" && b.subject.sizeClass) {
         sizes.push({ size: b.subject.sizeClass, conf: b.confidence });
       }
@@ -112,7 +120,9 @@ export function deduce(caseFile: Readonly<CaseFile>, beliefs: readonly Readonly<
     if (!c || !c.alive) continue;
     if (victimHousehold !== null && c.householdId === victimHousehold) continue;
     const s = scores[id]!;
-    const score = s.means + s.motive + s.opportunity;
+    // Several independent accounts of the same act back each other up.
+    const corroboration = Math.min(0.45, 0.2 * Math.max(0, s.accounts.size - 1));
+    const score = s.means + s.motive + s.opportunity + s.eyewitness + corroboration;
     if (score <= 0) continue;
     out.push({ personId: id, means: round(s.means), motive: round(s.motive), opportunity: round(s.opportunity), score: round(score) });
   }

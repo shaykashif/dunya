@@ -9,6 +9,7 @@ import type { World } from "../../src/world/world.ts";
 import { ALERT_LABELS, toAlert, type Alert, type AlertKind } from "./alerts.ts";
 import { CouncilBook, type Session } from "./council.ts";
 import { clock, describe, resetFeed, type FeedLine } from "./feed.ts";
+import { FightBook, fightLines, fightSummary, type Fight } from "./fights.ts";
 import { Renderer, drawMinimap, type Camera, type ViewOptions } from "./render.ts";
 import { BODY_RECTS, HOUSEHOLD_COLORS, TILE, animalSprite, appearance, faceCanvas, hash2, lookFor } from "./sprites.ts";
 
@@ -35,6 +36,9 @@ let world: World;
 let feed: FeedLine[] = [];
 let major: FeedLine[] = [];
 let council = new CouncilBook();
+const fights = new FightBook();
+const fightToasts = new Map<number, HTMLElement>();
+let openFightId: number | null = null;
 let dirty = { feed: true, intrigue: true, council: true };
 let speed = 1;
 let paused = false;
@@ -63,6 +67,7 @@ try {
 // ---------- Events from the engine ----------
 
 function onEvent(e: SimEvent): void {
+  const fr = fights.onEvent(e);
   switch (e.type) {
     case "theft": stats.thefts++; break;
     case "attack": stats.attacks++; break;
@@ -103,7 +108,11 @@ function onEvent(e: SimEvent): void {
   }
   if (council.onEvent(e, world)) dirty.council = true;
   const alert = toAlert(e, world);
-  if (alert) raiseAlert(alert);
+  if (fr && fr.continued) updateFightToast(fr.fight);
+  else if (alert) {
+    if (fr) alert.fightId = fr.fight.id;
+    raiseAlert(alert);
+  }
   if (e.type === "attack") {
     // Show the blows as they land.
     const vic = world.maybePerson(e.data.victim as number);
@@ -132,7 +141,11 @@ function raiseAlert(a: Alert): void {
   const box = $("toasts");
   const el = document.createElement("div");
   el.className = `toast ${a.kind}`;
-  el.innerHTML = `<b>${a.icon} ${a.title} <small style="color:var(--dim)">${clock(world, a.tick)}</small></b>${esc(a.text)}<div class="row">${a.at || a.hearingId ? `<button data-watch="1">${a.hearingId ? "Read transcript" : "Watch"}</button>` : ""}<button data-close="1">Dismiss</button>${paused ? `<button data-resume="1">Resume ▶</button>` : ""}</div>`;
+  el.innerHTML = `<b>${a.icon} ${a.title} <small style="color:var(--dim)">${clock(world, a.tick)}</small></b><span class="t">${esc(a.text)}</span><div class="row">${a.at || a.hearingId ? `<button data-watch="1">${a.hearingId ? "Read transcript" : "Watch"}</button>` : ""}${a.fightId !== undefined ? `<button data-fightlog="${a.fightId}">Fight log</button>` : ""}<button data-close="1">Dismiss</button>${paused ? `<button data-resume="1">Resume ▶</button>` : ""}</div>`;
+  if (a.fightId !== undefined) {
+    fightToasts.set(a.fightId, el);
+    el.querySelector("[data-fightlog]")!.addEventListener("click", () => openFight(a.fightId!));
+  }
   el.querySelector("[data-close]")!.addEventListener("click", () => el.remove());
   el.querySelector("[data-resume]")?.addEventListener("click", () => {
     el.remove();
@@ -142,6 +155,32 @@ function raiseAlert(a: Alert): void {
   el.querySelector("[data-watch]")?.addEventListener("click", () => watch(a));
   box.prepend(el);
   while (box.children.length > 5) box.lastElementChild!.remove();
+}
+
+/** A fight that carries on updates its one alert instead of raising another. */
+function updateFightToast(f: Fight): void {
+  const el = fightToasts.get(f.id);
+  if (el && el.isConnected) {
+    el.querySelector(".t")!.textContent = fightSummary(f, world);
+    el.classList.remove("pop");
+    void el.offsetWidth;
+    el.classList.add("pop");
+  }
+  if (openFightId === f.id && $("modal").classList.contains("open")) openFight(f.id);
+}
+
+function openFight(id: number): void {
+  const f = fights.fights.get(id);
+  if (!f) return;
+  bookOpen = false;
+  openFightId = id;
+  $("mtitle").textContent = `⚔ Fight: ${world.person(f.a).name} and ${world.person(f.b).name}`;
+  $("mbody").innerHTML =
+    `<div class="tline note">${esc(fightSummary(f, world))}</div>` +
+    fightLines(f, world)
+      .map((l) => `<div class="tline ${l.kind}">${linkNames(l.text, l.speaker !== undefined ? [l.speaker, f.a, f.b] : [f.a, f.b])}</div>`)
+      .join("");
+  $("modal").classList.add("open");
 }
 
 function watch(a: Alert): void {
@@ -171,6 +210,9 @@ function newVillage(seed: number): void {
   feed = [];
   major = [];
   council = new CouncilBook();
+  fights.reset();
+  fightToasts.clear();
+  openFightId = null;
   resetFeed();
   stats = { thefts: 0, attacks: 0, accusations: 0, verdicts: 0, wrongful: 0, deaths: 0, births: 0, bonds: 0, plots: 0 };
   renderer.reset();
@@ -593,6 +635,7 @@ function renderFeed(): void {
 let bookOpen = false;
 function openBook(): void {
   bookOpen = true;
+  openFightId = null;
   $("mtitle").textContent = "📖 Chronicle";
   $("mbody").innerHTML = `<ul id="fullfeed">${feedHtml(400, false)}</ul>`;
   $("modal").classList.add("open");
@@ -634,6 +677,7 @@ function renderCouncil(): void {
 
 function openSession(s: Session): void {
   bookOpen = false;
+  openFightId = null;
   $("mtitle").textContent = `⚖ Council: ${world.person(s.accused).name} accused of ${s.kind}`;
   $("mbody").innerHTML =
     s.lines.map((l) => `<div class="tline ${l.kind}">${linkNames(l.text, l.speaker !== undefined ? [l.speaker, s.accused] : [s.accused])}${l.lie ? `<span class="liebadge">[${esc(l.lie)}]</span>` : ""}</div>`).join("") +
@@ -687,11 +731,13 @@ document.addEventListener("click", (ev) => {
 });
 $("mclose").onclick = () => {
   bookOpen = false;
+  openFightId = null;
   $("modal").classList.remove("open");
 };
 $("modal").addEventListener("click", (ev) => {
   if (ev.target === $("modal")) {
     bookOpen = false;
+    openFightId = null;
     $("modal").classList.remove("open");
   }
 });
@@ -974,6 +1020,8 @@ window.addEventListener("keydown", (ev) => {
   sessions: () => [...council.sessions.keys()],
   tab: (name: string) => (document.querySelector(`[data-tab="${name}"]`) as HTMLButtonElement | null)?.click(),
   selectAnimal,
+  fights: () => [...fights.fights.values()],
+  openFight,
 };
 
 const initialSeed = Number(new URLSearchParams(location.search).get("seed") ?? 42);

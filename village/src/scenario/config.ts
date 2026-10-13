@@ -152,7 +152,7 @@ export const DEFAULT_CONFIG = {
   },
   shelter: { decayPerDay: 0.005, stormDamagePerTick: 0.0015, repairAmount: 0.25, repairWood: 2, repairBelow: 0.75, repairDuration: 6 },
   /** Each house has its own farm. Harvest goes to the house store, with a share to the communal store. */
-  fields: { growthPerDay: 2, harvestPerAction: 3, harvestTithe: 1, harvestDuration: 6, plantDuration: 6, initialCrop: 60, workNeeded: 8 },
+  fields: { growthPerDay: 2, harvestPerAction: 3, harvestTithe: 1, harvestDuration: 6, plantDuration: 6, initialCrop: 200, workNeeded: 8 },
   communal: {
     /** Grain per living person per day released from the communal store in winter. */
     winterRationPerPersonPerDay: 1.1,
@@ -167,9 +167,9 @@ export const DEFAULT_CONFIG = {
     householdSizeMin: 9,
     householdSizeMax: 13,
     /** Days of food per member at start, before uneven distribution. */
-    foodDaysStrained: 3,
-    foodDaysNormal: 20,
-    foodDaysCommunal: 8,
+    foodDaysStrained: 10,
+    foodDaysNormal: 70,
+    foodDaysCommunal: 30,
     unitsPerPersonDay: 2,
     woodPerHousehold: 12,
     startingPregnancyChance: 0.35,
@@ -195,6 +195,8 @@ export const DEFAULT_CONFIG = {
     minLightFactor: 0.12,
     attackBoost: 1.4,
     identifyBase: 0.25,
+    /** Witnesses of a violent act recognize the attacker this much more often. */
+    violenceIdentBonus: 0.3,
   },
   traces: {
     /** Lifetime in days per trace kind (open question 18: parameterized). */
@@ -237,6 +239,8 @@ export const DEFAULT_CONFIG = {
     childTestimonyMinAge: 7,
     restitutionMultiplier: 2,
     detentionDays: 3,
+    /** First-degree murder: execution, unless the council's sympathy for the killer reaches this, when it is a long imprisonment instead. */
+    firstDegree: { sympathyThreshold: 0.4, imprisonmentDays: 30 },
     enforcementBaseFail: 0.12,
     maxPostponements: 3,
   },

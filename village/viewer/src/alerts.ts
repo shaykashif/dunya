@@ -28,6 +28,7 @@ export interface Alert {
   at: [number, number] | null;
   people: number[];
   hearingId?: number;
+  fightId?: number;
   blows?: { by: number; hit: boolean; damage: number }[];
   attacker?: number;
   victim?: number;

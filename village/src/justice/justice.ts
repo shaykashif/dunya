@@ -209,6 +209,30 @@ export function fileAccusation(w: World, accuser: Person, accusedId: number, c: 
   return hearing;
 }
 
+/**
+ * How much the council feels for a killer, in [0, 1]: their bond with and trust in the accused, their own
+ * empathy, softened by a clean record and hardened by affection for the dead.
+ */
+export function councilSympathy(w: World, judges: readonly Person[], accused: Person, victim: Person | null): { mean: number; by: Record<number, number> } {
+  const by: Record<number, number> = {};
+  let sum = 0;
+  for (const j of judges) {
+    const r = j.relationships[accused.id];
+    const rv = victim ? j.relationships[victim.id] : undefined;
+    const kin = isKin(j, accused) ? 0.15 : 0;
+    const s = clamp01(0.4 * (r?.bond ?? 0) + 0.25 * Math.max(0, r?.trust ?? 0) + 0.35 * j.personality.empathy + kin + (accused.convictions === 0 ? 0.08 : -0.1) - 0.3 * (rv?.bond ?? 0));
+    by[j.id] = Math.round(s * 1000) / 1000;
+    sum += s;
+  }
+  return { mean: judges.length ? Math.round((sum / judges.length) * 1000) / 1000 : 0, by };
+}
+
+/** The sentence for first-degree murder: the rope, or years behind a locked door if the council cannot bring itself to hang them. */
+export function firstDegreeSentence(w: World, accused: Person, sympathy: number): SentenceKind {
+  const hasDependents = w.active().some((c) => c.parents.includes(accused.id) && w.ageYears(c) < 14);
+  return sympathy >= w.config.justice.firstDegree.sympathyThreshold || hasDependents ? "imprisonment" : "execution";
+}
+
 function chooseSentence(w: World, h: Hearing, accused: Person, lead: Person): SentenceKind {
   const opts = normFor(h.kind).penaltyOptions;
   // Judges spare parents of young children from exile and death.
@@ -269,15 +293,21 @@ export function conductHearing(w: World, h: Hearing): void {
   const guiltyVotes = votes.filter((v) => v.guilty).length;
   const guilty = guiltyVotes * 2 > votes.length;
   const lead = judges[0]!;
-  const sentenceKind = guilty ? chooseSentence(w, h, accused, lead) : null;
   const crime = h.crimeId !== null ? w.crimes.find((c) => c.id === h.crimeId) : undefined;
   const culprit = crime?.actorId ?? null;
+  // Premeditated killing is first-degree murder: execution or imprisonment, by how the council feels about the killer.
+  const dead = victimPerson(w, h.victim);
+  const firstDegree = guilty && h.kind === "violence" && !!crime?.premeditated && !!dead && !(w.census[dead.id]?.alive ?? true);
+  const sympathy = firstDegree ? councilSympathy(w, judges, accused, dead) : null;
+  const sentenceKind = guilty ? (firstDegree && sympathy ? firstDegreeSentence(w, accused, sympathy.mean) : chooseSentence(w, h, accused, lead)) : null;
   w.emit("verdict", judges.map((j) => j.id), {
     hearing: h.id,
     accused: h.accusedId,
     kind: h.kind,
     verdict: guilty ? "guilty" : "acquitted",
     sentence: sentenceKind,
+    degree: firstDegree ? "first" : null,
+    sympathy: sympathy ? sympathy.mean : null,
     judges: h.judges,
     recused: h.recused,
     votes,
@@ -311,6 +341,7 @@ export function conductHearing(w: World, h: Hearing): void {
       executorId: executor.id,
       victim: h.victim,
       qty,
+      ...(firstDegree && sentenceKind === "imprisonment" ? { days: w.config.justice.firstDegree.imprisonmentDays } : {}),
       status: "pending",
       attempts: 0,
       createdTick: w.tick,
@@ -457,7 +488,7 @@ export function enforceSentence(w: World, s: Sentence, executor: Person, rng: Rn
       break;
     }
     case "imprisonment": {
-      convict.detainedUntil = w.tick + w.days(cfg.detentionDays);
+      convict.detainedUntil = w.tick + w.days(s.days ?? cfg.detentionDays);
       interruptPlan(w, convict, "detained");
       const home = w.house(convict.householdId);
       const spot = w.freeTileNear(home.hearthSpot, 8, convict.id, (x, y) => w.isInside({ x, y }, home));

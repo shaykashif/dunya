@@ -153,7 +153,7 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
     case "verdict": {
       const judges = (d.judges as number[]).map((j) => first(w, j)).join(", ");
       const truth = d.truth as { correct: boolean | null; culprit: number | null };
-      const verdict = d.verdict === "guilty" ? `guilty${d.sentence ? `, sentenced to ${d.sentence}` : ""}` : "not guilty";
+      const verdict = d.verdict === "guilty" ? `guilty${d.degree === "first" ? " of first-degree murder" : ""}${d.sentence ? `, sentenced to ${d.sentence === "imprisonment" && d.degree === "first" ? "long imprisonment" : d.sentence}` : ""}` : "not guilty";
       const badge = truth.correct === false ? (d.verdict === "guilty" ? "WRONGFUL" : "culprit walks") : undefined;
       return line("justice", `The council (${judges}) found ${first(w, d.accused)} ${verdict}.`, [d.accused, ...(d.judges as number[])], badge);
     }
