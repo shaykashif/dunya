@@ -1410,6 +1410,7 @@ function setTab(name: string): void {
 // ---------- The after-action report ----------
 
 function openModal(title: string, html: string): void {
+  $("mnew").style.display = "none";
   $("mtitle").textContent = title;
   $("mbody").innerHTML = html;
   $("modal").classList.add("open");
@@ -1453,13 +1454,9 @@ function openReport(): void {
     <h3>The fallen</h3>
     <ul class="plain">${fallen.map((s) => `<li class="l-death"><time>${clock(world, s.deathTick ?? 0)}</time> ${personLink(s)}, ${esc(roleName(s))} of ${esc(world.squad(s.squadId).name)}, ${s.age}, ${esc(s.hometown)} — ${s.causeOfDeath === "wounds" ? "died of wounds" : "killed"}${worstWound(s) || s.injuries.length ? `: ${esc(describeInjury(s.injuries.slice().sort((a, b) => b.severity - a.severity)[0]!))}` : ""}</li>`).join("") || "<li>None.</li>"}</ul>
     <h3>The wounded, and a month later</h3>
-    <ul class="plain">${hurt.map((s) => `<li class="l-wound">${personLink(s)} (${esc(world.squad(s.squadId).name)}): ${s.injuries.filter((i) => !i.permanent && i.severity >= 0.1).map((i) => esc(describeInjury(i))).join("; ")}${after[s.id] ? ` — <i>${esc(after[s.id]!.outcome)}</i>` : ""}</li>`).join("") || "<li>None.</li>"}</ul>
-    ${r ? `<div class="qbtns" style="justify-content:center;margin:14px 0 4px"><button id="aarnew">${icon("dice")} New battle (new seed)</button></div>` : ""}`;
+    <ul class="plain">${hurt.map((s) => `<li class="l-wound">${personLink(s)} (${esc(world.squad(s.squadId).name)}): ${s.injuries.filter((i) => !i.permanent && i.severity >= 0.1).map((i) => esc(describeInjury(i))).join("; ")}${after[s.id] ? ` — <i>${esc(after[s.id]!.outcome)}</i>` : ""}</li>`).join("") || "<li>None.</li>"}</ul>`;
   openModal(`After-action report · ${world.config.time.date}`, html);
-  document.getElementById("aarnew")?.addEventListener("click", () => {
-    $("modal").classList.remove("open");
-    $("random").click();
-  });
+  $("mnew").style.display = r ? "" : "none";
 }
 
 // ---------- Input ----------
@@ -1848,6 +1845,10 @@ $("step").addEventListener("click", () => {
 $("book").addEventListener("click", () => openModal("Battle log", `<ul class="plain">${feedHtml(feed)}</ul>`));
 $("reportbtn").addEventListener("click", () => openReport());
 $("mclose").addEventListener("click", () => $("modal").classList.remove("open"));
+$("mnew").addEventListener("click", () => {
+  $("modal").classList.remove("open");
+  $("random").click();
+});
 $("modal").addEventListener("click", (ev) => {
   if (ev.target === $("modal")) $("modal").classList.remove("open");
 });
