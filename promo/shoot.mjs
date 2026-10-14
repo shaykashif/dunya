@@ -131,10 +131,28 @@ await shot(16, 5.5, false);
 await at(17, () => cap("FLANK. PIN. ASSAULT."));
 await shot(21, 4.5, false);
 await at(22.5, () => cap(""));
-await shot(24, 3.4, true);   // barrage 2
-await at(24.3, () => cap("HOUSES COME DOWN"));
-await at(29, () => cap(""));
-await shot(29.5, 5.5, false);
+await at(23.4, async () => {
+  await key("r"); // roofs on, so the fall-in shows
+  await key("3");
+  const h = await page.evaluate(() => {
+    const w = window.squad.world(); const hot = window.__hot(false);
+    const bs = w.buildings.filter((b) => !b.destroyed && b.w * b.h >= 30 && b.kind !== "church");
+    if (!bs.length) return null;
+    const ref = hot ?? { x: 120, y: 100 };
+    bs.sort((a, b) => Math.hypot(a.x + a.w / 2 - ref.x, a.y + a.h / 2 - ref.y) - Math.hypot(b.x + b.w / 2 - ref.x, b.y + b.h / 2 - ref.y));
+    const t = bs[0]; const cx = t.x + t.w / 2, cy = t.y + t.h / 2;
+    window.__cut(3.6, { x: cx, y: cy, ex: cx, ey: cy, score: 1, near: [] });
+    return { cx, cy };
+  });
+  if (h) {
+    await page.waitForTimeout(600);
+    await page.evaluate((h) => { window.squad.barrage(h.cx, h.cy); setTimeout(() => window.squad.barrage(h.cx + 2, h.cy), 900); }, h);
+  }
+});
+await at(24.5, () => cap("HOUSES COME DOWN"));
+await at(30, () => cap(""));
+await at(30, () => key("r"));  // roofs off again
+await shot(30.5, 5.5, false);
 await shot(34, 3.4, true);   // barrage 3
 await shot(38, 5, false);
 await at(DUR - 8, () => page.evaluate(() => {
