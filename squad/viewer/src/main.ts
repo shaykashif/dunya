@@ -672,7 +672,7 @@ function effectsFor(e: SimEvent): void {
   }
 }
 
-function toast(kind: string, title: string, text: string, people: number[] = [], accent: string | null = null, squad: number | null = null): void {
+function toast(kind: string, title: string, text: string, people: number[] = [], accent: string | null = null, squad: number | null = null): HTMLElement {
   const el = document.createElement("div");
   el.className = `toast ${kind}`;
   // A squad's alert takes the camera to that squad when clicked.
@@ -688,6 +688,7 @@ function toast(kind: string, title: string, text: string, people: number[] = [],
   const small = window.matchMedia("(max-width: 900px)").matches;
   while (box.children.length > (small ? 2 : 5)) box.lastElementChild?.remove();
   setTimeout(() => el.remove(), small ? 5000 : 9000);
+  return el;
 }
 
 /** What each change of squad state reads as in an alert: a title, and what the squad "is" doing. */
@@ -721,6 +722,21 @@ function squadAlert(e: SimEvent): void {
   toast("squad", `${words[0]} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} ${words[1]}.`, [], sq.color, sq.id);
 }
 
+/** Runners are not men in the sim: this is the trip each one is taking, so the camera can go along. */
+const runnerTrips = new Map<number, { from: { x: number; y: number }; tick: number; arrives: number }>();
+let runnerFollow: { squad: number; lastMark: number } | null = null;
+
+function runnerPos(squadId: number): { x: number; y: number; done: boolean } | null {
+  const trip = runnerTrips.get(squadId);
+  const sq = world.squads[squadId];
+  if (!trip || !sq) return null;
+  const pl = world.platoons[sq.side];
+  const boss = world.maybe(world.squad(pl.hqSquadId).leaderId);
+  if (!boss) return null;
+  const u = Math.max(0, Math.min(1, (world.tick - trip.tick) / Math.max(1, trip.arrives - trip.tick)));
+  return { x: trip.from.x + (boss.x - trip.from.x) * u, y: trip.from.y + (boss.y - trip.from.y) * u, done: u >= 1 };
+}
+
 function toastFor(e: SimEvent): void {
   const d = e.data;
   const s = (k: string) => world.maybe(d[k] as number);
@@ -730,7 +746,14 @@ function toastFor(e: SimEvent): void {
       break;
     case "help_call": {
       const sq = world.squads[d.squad as number]!;
-      toast("squad", `${d.by === "radio" ? "Radio" : "Runner"} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} is ${d.why as string} and ${d.by === "radio" ? "radios" : "sends a runner"} for help.`, [], sq.color, sq.id);
+      const el = toast("squad", `${d.by === "radio" ? "Radio" : "Runner"} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} is ${d.why as string} and ${d.by === "radio" ? "radios" : "sends a runner"} for help.`, [], sq.color, sq.id);
+      if (d.by === "runner") {
+        // Clicking follows the runner across the field to the platoon leader.
+        delete el.dataset.squad;
+        el.dataset.runner = String(sq.id);
+        el.title = "Click to follow the runner";
+        runnerTrips.set(sq.id, { from: { x: (d.at as number[])[0]!, y: (d.at as number[])[1]! }, tick: e.tick, arrives: sq.help?.arrives ?? e.tick + 60 });
+      }
       break;
     }
     case "help_sent": {
@@ -897,6 +920,20 @@ function frame(t: number): void {
     const p = renderer.worldPos(sel, prev, alpha);
     cam.x += (p.x - rect.width / cam.zoom / 2 - cam.x) * 0.15;
     cam.y += (p.y - rect.height / cam.zoom / 2 - cam.y) * 0.15;
+  }
+  if (runnerFollow && !cine) {
+    const rp = runnerPos(runnerFollow.squad);
+    if (!rp) runnerFollow = null;
+    else {
+      cam.x += (rp.x * TILE + 8 - rect.width / cam.zoom / 2 - cam.x) * 0.2;
+      cam.y += (rp.y * TILE + 8 - rect.height / cam.zoom / 2 - cam.y) * 0.2;
+      const tn = now();
+      if (tn - runnerFollow.lastMark > 0.5) {
+        runnerFollow.lastMark = tn;
+        renderer.addEffect({ kind: "text", x: rp.x * TILE + 8, y: rp.y * TILE - 6, text: "Runner >>", color: "#ffe070", born: tn, dur: 0.7, delay: 0, follow: null });
+      }
+      if (rp.done) runnerFollow = null;
+    }
   }
   if (cine) cineFrame(dt);
   else {
@@ -1513,6 +1550,7 @@ canvas.addEventListener("pointermove", (ev) => {
     cam.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, (pinch.zoom * f.d) / pinch.d));
     cam.x = pinch.wx - f.mx / cam.zoom;
     cam.y = pinch.wy - f.my / cam.zoom;
+    runnerFollow = null;
     follow = false;
     userCamera = true;
     return;
@@ -1726,11 +1764,33 @@ function syncControls(): void {
   document.querySelectorAll<HTMLButtonElement>("[data-toggle]").forEach((b) => b.classList.toggle("on", opts[b.dataset.toggle as keyof ViewOptions]));
 }
 
+let lastPersonPress = 0;
+function openPerson(id: number): void {
+  select(id);
+  const s = world.maybe(id);
+  if (s) {
+    const rect = canvas.getBoundingClientRect();
+    cam.x = s.x * TILE - rect.width / cam.zoom / 2;
+    cam.y = s.y * TILE - rect.height / cam.zoom / 2;
+    userCamera = true;
+    runnerFollow = null;
+  }
+  // The inspector may be below the fold on a phone.
+  $("inspector").scrollIntoView({ block: "nearest" });
+}
+// The roster is redrawn as the battle goes on, which can swallow a click: act on the press instead.
+document.addEventListener("pointerdown", (ev) => {
+  const a = (ev.target as HTMLElement).closest<HTMLElement>("#roster [data-person]");
+  if (!a) return;
+  lastPersonPress = performance.now();
+  openPerson(Number(a.dataset.person));
+});
 document.addEventListener("click", (ev) => {
   const t = ev.target as HTMLElement;
   const person = t.closest<HTMLElement>("[data-person]");
   if (person) {
     ev.preventDefault();
+    if (performance.now() - lastPersonPress < 600 && person.closest("#roster")) return;
     const id = Number(person.dataset.person);
     select(id);
     const s = world.maybe(id);
@@ -1741,6 +1801,17 @@ document.addEventListener("click", (ev) => {
       userCamera = true;
     }
     if (t.closest("#modal")) $("modal").classList.remove("open");
+    return;
+  }
+  const run = t.closest<HTMLElement>("[data-runner]");
+  if (run) {
+    const id = Number(run.dataset.runner);
+    if (runnerPos(id)) {
+      runnerFollow = { squad: id, lastMark: 0 };
+      follow = false;
+      userCamera = true;
+      zoomGoal = null;
+    }
     return;
   }
   const alert = t.closest<HTMLElement>("[data-squad]");

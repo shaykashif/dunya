@@ -1598,7 +1598,7 @@ export class Renderer {
 }
 
 /** Below this zoom, squads get an activity banner. */
-const SQUAD_BANNER_ZOOM = 0.6;
+const SQUAD_BANNER_ZOOM = 0.9;
 /** Over this much more zoom the banners crossfade out instead of vanishing. */
 const SQUAD_BANNER_FADE = 0.25;
 
