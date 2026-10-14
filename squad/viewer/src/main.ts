@@ -28,6 +28,8 @@ const MAX_ZOOM = 7;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>("world");
 const minimap = $<HTMLCanvasElement>("minimap");
+// The alerts fill the space beside the minimap on a phone, so CSS needs to know how wide it is.
+new ResizeObserver(() => document.documentElement.style.setProperty("--mm-w", `${minimap.offsetWidth}px`)).observe(minimap);
 const gridref = $("gridref");
 /** Where the pointer is over the battlefield, in screen pixels; null when it is off it. */
 let hover: { sx: number; sy: number } | null = null;
