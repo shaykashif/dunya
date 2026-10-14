@@ -2,7 +2,7 @@
 import { chromium } from "playwright-core";
 import os from "node:os"; import path from "node:path"; import fs from "node:fs";
 const seed = process.argv[2] ?? "15";
-const DUR = Number(process.argv[3] ?? 42);
+const DUR = Number(process.argv[3] ?? 48);
 const FPS = 60;
 const out = path.resolve("out60_" + seed); fs.rmSync(out, { recursive: true, force: true }); fs.mkdirSync(out);
 const exe = path.join(os.homedir(), "AppData","Local","ms-playwright","chromium_headless_shell-1243","chrome-headless-shell-win64","chrome-headless-shell.exe");
@@ -21,10 +21,6 @@ page.on("pageerror", (e) => console.log("ERR", e.message));
 await page.goto(`http://localhost:5174/?seed=${seed}`);
 await page.waitForTimeout(1500);
 await page.evaluate(() => {
-  const d = document.createElement("div"); d.id = "card";
-  d.style.cssText = "position:fixed;inset:0;z-index:99999;pointer-events:none;background:#0c0e08;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Silkscreen',monospace;color:#ece6cc";
-  d.innerHTML = `<div style="font-size:92px;letter-spacing:6px;text-shadow:0 6px 0 #000">BATTLE MODE</div><div style="font:44px 'VT323',monospace;color:#e8c84a;margin-top:14px">Normandy, June 1944 · every soldier simulated</div>`;
-  document.body.appendChild(d);
   const st = document.createElement("style");
   st.textContent = "#help,#minimap,#gridref,aside,#bolts,#topbar,#powers,#chronicle{display:none!important}";
   document.head.appendChild(st);
@@ -48,19 +44,23 @@ await page.evaluate(() => {
   const w = window.squad.world();
   const all = () => [...w.soldiers.values ? w.soldiers.values() : w.soldiers].filter((m) => m.status !== "dead" && m.conscious !== false);
   const used = [];
-  window.__hot = (avoidUsed = true) => {
-    const s = all(); const t = w.tick;
+  const inB = (m) => w.buildings.some((b) => !b.destroyed && m.x >= b.x && m.x < b.x + b.w && m.y >= b.y && m.y < b.y + b.h);
+  window.__hot = (avoidUsed = true, outdoor = true) => {
+    const OPEN = new Set(["grass", "wheat", "road", "rubble", "crater", "foxhole", "ditch", "bridge", "marsh"]);
+    const isOpen = (m) => OPEN.has(w.map.at(Math.floor(m.x), Math.floor(m.y)));
+    const s = all().filter((m) => !outdoor || (!inB(m) && isOpen(m))); const t = w.tick;
     const firing = s.filter((m) => t - m.lastFiredTick < 8 || t - m.lastHitTick < 8);
     let best = null;
     for (const m of firing) {
       if (avoidUsed && used.some((u) => Math.hypot(u.x - m.x, u.y - m.y) < 30)) continue;
-      const near = s.filter((o) => Math.hypot(o.x - m.x, o.y - m.y) < 14);
-      const sc = near.filter((o) => t - o.lastFiredTick < 8).length * 2 + near.filter((o) => t - o.lastHitTick < 12).length * 3 + near.length * 0.3;
-      const hasBoth = near.some((o) => o.side === "us") && near.some((o) => o.side !== "us");
-      const score = sc * (hasBoth ? 1.5 : 1);
+      const near = s.filter((o) => Math.hypot(o.x - m.x, o.y - m.y) < 11);
+      if (outdoor && near.length < 6) continue;
+      const nus = near.filter((o) => o.side === "us").length, nde = near.length - nus;
+      const sc = near.filter((o) => t - o.lastFiredTick < 8).length * 2 + near.filter((o) => t - o.lastHitTick < 12).length * 3 + near.length * 0.8;
+      const score = sc * (nus > 1 && nde > 1 ? 1.6 : 1) + Math.min(nus, nde) * 2;
       if (!best || score > best.score) best = { score, x: near.reduce((q, o) => q + o.x, 0) / near.length, y: near.reduce((q, o) => q + o.y, 0) / near.length, near };
     }
-    if (!best) return null;
+    if (!best) return outdoor ? window.__hot(avoidUsed, false) : null;
     const de = best.near.filter((o) => o.side !== "us");
     const e = de.length ? de : best.near;
     best.ex = e.reduce((q, o) => q + o.x, 0) / e.length; best.ey = e.reduce((q, o) => q + o.y, 0) / e.length;
@@ -68,10 +68,44 @@ await page.evaluate(() => {
   };
   window.__markUsed = (h) => { used.push({ x: h.x, y: h.y }); if (used.length > 3) used.shift(); };
   let c = null, tz = 2.0, z = 2.0, goal = null;
-  window.__cut = (zoom, hot) => { const h = hot ?? window.__hot(); if (!h) return null; window.__markUsed(h); goal = h; c = { x: h.x, y: h.y }; tz = z = zoom; return h; };
+  let follow = true, fr = 0, goalFn = null;
+  window.__cut = (zoom, hot) => { const h = hot ?? window.__hot(); if (!h) return null; window.__markUsed(h); goal = h; c = { x: h.x, y: h.y }; tz = z = zoom; follow = !hot; goalFn = null; return h; };
+  const usedSquads = [];
+  // Frames a squad in the named state: its men and the position they are working against, followed as they move.
+  window.__squadShot = (states, zoom) => {
+    let pick = null;
+    for (const st of states) {
+      const cands = w.squads.filter((q) => !q.isHQ && q.side === "us" && q.state === st && !usedSquads.includes(q.id));
+      for (const q of cands) {
+        const live = q.members.map((id) => w.maybe(id)).filter((m) => m && m.status !== "dead" && m.conscious !== false);
+        if (live.length >= 4 && (!pick || live.length > pick.n)) pick = { q, n: live.length };
+      }
+      if (pick) break;
+    }
+    if (!pick) return false;
+    usedSquads.push(pick.q.id);
+    const q = pick.q;
+    goalFn = () => {
+      const live = q.members.map((id) => w.maybe(id)).filter((m) => m && m.status !== "dead" && m.conscious !== false);
+      if (!live.length) return null;
+      const mx = live.reduce((a, m) => a + m.x, 0) / live.length, my = live.reduce((a, m) => a + m.y, 0) / live.length;
+      const f = q.focus ?? q.flankPoint;
+      return f ? { x: (mx * 2 + f.x) / 3, y: (my * 2 + f.y) / 3 } : { x: mx, y: my };
+    };
+    const g = goalFn(); goal = g; c = { x: g.x, y: g.y }; tz = z = zoom; follow = true;
+    return true;
+  };
   window.__zoom = (v) => { tz = v; };
   const tick = () => {
-    if (c && goal) { window.squad.look(c.x, c.y, z); z += (tz - z) * 0.03; }
+    fr++;
+    if (c && goal) {
+      if (follow) {
+        if (goalFn) { if (fr % 12 === 0) { const g = goalFn(); if (g) goal = g; } }
+        else if (fr % 75 === 0) { const h = window.__hot(false); if (h) goal = h; }
+        c.x += (goal.x - c.x) * 0.04; c.y += (goal.y - c.y) * 0.04;
+      }
+      window.squad.look(c.x, c.y, z); z += (tz - z) * 0.03;
+    }
     requestAnimationFrame(tick);
   };
   tick();
@@ -84,12 +118,13 @@ await page.evaluate(() => {
   end.style.cssText = "position:fixed;left:0;right:0;bottom:0;height:230px;z-index:99998;background:linear-gradient(transparent,rgba(12,14,8,.94) 60%);display:flex;flex-direction:column;justify-content:flex-end;padding:0 80px 50px;font-family:'Silkscreen',monospace;opacity:0;pointer-events:none";
   end.innerHTML = `<div style="font-size:78px;letter-spacing:3px;color:#ece6cc;text-shadow:0 5px 0 #000">BATTLE SIMULATION</div><div style="font:46px 'VT323',monospace;color:#e8c84a;margin-top:8px">Call in barrages. Watch every man fight. Free in your browser · sim.shaykas.com</div>`;
   document.body.appendChild(end);
-  const card = document.getElementById("card");
+  const fade = document.createElement("div");
+  fade.style.cssText = "position:fixed;inset:0;z-index:99999;background:#0c0e08;opacity:0;pointer-events:none";
+  document.body.appendChild(fade);
   const clamp = (v) => Math.max(0, Math.min(1, v));
   window.__fx = (t, dur) => {
-    card.style.opacity = String(Math.max(1 - clamp(t / 1.2), clamp((t - (dur - 1.2)) / 1.2)));
-    if (t > dur - 1.2) card.innerHTML = "";
-    end.style.opacity = String(clamp((t - (dur - 8)) / 1));
+    fade.style.opacity = String(clamp((t - (dur - 0.7)) / 0.7));
+    end.style.opacity = String(clamp((t - (dur - 3.6)) / 0.6));
     window.squad.sfx.voices = 0; // sources never "end" in an offline context
   };
   window.__fx(0, 99);
@@ -98,7 +133,7 @@ await page.keyboard.press("4");
 // switch to virtual time (paused, so the clock jump costs no sim time)
 await page.keyboard.press("Space");
 await page.clock.install({ time: 1e12 });
-await page.clock.pauseAt(1e12 + 100);
+await page.clock.pauseAt(1e12 + 10000);
 await page.clock.fastForward(300000);          // virtual performance.now must pass the real value the viewer last saw
 await page.clock.runFor(100);
 await page.keyboard.press("Space");
@@ -110,6 +145,7 @@ const shotFn = (zoom, barrage, speedKey = "4") => async () => {
   const h = await page.evaluate((zoom) => { const h = window.__cut(zoom); return h && { x: h.x, y: h.y, ex: h.ex, ey: h.ey }; }, zoom);
   if (h && barrage) await page.evaluate((h) => { const sq = window.squad; sq.barrage(h.ex, h.ey); setTimeout(() => sq.barrage(h.ex + 4, h.ey - 3), 1000); setTimeout(() => sq.barrage(h.ex - 4, h.ey + 3), 2000); }, h);
 };
+const squadShot = (states, zoom, fb) => async () => { await key("4"); const ok = await page.evaluate(([st, z]) => window.__squadShot(st, z), [states, zoom]); if (!ok) await shotFn(fb, false)(); };
 const cap = (t) => () => page.evaluate((t) => window.__cap(t), t);
 let houseTarget = null;
 const events = [
@@ -121,9 +157,9 @@ const events = [
   [11, shotFn(3.4, true)],
   [11.2, cap("CALL IN A BARRAGE")],
   [15.5, cap("")],
-  [16, shotFn(5.5, false)],
+  [16, shotFn(3.8, false)],
   [17, cap("FLANK. PIN. ASSAULT.")],
-  [21, shotFn(4.5, false)],
+  [20.5, shotFn(3.4, false)],
   [22.5, cap("")],
   [23.4, async () => {
     await key("r"); await key("3");
@@ -145,6 +181,8 @@ const events = [
   [30.5, shotFn(5.5, false)],
   [34, shotFn(3.4, true)],
   [38, shotFn(5, false)],
+  [41, () => page.evaluate(() => document.getElementById("reportbtn").click())],
+  [44.9, () => page.evaluate(() => document.getElementById("modal").classList.remove("open"))],
 ].sort((a, b) => a[0] - b[0]);
 const N = Math.round(DUR * FPS);
 let ei = 0;
