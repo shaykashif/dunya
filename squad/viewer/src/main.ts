@@ -144,6 +144,45 @@ function chainFor(e: SimEvent): void {
   }
 }
 
+// Where shells are about to land: a flashing blast marker, so a fire mission can be seen from high above.
+const blasts: { x: number; y: number; burst: number; el: HTMLElement }[] = [];
+const BLAST_ZOOM = 0.75;
+
+function markBlast(x: number, y: number, burst: number): void {
+  const near = blasts.find((b) => Math.hypot(b.x - x, b.y - y) < 7 && world.tick < b.burst + 2);
+  if (near) {
+    near.burst = Math.max(near.burst, burst);
+    return;
+  }
+  const el = document.createElement("div");
+  el.className = "blast";
+  el.innerHTML = icon("blast");
+  boltsEl.appendChild(el);
+  blasts.push({ x, y, burst, el });
+}
+
+function placeBlasts(): void {
+  for (const o of world.ordnance) if (o.kind !== "smoke_shell") markBlast(o.x, o.y, o.burstTick);
+  const rect = canvas.getBoundingClientRect();
+  const wide = cam.zoom < BLAST_ZOOM;
+  for (let i = blasts.length - 1; i >= 0; i--) {
+    const b = blasts[i]!;
+    if (world.tick >= b.burst + 2) {
+      b.el.remove();
+      blasts.splice(i, 1);
+      continue;
+    }
+    b.el.style.display = wide ? "" : "none";
+    if (!wide) continue;
+    const sx = (b.x * TILE + 8 - cam.x) * cam.zoom, sy = (b.y * TILE + 8 - cam.y) * cam.zoom;
+    const m = 16;
+    const x = Math.max(m, Math.min(rect.width - m, sx)), y = Math.max(m + 40, Math.min(rect.height - m, sy));
+    b.el.classList.toggle("edge", x !== sx || y !== sy);
+    b.el.style.left = `${Math.round(x)}px`;
+    b.el.style.top = `${Math.round(y)}px`;
+  }
+}
+
 /** Keeps each popup on its sender, or on the edge of the screen pointing the way when the sender is off it. */
 function placeBolts(): void {
   const rect = canvas.getBoundingClientRect();
@@ -816,6 +855,7 @@ function toastFor(e: SimEvent): void {
 function newBattle(seed: number): void {
   const log = new EventLog({ hash: false });
   chains.clear();
+  blasts.length = 0;
   boltsEl.innerHTML = "";
   endCine(false);
   feed = [];
@@ -941,6 +981,7 @@ function frame(t: number): void {
     easeZoom(dt);
   }
   placeBolts();
+  placeBlasts();
   renderer.hovered = hover ? pickAt(hover.sx, hover.sy) : null;
   renderer.draw(world, cam, opts, prev, alpha, selected, t / 1000);
   const halfW = rect.width / cam.zoom / 2;

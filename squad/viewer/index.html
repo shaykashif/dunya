@@ -211,6 +211,10 @@
   .bolt .px { height: 20px; }
   .bolt.old { border-color: #8a8a70; box-shadow: 0 0 0 2px #000a; animation: none; opacity: .75; }
   .bolt.edge::after { content: ""; position: absolute; inset: -6px; border: 2px dashed #ffe070; }
+  .blast { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; display: grid; place-items: center; pointer-events: none; animation: blastflash .5s steps(2, end) infinite; filter: drop-shadow(0 0 4px #000) drop-shadow(0 0 8px #ff8a30); }
+  .blast .px { height: 28px; }
+  .blast.edge { filter: drop-shadow(0 0 3px #000) drop-shadow(0 0 6px #ffe070); }
+  @keyframes blastflash { 0% { transform: scale(1); opacity: 1; } 100% { transform: scale(1.35); opacity: .45; } }
   @keyframes boltpulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.18); } }
   #cine { position: absolute; left: 50%; bottom: 74px; transform: translateX(-50%); z-index: 7; background: rgba(12,14,8,.92); border: 2px solid #f2c84a; padding: 6px 14px; font-size: 20px; color: #ffe9a0; letter-spacing: .5px; pointer-events: none; display: none; text-align: center; max-width: 80%; }
   #cine small { display: block; color: #bdb89a; font-size: 15px; }
