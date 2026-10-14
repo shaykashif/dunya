@@ -208,7 +208,7 @@ function cineFrame(dt: number): void {
   const rect = canvas.getBoundingClientRect();
   const t = now();
   const el = t - c.t0;
-  const look = (p: { x: number; y: number }, zoom: number, rate = 7) => {
+  const look = (p: { x: number; y: number }, zoom: number, rate = 12) => {
     const a = 1 - Math.exp(-dt * rate);
     cam.zoom += (zoom - cam.zoom) * a;
     const tx = p.x * TILE + 8 - rect.width / cam.zoom / 2, ty = p.y * TILE + 8 - rect.height / cam.zoom / 2;
@@ -227,16 +227,16 @@ function cineFrame(dt: number): void {
     case 0: {
       look(ch.from, 3.4);
       caption(ch.label, "the report is keyed in");
-      if (el > 1.1) {
-        signal(ch.from, ch.to, 1.7);
+      if (el > 0.7) {
+        signal(ch.from, ch.to, 1.1);
         c.stage = 1;
         c.t0 = t;
       }
       return;
     }
     case 1: {
-      const u = Math.min(1, el / 1.7);
-      look(lerp(ch.from, ch.to, u), 2.6, 9);
+      const u = Math.min(1, el / 1.1);
+      look(lerp(ch.from, ch.to, u), 2.6, 16);
       caption("Message to platoon command", "on its way");
       if (u >= 1) {
         c.stage = 2;
@@ -248,11 +248,11 @@ function cineFrame(dt: number): void {
       look(hq, 3.4);
       if (ch.ordered) {
         caption("Platoon command", "the radioman puts the mortars on it");
-        if (el > 1.1 && pit) {
-          signal(hq, pit, 1.5);
+        if (el > 0.7 && pit) {
+          signal(hq, pit, 1.0);
           c.stage = 3;
           c.t0 = t;
-        } else if (el > 1.1 && !pit) {
+        } else if (el > 0.7 && !pit) {
           c.stage = 6;
           c.t0 = t;
         }
@@ -266,8 +266,8 @@ function cineFrame(dt: number): void {
       return;
     }
     case 3: {
-      const u = Math.min(1, el / 1.5);
-      look(lerp(hq, pit ?? hq, u), 2.6, 9);
+      const u = Math.min(1, el / 1.0);
+      look(lerp(hq, pit ?? hq, u), 2.6, 16);
       caption("Fire order to the mortar", "on its way");
       if (u >= 1) {
         c.stage = 4;
@@ -295,7 +295,7 @@ function cineFrame(dt: number): void {
       const r = ch.rounds[0]!;
       const u = Math.max(0, Math.min(1, (t - c.t0) / c.hold));
       const p = lerp({ x: r.from.x, y: r.from.y }, r.at, u);
-      look(p, 2.2 + 0.8 * Math.abs(u - 0.5), 8);
+      look(p, 2.2 + 0.8 * Math.abs(u - 0.5), 14);
       caption("Mortar round in the air", u >= 1 ? "impact" : "falling");
       if (u >= 1) {
         c.stage = 6;
@@ -306,18 +306,18 @@ function cineFrame(dt: number): void {
     case 6: {
       const r = ch.rounds[0];
       if (r) look(r.at, 2.6);
-      if (el > 1.4) {
+      if (el > 0.9) {
         c.stage = 7;
         c.t0 = t;
       }
       return;
     }
     default: {
-      const a = 1 - Math.exp(-dt * 6);
+      const a = 1 - Math.exp(-dt * 10);
       cam.x += (c.saved.x - cam.x) * a;
       cam.y += (c.saved.y - cam.y) * a;
       cam.zoom += (c.saved.zoom - cam.zoom) * a;
-      if (el > 1.1) endCine(true);
+      if (el > 0.7) endCine(true);
     }
   }
 }

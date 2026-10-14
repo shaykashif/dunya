@@ -1123,18 +1123,96 @@ export class Renderer {
       // Mud on the tracks, when bogged down.
       if (w.tick < t.stuckUntil) for (let k = 0; k < 7; k++) px(x0 + 1 + k * 4, base - 2 + (k % 2), 3, 2, "#5a4630");
     } else {
-      // The gun behind its shield on two wheels, with its trails.
+      // The gun in three-quarter view: trails behind, wheels, cradle, a slab of shield, and the barrel laid on its target.
+      // Alive it stands square; wrecked it sits scorched, one wheel gone, shield torn and the barrel drooping.
       const dir = th.x < 0 ? -1 : 1;
       const base = cy + 6;
-      px(cx - 10, base - 2, 22, 4, "rgba(0,0,0,0.3)");
-      px(cx - 6, base - 4, 4, 4, trk);
-      px(cx + 2, base - 4, 4, 4, trk);
-      px(cx - 9, base - 1, 7, 1, faceD);
-      px(cx + 3, base - 1, 7, 1, faceD);
-      px(dir > 0 ? cx - 1 : cx - 11, base - 9, 12, 2, dead ? "#16150f" : "#25251f");
-      px(dir > 0 ? cx - 3 : cx + 1, base - 13, 3, 10, face);
-      px(dir > 0 ? cx - 3 : cx + 1, base - 13, 3, 8, top);
-      px(dir > 0 ? cx - 3 : cx + 1, base - 13, 3, 1, topL);
+      const disc = (x: number, y: number, rx: number, ry: number, c: string) => {
+        g.fillStyle = c;
+        for (let dy = -ry; dy <= ry; dy++) {
+          const half = Math.round(rx * Math.sqrt(Math.max(0, 1 - (dy * dy) / (ry * ry + 0.01))));
+          g.fillRect(x - half, y + dy, half * 2 + 1, 1);
+        }
+      };
+      const steel = dead ? "#201f1a" : "#3a3b30";
+      const steelL = dead ? "#2c2a24" : "#5a5b4c";
+      const tire = dead ? "#0e0e0a" : "#16160f";
+      // Ground: a soft shadow, and scorching under a wreck.
+      px(cx - 12, base - 2, 26, 5, "rgba(0,0,0,0.3)");
+      if (dead) px(cx - 14, base - 4, 30, 9, "rgba(10,8,6,0.5)");
+      // Trails: two legs splayed behind the gun, ending in spades; on a wreck one is buckled short.
+      g.fillStyle = steel;
+      const rear = -dir;
+      pxLine(g, cx + rear * 2, base - 6, cx + rear * (dead ? 8 : 15), base - 1);
+      pxLine(g, cx + rear * 2, base - 5, cx + rear * (dead ? 8 : 15), base);
+      pxLine(g, cx + rear * 2, base - 6, cx + rear * (dead ? 12 : 12), base + 3);
+      pxLine(g, cx + rear * 2, base - 5, cx + rear * (dead ? 12 : 12), base + 4);
+      g.fillStyle = tire;
+      g.fillRect(cx + rear * (dead ? 8 : 15) - (rear > 0 ? 0 : 2), base - 1, 3, 3);
+      if (!dead) g.fillRect(cx + rear * 12 - (rear > 0 ? 0 : 2), base + 3, 3, 2);
+      // Far wheel, half hidden behind the carriage, then the cradle and axle.
+      disc(cx - dir * 1, base - 8, 4, 4, tire);
+      disc(cx - dir * 1, base - 8, 2, 2, steelL);
+      px(cx - 4, base - 9, 9, 4, dead ? "#2a2822" : "#46522c");
+      px(cx - 4, base - 9, 9, 1, dead ? "#4e4a42" : "#8a9c5a");
+      px(cx - 4, base - 6, 9, 1, faceD);
+      // Near wheel: a full tyre with rim, hub and spokes; collapsed flat on a wreck.
+      if (dead) {
+        disc(cx + dir * 2, base - 1, 6, 2, tire);
+        px(cx + dir * 2 - 2, base - 2, 2, 1, steelL);
+        px(cx + dir * 2 + 2, base - 1, 3, 1, steelL);
+      } else {
+        disc(cx + dir * 2, base - 4, 6, 6, tire);
+        disc(cx + dir * 2, base - 4, 4, 4, steelL);
+        disc(cx + dir * 2, base - 4, 3, 3, "#25251f");
+        px(cx + dir * 2 - 3, base - 4, 7, 1, steelL);
+        px(cx + dir * 2, base - 7, 1, 7, steelL);
+        px(cx + dir * 2 - 1, base - 5, 2, 2, "#8a8a7c");
+      }
+      if (tx) {
+        // Seen from the side: a slanted slab of shield and the barrel through its port.
+        const sx = cx + dir * 4;
+        const H = dead ? 8 : 12;
+        for (let c = 0; c < 4; c++) {
+          const col = dir > 0 ? sx + c : sx - c - 1;
+          const lean = dead ? c * 2 : c;
+          const jag = dead && c % 2 === 1 ? 2 : 0;
+          const yTop = base - 6 - H + lean + jag;
+          px(col, yTop, 1, H - jag, c === 0 ? topL : c === 3 ? faceD : top);
+          if (c === 0 || c === 3) px(col, yTop, 1, 1, dead ? "#5a5648" : "#c8d4a0");
+        }
+        if (dead) px(sx + (dir > 0 ? 1 : -2), base - 11, 2, 2, "#0a0a07");
+        else px(sx + (dir > 0 ? 0 : -1), base - 11, 2, 3, "#16160f");
+        // Barrel: raised toward its aim; a wreck's lies drooped on the ground.
+        const elev = dead ? 0 : Math.max(-3, Math.min(3, Math.round(-th.y * 4)));
+        const x1 = cx + dir * 19, y1 = dead ? base - 1 : base - 11 - elev;
+        g.fillStyle = dead ? "#1c1b18" : "#25251f";
+        pxLine(g, sx + dir * 2, base - 10, x1, y1);
+        pxLine(g, sx + dir * 2, base - 9, x1, y1 + 1);
+        if (!dead) {
+          g.fillStyle = "#6a6a5a";
+          pxLine(g, sx + dir * 2, base - 11, x1, y1 - 1);
+        }
+        px(x1 - (dir < 0 ? 2 : 0), y1 - 1, 3, 3, "#0e0e0a");
+      } else {
+        // Seen end-on: the shield is a broad face, the barrel a short stub or a dark muzzle.
+        const toward = th.y > 0;
+        const H = dead ? 8 : 12;
+        for (let c = -5; c <= 5; c++) {
+          const jag = dead && Math.abs(c) % 2 === 1 ? 2 : 0;
+          const yTop = base - 6 - H + jag + (dead ? Math.abs(c) : 0);
+          px(cx + c, yTop, 1, H - jag, toward ? (c < -3 ? topL : top) : faceD);
+        }
+        px(cx - 5, base - 6 - H + (dead ? 5 : 0), 11, 1, toward ? topL : steel);
+        if (dead) px(cx + 1, base - 12, 2, 2, "#0a0a07");
+        if (toward) {
+          disc(cx, base - 10, 2, 2, "#0e0e0a");
+          px(cx - 1, base - 11, 2, 1, "#4a4a40");
+        } else {
+          px(cx - 1, base - 6 - H - 6, 2, 6, dead ? "#1c1b18" : "#25251f");
+          px(cx - 2, base - 6 - H - 7, 4, 2, "#0e0e0a");
+        }
+      }
     }
     // Fire on a burning one, and on a wreck still burning out.
     if (t.state === "burning" || (t.state === "wrecked" && t.burnTick >= 0 && w.tick - t.burnTick < 140)) {
