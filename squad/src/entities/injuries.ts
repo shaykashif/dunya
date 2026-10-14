@@ -30,6 +30,9 @@ export function pickPart(rng: Rng, weights: Weights): BodyPart {
   return parts[rng.weighted(parts.map((k) => weights[k]!))]!;
 }
 
+/** A sniper's shot at a wounded man crawling away: the legs and feet, to stop him moving. */
+export const HIT_LEGS: Weights = { "left leg": 10, "right leg": 10, "left foot": 3, "right foot": 3, torso: 2 };
+
 export function hitWeights(posture: Posture, cover: number): Weights {
   if (cover >= 0.5) return HIT_COVERED;
   return posture === "prone" ? HIT_PRONE : posture === "crouch" ? HIT_CROUCH : HIT_STAND;

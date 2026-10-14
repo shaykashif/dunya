@@ -722,19 +722,14 @@ function squadAlert(e: SimEvent): void {
   toast("squad", `${words[0]} · ${sq.side === "us" ? "US" : "German"}`, `${sq.name} ${words[1]}.`, [], sq.color, sq.id);
 }
 
-/** Runners are not men in the sim: this is the trip each one is taking, so the camera can go along. */
-const runnerTrips = new Map<number, { from: { x: number; y: number }; tick: number; arrives: number }>();
+/** A camera ride from a sniper to the man he is watching, along the line of sight. */
+let scopeTour: { sniper: number; target: number; t0: number } | null = null;
 let runnerFollow: { squad: number; lastMark: number } | null = null;
 
-function runnerPos(squadId: number): { x: number; y: number; done: boolean } | null {
-  const trip = runnerTrips.get(squadId);
-  const sq = world.squads[squadId];
-  if (!trip || !sq) return null;
-  const pl = world.platoons[sq.side];
-  const boss = world.maybe(world.squad(pl.hqSquadId).leaderId);
-  if (!boss) return null;
-  const u = Math.max(0, Math.min(1, (world.tick - trip.tick) / Math.max(1, trip.arrives - trip.tick)));
-  return { x: trip.from.x + (boss.x - trip.from.x) * u, y: trip.from.y + (boss.y - trip.from.y) * u, done: u >= 1 };
+/** The runner a squad has out, if he is still on the way. */
+function runnerOf(squadId: number): { x: number; y: number } | null {
+  const r = world.runners.find((q) => q.squadId === squadId);
+  return r ? { x: r.x, y: r.y } : null;
 }
 
 function toastFor(e: SimEvent): void {
@@ -752,7 +747,6 @@ function toastFor(e: SimEvent): void {
         delete el.dataset.squad;
         el.dataset.runner = String(sq.id);
         el.title = "Click to follow the runner";
-        runnerTrips.set(sq.id, { from: { x: (d.at as number[])[0]!, y: (d.at as number[])[1]! }, tick: e.tick, arrives: sq.help?.arrives ?? e.tick + 60 });
       }
       break;
     }
@@ -921,18 +915,24 @@ function frame(t: number): void {
     cam.x += (p.x - rect.width / cam.zoom / 2 - cam.x) * 0.15;
     cam.y += (p.y - rect.height / cam.zoom / 2 - cam.y) * 0.15;
   }
+  if (scopeTour && !cine) {
+    const a = world.maybe(scopeTour.sniper), b = world.maybe(scopeTour.target);
+    const u = Math.min(1, (now() - scopeTour.t0) / 1.6);
+    if (!a || !b) scopeTour = null;
+    else {
+      const e = u * u * (3 - 2 * u);
+      const x = a.x + (b.x - a.x) * e, y = a.y + (b.y - a.y) * e;
+      cam.x += ((x + 0.5) * TILE - rect.width / cam.zoom / 2 - cam.x) * 0.3;
+      cam.y += ((y + 0.5) * TILE - rect.height / cam.zoom / 2 - cam.y) * 0.3;
+      if (u >= 1) scopeTour = null;
+    }
+  }
   if (runnerFollow && !cine) {
-    const rp = runnerPos(runnerFollow.squad);
+    const rp = runnerOf(runnerFollow.squad);
     if (!rp) runnerFollow = null;
     else {
       cam.x += (rp.x * TILE + 8 - rect.width / cam.zoom / 2 - cam.x) * 0.2;
       cam.y += (rp.y * TILE + 8 - rect.height / cam.zoom / 2 - cam.y) * 0.2;
-      const tn = now();
-      if (tn - runnerFollow.lastMark > 0.5) {
-        runnerFollow.lastMark = tn;
-        renderer.addEffect({ kind: "text", x: rp.x * TILE + 8, y: rp.y * TILE - 6, text: "Runner >>", color: "#ffe070", born: tn, dur: 0.7, delay: 0, follow: null });
-      }
-      if (rp.done) runnerFollow = null;
     }
   }
   if (cine) cineFrame(dt);
@@ -1174,7 +1174,7 @@ function doingText(s: Soldier): string {
   if (s.carriedById !== null) return `Being carried back by ${label(world.soldier(s.carriedById))}`;
   if (!s.conscious) return "Unconscious";
   if (s.status === "casualty") {
-    const near = world.soldiers.find((o) => o.act?.cand.kind === "aid" && o.act.cand.targetId === s.id);
+    const near = world.soldiers.find((o) => o.id !== s.id && o.act?.cand.kind === "aid" && o.act.cand.targetId === s.id);
     return near ? `Wounded — ${label(near)} is coming to him` : bleedingOf(s) > 0.05 ? "Wounded and bleeding, calling for a medic" : "Wounded, lying low";
   }
   const parts: string[] = [];
@@ -1551,6 +1551,7 @@ canvas.addEventListener("pointermove", (ev) => {
     cam.x = pinch.wx - f.mx / cam.zoom;
     cam.y = pinch.wy - f.my / cam.zoom;
     runnerFollow = null;
+    scopeTour = null;
     follow = false;
     userCamera = true;
     return;
@@ -1588,6 +1589,20 @@ canvas.addEventListener("pointerup", (ev) => {
   const rect = canvas.getBoundingClientRect();
   const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
   const tx = Math.floor((sx / cam.zoom + cam.x) / TILE), ty = Math.floor((sy / cam.zoom + cam.y) / TILE);
+  // A sniper's scope: ride the line of sight to whoever he is watching.
+  const scope = renderer.scopeAt(sx, sy);
+  if (scope) {
+    const a = world.maybe(scope.sniper), b = world.maybe(scope.target);
+    if (a && b) {
+      scopeTour = { sniper: scope.sniper, target: scope.target, t0: now() };
+      runnerFollow = null;
+      follow = false;
+      userCamera = true;
+      zoomGoal = null;
+      renderer.addEffect({ kind: "signal", x0: a.x * TILE + 8, y0: a.y * TILE + 6, x1: b.x * TILE + 8, y1: b.y * TILE + 6, born: now(), dur: 1.6, delay: 0, color: "#ff6a5a" });
+    }
+    return;
+  }
   // The floor button by a house: show the next floor up.
   const house = renderer.buttonAt(sx, sy);
   if (house >= 0) {
@@ -1806,7 +1821,7 @@ document.addEventListener("click", (ev) => {
   const run = t.closest<HTMLElement>("[data-runner]");
   if (run) {
     const id = Number(run.dataset.runner);
-    if (runnerPos(id)) {
+    if (runnerOf(id)) {
       runnerFollow = { squad: id, lastMark: 0 };
       follow = false;
       userCamera = true;

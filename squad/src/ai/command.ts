@@ -805,15 +805,50 @@ function maybeCallForHelp(w: World, sq: Squad, pl: Platoon, leader: Soldier): vo
   if (!pinned && !stuck && !weak && !outnumbered) return;
   const radio = sq.side === "us";
   const why = pinned ? "pinned down" : weak ? "taking casualties" : outnumbered ? "outnumbered" : "stuck";
-  sq.help = { tick: w.tick, arrives: w.tick + (radio ? 0 : cfg.runnerTicks), by: radio ? "radio" : "runner", answered: false };
+  // A radio call is heard at once; a runner is a man who has to get there, and the call is heard when he does.
+  sq.help = { tick: w.tick, arrives: radio ? w.tick : Number.MAX_SAFE_INTEGER, by: radio ? "radio" : "runner", answered: false };
+  if (!radio) {
+    const boss = w.maybe(w.squad(pl.hqSquadId).leaderId);
+    w.runners.push({ id: w.nextId("runner"), side: sq.side, squadId: sq.id, x: leader.x, y: leader.y, px: leader.x, py: leader.y, born: w.tick, dest: boss ? { x: boss.x, y: boss.y } : { x: pl.aidPost.x, y: pl.aidPost.y } });
+  }
   w.emit("help_call", [leader.id], { squad: sq.id, by: sq.help.by, why, at: [pos.x, pos.y] });
   shout(w, leader, radio ? `${sq.name} to Six: we're ${why}, need support, over!` : "Melder! Zum Zugführer: wir brauchen Verstärkung!", null);
   note(w, leader, `${radio ? "radioed" : "sent a runner"} for help`);
 }
 
+/** Runners cross the ground to the platoon leader; the call is heard when one arrives, or is given up on. */
+function runnersStep(w: World, pl: Platoon, boss: Soldier | undefined | null): void {
+  const cfg = w.config.help;
+  if (w.runners.length === 0) return;
+  const keep = [];
+  for (const r of w.runners) {
+    if (r.side !== pl.side) {
+      keep.push(r);
+      continue;
+    }
+    const sq = w.squad(r.squadId);
+    const goal: Point = boss && w.able(boss) ? { x: boss.x, y: boss.y } : r.dest;
+    r.px = r.x;
+    r.py = r.y;
+    const d = dist(r, goal);
+    if (d > 1.5 && w.tick - r.born < cfg.runnerGiveUp) {
+      const step = Math.min(cfg.runnerSpeed, d - 1);
+      r.x += ((goal.x - r.x) / d) * step;
+      r.y += ((goal.y - r.y) / d) * step;
+      keep.push(r);
+      continue;
+    }
+    // He has arrived (or the trip has taken too long): the call is heard now.
+    if (sq.help && !sq.help.answered) sq.help.arrives = w.tick;
+    w.emit("runner_arrives", boss ? [boss.id] : [], { squad: sq.id, at: [Math.round(r.x), Math.round(r.y)] });
+  }
+  w.runners = keep;
+}
+
 /** The platoon leader answers: the best free squad goes, or else the mortars are told where. */
 function answerCalls(w: World, pl: Platoon): void {
   const pltLeader = w.maybe(w.squad(pl.hqSquadId).leaderId);
+  runnersStep(w, pl, pltLeader);
   for (const caller of pl.squadIds.map((id) => w.squad(id))) {
     const call = caller.help;
     if (!call || call.answered || call.arrives > w.tick) continue;

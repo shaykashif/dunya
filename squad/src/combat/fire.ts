@@ -3,7 +3,7 @@
 // lands. Most fire misses: its real work is suppression.
 import { aimFactor, sightFactor } from "../entities/body.ts";
 import { kill } from "../entities/death.ts";
-import { hitWeights, impactHealth, injure, pickPart } from "../entities/injuries.ts";
+import { HIT_LEGS, hitWeights, impactHealth, injure, pickPart } from "../entities/injuries.ts";
 import { moraleOnLoss, shakeMorale, suppress } from "../entities/morale.ts";
 import { clamp01, label, note, shout } from "../entities/soldier.ts";
 import type { Rng } from "../engine/rng.ts";
@@ -74,7 +74,9 @@ export function bulletWound(w: World, rng: Rng, shooter: Soldier | null, target:
     return;
   }
   const cover = shooter ? w.map.cover(target, shooter, target.posture) : 0;
-  const part = pickPart(rng, hitWeights(target.posture, cover));
+  // A sniper working on a wounded man who is dragging himself away goes for the legs.
+  const crawling = shooter?.role === "sniper" && target.status === "casualty";
+  const part = pickPart(rng, crawling ? HIT_LEGS : hitWeights(target.posture, cover));
   const sev = Math.min(1, (spec.severity[0] + rng.next() * (spec.severity[1] - spec.severity[0])) * (1 - 0.3 * Math.min(1, range / spec.maxRange)));
   const health = impactHealth(w, part, sev);
   injure(w, target, part, "gunshot", sev, cause, shooter?.id ?? null, health);

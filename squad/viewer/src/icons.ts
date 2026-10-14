@@ -43,6 +43,7 @@ const ART: Record<string, string[]> = {
   plus: [".........", "....w....", "....w....", "....w....", "wwwwwwwww", "....w....", "....w....", "....w....", "........."],
   minus: [".........", ".........", ".........", ".........", "wwwwwwwww", ".........", ".........", ".........", "........."],
   bolt: ["....yyy", "...yyy.", "..yyy..", ".yyyyyy", "...yyy.", "..yyy..", "..yy...", ".yy....", ".y....."],
+  blast: ["....y....", "y..yoy..y", ".yooooyy.", "..oryro..", "yoryyyroy", "..oryro..", ".yooooyy.", "y..yoy..y", "....y...."],
   pinned: ["ooooooo", ".ooooo.", "..ooo..", "...o..."],
   flagus: ["bbbbrrrrr", "bwbbwwwww", "bbbbrrrrr", "wwwwwwwww", "rrrrrrrrr", "wwwwwwwww", "rrrrrrrrr"],
   flagde: ["...kkk...", "...kwk...", "kkkkwkkkk", "kwwwwwwwk", "kkkkwkkkk", "...kwk...", "...kkk..."],

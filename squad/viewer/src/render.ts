@@ -598,6 +598,7 @@ export class Renderer {
     }
 
     this.drawSmoke(w, time);
+    this.drawRunners(w, time);
     this.drawBadges(w, prev, time);
     this.drawEffects(time, w, cam, prev);
     if (opts.orders) this.drawOrders(w, prev);
@@ -613,6 +614,7 @@ export class Renderer {
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.drawWeather(w, vw, vh, time);
     this.drawFloorButtons(w, cam, vw, vh, views);
+    this.drawScopeButtons(w, cam, vw, vh, prev);
   }
 
   /** Floor shown for each building: the roof (-1), or a floor cut away for looking inside. */
@@ -725,6 +727,83 @@ export class Renderer {
     g.fillStyle = "rgba(0,0,0,0.18)";
     g.fillRect(b.x * TILE + TILE, b.y * TILE + TILE, (b.w - 2) * TILE, 3);
     g.fillRect(b.x * TILE + TILE, b.y * TILE + TILE, 3, (b.h - 2) * TILE);
+  }
+
+  /** Messengers on foot: a running man of his side, with a small bobbing envelope over his head. */
+  private drawRunners(w: World, time: number): void {
+    const g = this.g;
+    for (const r of w.runners) {
+      const x = (r.px + (r.x - r.px) * Math.min(1, Math.max(0, this.alpha))) * TILE + 8;
+      const y = (r.py + (r.y - r.py) * Math.min(1, Math.max(0, this.alpha))) * TILE + 8;
+      const step = Math.floor(time * 9 + r.id) % 2 === 0;
+      const spr = soldierSprite({ side: r.side, posture: "stand", walking: true, medic: false, surrendered: false, flip: r.x < r.px, dead: false, id: r.id });
+      g.fillStyle = "rgba(0,0,0,0.3)";
+      g.fillRect(Math.round(x) - 4, Math.round(y) + 5, 8, 2);
+      const { sx, sy } = figureBox(spr, { x, y }, step ? -1 : 0);
+      g.drawImage(spr, sx - 1, sy - 1);
+      // The message he carries.
+      const bob = Math.round(Math.sin(time * 8 + r.id) * 1);
+      g.fillStyle = "#000000";
+      g.fillRect(Math.round(x) - 4, Math.round(y) - 19 + bob, 9, 7);
+      g.fillStyle = "#f4f0e0";
+      g.fillRect(Math.round(x) - 3, Math.round(y) - 18 + bob, 7, 5);
+      g.fillStyle = "#8a7a50";
+      g.fillRect(Math.round(x) - 3, Math.round(y) - 18 + bob, 7, 1);
+      g.fillRect(Math.round(x), Math.round(y) - 17 + bob, 1, 2);
+    }
+  }
+
+  /** The man a sniper has his eye on: the wounded he is watching, the one he is shooting at, or the nearest he can see. */
+  watchedBy(w: World, s: Soldier): number | null {
+    const c = s.act?.cand;
+    if (c?.key.startsWith("watch:")) return Number(c.key.slice(6));
+    if (c?.kind === "fire" && c.targetId !== undefined) return c.targetId;
+    let best: number | null = null, bd = Infinity;
+    for (const id of s.sees) {
+      const e = w.maybe(id);
+      if (!e || e.status === "dead") continue;
+      const d = Math.hypot(e.x - s.x, e.y - s.y);
+      if (d < bd) {
+        bd = d;
+        best = id;
+      }
+    }
+    return best;
+  }
+
+  private scopes: { sniper: number; target: number; x: number; y: number; w: number; h: number }[] = [];
+
+  /** The scope button under a point on the screen: which sniper, and whom he is watching. */
+  scopeAt(x: number, y: number): { sniper: number; target: number } | null {
+    for (const r of this.scopes) if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return r;
+    return null;
+  }
+
+  /** A little scope beside each sniper who has someone in his sights; click to ride the line of sight to that man. */
+  private drawScopeButtons(w: World, cam: Camera, vw: number, vh: number, prev: Map<number, { x: number; y: number }>): void {
+    this.scopes = [];
+    if (cam.zoom < 0.7) return;
+    const g = this.g;
+    for (const s of w.soldiers) {
+      if (s.role !== "sniper" || s.status !== "active") continue;
+      const target = this.watchedBy(w, s);
+      if (target === null) continue;
+      const p = this.worldPos(s, prev, this.alpha);
+      const x = Math.round((p.x - cam.x) * cam.zoom) + 10, y = Math.round((p.y - cam.y) * cam.zoom) - 22;
+      if (x > vw || y > vh || x < -20 || y < -20) continue;
+      const bw = 18, bh = 18;
+      g.fillStyle = "rgba(20,22,14,0.92)";
+      g.fillRect(x, y, bw, bh);
+      g.strokeStyle = s.side === "us" ? "#ffd84a" : "#ff6a5a";
+      g.lineWidth = 2;
+      g.strokeRect(x + 1, y + 1, bw - 2, bh - 2);
+      // A ring with cross hairs.
+      g.fillStyle = "#f4f0e0";
+      for (const [dx, dy] of [[-3, -5], [2, -5], [-5, -3], [4, -3], [-5, 2], [4, 2], [-3, 4], [2, 4]] as const) g.fillRect(x + 9 + dx, y + 9 + dy, 2, 2);
+      g.fillRect(x + 8, y + 3, 2, 12);
+      g.fillRect(x + 3, y + 8, 12, 2);
+      this.scopes.push({ sniper: s.id, target, x, y, w: bw, h: bh });
+    }
   }
 
   /** A small button by each house on screen: the floor shown, click to go up a floor. */

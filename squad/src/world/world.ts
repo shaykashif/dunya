@@ -4,7 +4,7 @@ import type { EventLog, SimEvent } from "../log/events.ts";
 import type { SimConfig } from "../scenario/config.ts";
 import type { Building, Layout } from "./layout.ts";
 import { type GameMap, cheb, findPath } from "./map.ts";
-import { MAX_FLOORS, isArmourRole, type Tank, type Weather, type BattlePhase, type BattleResult, type Corpse, type Impact, type Ordnance, type Platoon, type Point, type Side, type SmokeCloud, type Soldier, type Squad } from "./types.ts";
+import { MAX_FLOORS, isArmourRole, type Tank, type Weather, type BattlePhase, type BattleResult, type Corpse, type Impact, type Ordnance, type Platoon, type Point, type Runner, type Side, type SmokeCloud, type Soldier, type Squad } from "./types.ts";
 
 export class World {
   readonly config: SimConfig;
@@ -20,6 +20,8 @@ export class World {
   platoons: Record<Side, Platoon>;
   ordnance: Ordnance[] = [];
   clouds: SmokeCloud[] = [];
+  /** Messengers running with calls for help. */
+  runners: Runner[] = [];
   corpses: Corpse[] = [];
   /** Tanks and field guns, by the id of the vehicle's own soldier. */
   tanks = new Map<number, Tank>();

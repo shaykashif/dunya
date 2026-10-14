@@ -598,6 +598,22 @@ export interface Impact {
   spotting: boolean;
 }
 
+/** A messenger on foot, carrying a squad's call for help back to the platoon leader. */
+export interface Runner {
+  id: number;
+  side: Side;
+  /** The squad that sent him. */
+  squadId: number;
+  x: number;
+  y: number;
+  /** Where he was a tick ago, for smooth drawing. */
+  px: number;
+  py: number;
+  born: number;
+  /** Where he is headed if the platoon leader cannot be found. */
+  dest: Point;
+}
+
 export interface SmokeCloud {
   id: number;
   x: number;

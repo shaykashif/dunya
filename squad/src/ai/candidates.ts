@@ -508,6 +508,20 @@ function sniperCandidates(w: World, s: Soldier, out: Candidate[], enemiesSeen: S
       out.push(cand("fire", `fire:${t.e.id}`, `take a shot at ${what}`, { targetId: t.e.id, at: { x: t.e.x, y: t.e.y }, duration: 2, value: 0.55 + t.pr * 0.55 + Math.min(0.4, t.p * 2), ordered: true, danger: 0.1 + 0.1 * exHere, offense: 0.7 }));
     }
   }
+  // A wounded man dragging himself toward cover: a shot in the legs stops him going anywhere.
+  if (spec && s.reloadLeft === 0 && s.loaded > 0) {
+    for (const id of s.sees) {
+      const e = w.soldier(id);
+      if (e.side === s.side || e.status !== "casualty" || !e.conscious || e.carriedById !== null) continue;
+      const moving = w.trails.has(e.id) || e.act?.cand.dest !== undefined;
+      if (!moving || dist(s, e) > spec.maxRange) continue;
+      const vis = w.map.visibility(s.x, s.y, e.x, e.y, w.smoke, s.z, e.z);
+      const p = hitChance(w, s, e, spec, vis);
+      if (p < cfg.minHit) continue;
+      out.push(cand("fire", `fire:${e.id}`, `shoot ${e.abbr} ${e.last} in the legs as he drags himself away`, { targetId: e.id, at: { x: e.x, y: e.y }, duration: 2, value: 0.8 + Math.min(0.4, p * 1.2), ordered: true, danger: 0.1 + 0.1 * exHere, offense: 0.7 }));
+      break;
+    }
+  }
   if (hide && !atHide && w.map.passable(hide.x, hide.y, hide.z ?? 0)) {
     out.push(cand("move", `hide:${hide.x},${hide.y},${hide.z ?? 0}`, `${compromised(w, s) ? "slip away to" : "work his way to"} a new hide${(hide.z ?? 0) > 0 ? " upstairs" : ""}`, { dest: hide, pace: underFire || exHere > 0.3 ? "crawl" : "crouch", value: 0.8 + (compromised(w, s) ? 0.3 : 0), ordered: true, safety: 0.3, danger: 0.2 * exHere }));
   }

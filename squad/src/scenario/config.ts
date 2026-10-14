@@ -188,8 +188,9 @@ export const DEFAULT_CONFIG = {
     forward: [6, 34] as [number, number],
   },
   help: {
-    /** A German runner takes this long to reach the Zugführer; an American squad radio is instant. */
-    runnerTicks: 25,
+    /** A German runner is a man on foot: he sprints this many tiles a second to the Zugführer, and is given up after this long. An American squad radio is instant. */
+    runnerSpeed: 2.2,
+    runnerGiveUp: 240,
     /** A squad calls again no sooner than this. */
     again: 300,
     /** It calls when this share of its men are pinned, or it has been stuck fixing the enemy this long, or it is down to this strength in contact. */
