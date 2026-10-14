@@ -603,6 +603,7 @@ export class Renderer {
     if (opts.orders) this.drawOrders(w, prev);
     if (sel && opts.sight) this.drawSight(w, sel, prev);
     if (opts.names) this.drawNames(w, cam, prev);
+    if (cam.zoom < SQUAD_BANNER_ZOOM) this.drawSquadBanners(w, cam, prev);
 
     // Screen space from here: the weather over everything, and the floor buttons.
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1421,6 +1422,35 @@ export class Renderer {
     }
   }
 
+  /** Zoomed right out: a small banner over each squad saying what it is doing. */
+  private drawSquadBanners(w: World, cam: Camera, prev: Map<number, { x: number; y: number }>): void {
+    const g = this.g;
+    const fs = 9 / cam.zoom;
+    g.font = `${fs}px "VT323", monospace`;
+    for (const sq of w.squads) {
+      let n = 0, cx = 0, top = Infinity;
+      for (const id of sq.members) {
+        const s = w.maybe(id);
+        if (!s || !w.able(s)) continue;
+        const p = this.worldPos(s, prev, this.alpha);
+        cx += p.x;
+        top = Math.min(top, p.y);
+        n++;
+      }
+      if (n === 0) continue;
+      cx /= n;
+      const text = `${sq.name} · ${SQUAD_DOING[sq.state] ?? sq.state}`;
+      const pad = 3 / cam.zoom, tw = g.measureText(text).width, h = fs + pad;
+      const x = Math.round(cx - tw / 2), y = Math.round(top - 8 / cam.zoom - h);
+      g.fillStyle = "rgba(20,18,14,0.8)";
+      g.fillRect(x - pad, y, tw + pad * 2, h);
+      g.fillStyle = sq.color;
+      g.fillRect(x - pad, y, pad * 0.7, h);
+      g.fillStyle = sq.side === "us" ? "#e8e8d0" : "#dcdcd0";
+      g.fillText(text, x + pad * 0.7, y + fs * 0.85);
+    }
+  }
+
   private drawNames(w: World, cam: Camera, prev: Map<number, { x: number; y: number }>): void {
     const g = this.g;
     const fs = Math.max(4, 8 / Math.max(0.8, cam.zoom));
@@ -1437,6 +1467,28 @@ export class Renderer {
     }
   }
 }
+
+/** Below this zoom, squads get an activity banner. */
+const SQUAD_BANNER_ZOOM = 0.6;
+
+const SQUAD_DOING: Record<string, string> = {
+  deploy: "Deploying",
+  advance: "Advancing",
+  react: "Reacting",
+  fix: "Pinning the enemy",
+  flank: "Flanking",
+  assault: "Assaulting",
+  consolidate: "Consolidating",
+  hold: "Holding",
+  fall_back: "Falling back",
+  withdraw: "Withdrawing",
+  broken: "Broken",
+  support: "Giving fire support",
+  displace: "Under mortar fire",
+  ambush: "In ambush",
+  reinforce: "Reinforcing",
+  stage: "Waiting to go in",
+};
 
 /** A line in square 1-pixel blocks (Bresenham); `dash` > 0 draws that many on, that many off. */
 function pxLine(g: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, dash = 0): void {

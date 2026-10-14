@@ -774,7 +774,7 @@ function toastFor(e: SimEvent): void {
       setTimeout(() => {
         if (!reportShown) {
           reportShown = true;
-          openReport();
+          showEndPrompt();
         }
       }, 600);
       break;
@@ -790,6 +790,9 @@ function newBattle(seed: number): void {
   endCine(false);
   feed = [];
   reportShown = false;
+  quickId = null;
+  $("quick").classList.remove("open");
+  $("endprompt").classList.remove("open");
   renderer.reset();
   lastSquadAlert.clear();
   miniBase.img = null;
@@ -1336,6 +1339,65 @@ function select(id: number | null): void {
   renderInspector();
 }
 
+// ---------- Tap card (touch) and end-of-battle prompt ----------
+
+let quickId: number | null = null;
+
+function hideQuick(): void {
+  quickId = null;
+  $("quick").classList.remove("open");
+}
+
+function renderQuick(): void {
+  const el = $("quick");
+  const s = world.maybe(quickId);
+  if (!s) {
+    hideQuick();
+    return;
+  }
+  const sq = world.squad(s.squadId);
+  const t = world.tanks.get(s.id);
+  let body: string;
+  if (t) {
+    const crew = t.crew.map((id) => world.soldier(id));
+    const alive = crew.filter((c) => c.status !== "dead").length;
+    body = `<b>${esc(t.name)}</b><small>${t.kind === "field_gun" ? "Anti-tank gun" : "Tank"} · ${esc(sq.name)}</small>
+      <div class="doing">${esc(t.state === "ready" ? "In action" : t.state)}</div>
+      ${bar("Crew", alive / Math.max(1, crew.length), alive === crew.length ? "#7ac860" : "#e0a03a", `${alive}/${crew.length}`)}`;
+  } else {
+    body = `<b>${esc(s.name)}</b><small>${esc(s.rank)} · ${esc(roleName(s))} · <em class="sw" style="background:${sq.color}"></em>${esc(sq.name)}</small>
+      <div class="doing">${esc(doingText(s))}</div>
+      ${bar("Health", s.survival.health, s.survival.health > 0.5 ? "#7ac860" : s.survival.health > 0.25 ? "#e0a03a" : "#e05a4a")}
+      ${bar("Morale", s.morale, "#6ab0f0")}`;
+  }
+  el.innerHTML = `${body}<div class="qbtns"><button id="qmore">Full info</button><button id="qclose">Close</button></div>`;
+  el.classList.add("open");
+  $("qclose").addEventListener("click", hideQuick);
+  $("qmore").addEventListener("click", () => {
+    const id = quickId;
+    hideQuick();
+    select(id);
+    document.querySelector("aside")?.scrollIntoView({ behavior: "smooth" });
+  });
+}
+setInterval(() => {
+  if (quickId !== null) renderQuick();
+}, 1000);
+
+function showEndPrompt(): void {
+  $("endprompt").classList.add("open");
+}
+
+$("endnew").addEventListener("click", () => {
+  $("endprompt").classList.remove("open");
+  $("random").click();
+});
+$("endreport").addEventListener("click", () => {
+  $("endprompt").classList.remove("open");
+  openReport();
+});
+$("endclose").addEventListener("click", () => $("endprompt").classList.remove("open"));
+
 function setTab(name: string): void {
   tab = name;
   document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
@@ -1510,6 +1572,14 @@ canvas.addEventListener("pointerup", (ev) => {
     if (paused && !busy) void advance(1);
     return;
   }
+  // A finger tap: a little card with just that unit, not the whole inspector.
+  if (ev.pointerType === "touch" && hit !== null) {
+    selected = hit;
+    quickId = hit;
+    renderQuick();
+    return;
+  }
+  hideQuick();
   select(hit);
 });
 canvas.addEventListener("pointercancel", (ev) => {
@@ -1528,7 +1598,7 @@ canvas.addEventListener(
     const rect = canvas.getBoundingClientRect();
     const px = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? rect.height : 1);
     const from = zoomGoal?.zoom ?? cam.zoom;
-    zoomToward(from * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.005), ev.clientX - rect.left, ev.clientY - rect.top);
+    zoomToward(from * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.002), ev.clientX - rect.left, ev.clientY - rect.top);
   },
   { passive: false },
 );
@@ -1781,7 +1851,7 @@ $("random").addEventListener("click", () => {
 });
 
 const params = new URLSearchParams(location.search);
-const startSeed = Number(params.get("seed") ?? 42) || 42;
+const startSeed = Number(params.get("seed")) || 1 + Math.floor(Math.random() * 99999);
 $<HTMLInputElement>("seed").value = String(startSeed);
 newBattle(startSeed);
 // Start gate: nothing runs, and no sound plays, until the visitor clicks in.
