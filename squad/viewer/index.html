@@ -53,13 +53,13 @@
   #help { position: absolute; left: 12px; bottom: 12px; font-size: 15px; color: var(--dim); max-width: calc(100% - 256px); }
   #minimap { position: absolute; right: 12px; bottom: 34px; height: 200px; width: auto; max-width: 216px; image-rendering: pixelated; border: 2px solid var(--edge); box-shadow: 0 3px 0 #000a; cursor: pointer; background: #000; }
   #gridref { position: absolute; right: 12px; bottom: 10px; width: 220px; box-sizing: border-box; padding: 2px 6px; font: 10px "Silkscreen", monospace; color: var(--dim); background: rgba(20,22,14,.9); border: 2px solid var(--edge); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
-  #toasts { position: absolute; right: 12px; top: 64px; width: 330px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
-  .toast { pointer-events: auto; background: rgba(28,30,20,.96); border: 2px solid var(--gold); padding: 8px 10px; box-shadow: 0 4px 0 #000c; animation: pop .2s ease-out; }
+  #toasts { position: absolute; right: 12px; top: 64px; width: 280px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+  .toast { pointer-events: auto; background: rgba(28,30,20,.96); border: 2px solid var(--gold); padding: 5px 8px; font-size: 15px; box-shadow: 0 4px 0 #000c; animation: pop .2s ease-out; }
   .toast.death { border-color: var(--red); }
   .toast.fire { border-color: var(--orange); }
   .toast.battle { border-color: var(--gold); }
   .toast.squad { border-color: #8a8a70; }
-  .toast b { font: 13px "Silkscreen", monospace; display: block; margin-bottom: 3px; }
+  .toast b { font: 11px "Silkscreen", monospace; display: block; margin-bottom: 2px; }
   @keyframes pop { from { transform: translateX(30px); opacity: 0; } to { transform: none; opacity: 1; } }
   body.side-hidden { grid-template-columns: 1fr; }
   body.side-hidden aside { display: none; }
