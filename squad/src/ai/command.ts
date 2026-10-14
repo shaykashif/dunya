@@ -1397,6 +1397,10 @@ function shellReaction(w: World, sq: Squad, pl: Platoon, leader: Soldier): boole
   const covered = men.filter((m) => inHole(w, m)).length / men.length;
   const ranging = hits.every((h) => h.spotting);
   w.emit("shelled", [leader.id], { squad: sq.id, at: [burst.x, burst.y], ranging, covered: Math.round(covered * 100) / 100 });
+  if (sq.side === "de") {
+    const gasp = men.find((m) => m.id !== leader.id) ?? leader;
+    shout(w, gasp, "Heiliger Strohsack!", "strohsack", 240);
+  }
   if (!sq.isHQ && pl.role === "attack" && sq.focus && dist(pos, sq.focus) <= cfg.rushThrough && strength(w, sq) > 0.4) {
     setState(w, sq, "assault", "mortars falling all around: no use staying, rushing the position");
     shout(w, leader, leader.side === "us" ? "We can't stay here! Forward! Go!" : "Hier bleiben ist Tod! Vorwärts!", null);

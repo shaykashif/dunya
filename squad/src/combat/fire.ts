@@ -167,6 +167,8 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
     const d = dist(o, at);
     const fall = 1 - Math.min(1, d / (cfg.fire.suppressRadius + 0.5));
     suppress(w, o, spec.suppression * rounds * fall);
+    // Caught by surprise: a German who was not already under fire swears.
+    if (o.side === "de" && (o.underFire === null || w.tick - o.underFire.tick > 40)) shout(w, o, "Heiliger Strohsack!", "strohsack", 240);
     o.underFire = fireBearing(w, o, shooter);
   }
   if (target && target.status === "active") target.underFire = fireBearing(w, target, shooter);
