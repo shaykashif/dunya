@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Simulations · Shay Kashif</title>
+<meta name="description" content="Two simulations that run entirely in your browser: a Normandy 1944 infantry battle, soldier by soldier, and a living village of fifty-odd people with feuds, love and a council that judges on belief.">
+<meta name="author" content="Shay Kashif">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://sim.shaykas.com/">
+<meta property="og:title" content="Simulations by Shay Kashif">
+<meta property="og:description" content="Choose a simulation: a Normandy 1944 infantry battle, or a living village. Both run entirely in your browser.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://sim.shaykas.com/">
+<meta property="og:site_name" content="Shay Kashif">
+<meta property="og:image" content="https://sim.shaykas.com/og.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A pixel-art American soldier and a villager beside the words Choose a Simulation">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Simulations by Shay Kashif">
+<meta name="twitter:description" content="Choose a simulation: a Normandy 1944 infantry battle, or a living village. Both run entirely in your browser.">
+<meta name="twitter:image" content="https://sim.shaykas.com/og.png">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#16180f">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "Shay Kashif Simulations",
+  "url": "https://sim.shaykas.com/",
+  "author": { "@type": "Person", "name": "Shay Kashif", "url": "https://shaykas.com/" },
+  "hasPart": [
+    { "@type": "WebApplication", "name": "Battle Simulation (Bocage)", "url": "https://sim.shaykas.com/squad/" },
+    { "@type": "WebApplication", "name": "Civilization Simulation", "url": "https://sim.shaykas.com/civ/" }
+  ]
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #16180f; --panel: #23261a; --edge: #535a3a; --ink: #ece6cc; --dim: #a8a888; --gold: #e8c84a; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); font: 20px/1.2 "VT323", monospace; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 32px 16px; }
+  h1 { font: 22px "Silkscreen", monospace; letter-spacing: 1px; margin: 0 0 6px; text-align: center; }
+  .sub { color: var(--dim); margin: 0 0 28px; text-align: center; max-width: 560px; }
+  .cards { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; width: 100%; max-width: 760px; }
+  a.card { flex: 1 1 300px; max-width: 360px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px 18px 20px; background: var(--panel); border: 3px solid var(--edge); box-shadow: 0 5px 0 #000a; color: var(--ink); text-decoration: none; }
+  a.card:hover, a.card:focus-visible { border-color: var(--gold); transform: translateY(-2px); outline: none; }
+  a.card canvas { width: 128px; height: 192px; image-rendering: pixelated; }
+  .name { font: 18px "Silkscreen", monospace; }
+  .desc { color: var(--dim); text-align: center; }
+  footer { margin-top: 32px; color: var(--dim); font-size: 17px; }
+  footer a { color: var(--gold); }
+</style>
+</head>
+<body>
+  <h1>Simulations</h1>
+  <p class="sub">Two worlds that run entirely in your browser. Pick one.</p>
+  <main class="cards">
+    <a class="card" href="/squad/">
+      <canvas width="8" height="12" data-sprite="soldier" role="img" aria-label="American soldier"></canvas>
+      <span class="name">Battle</span>
+      <span class="desc">A US rifle platoon attacks a German position in the Normandy hedgerows, June 1944, soldier by soldier.</span>
+    </a>
+    <a class="card" href="/civ/">
+      <canvas width="8" height="12" data-sprite="villager" role="img" aria-label="Villager"></canvas>
+      <span class="name">Civilization</span>
+      <span class="desc">A living village of fifty-odd people: they farm, feud, fall in love and face a council.</span>
+    </a>
+  </main>
+  <footer>By <a href="https://shaykas.com/">Shay Kashif</a></footer>
+  <script>
+    var S = {
+      soldier: {
+        rows: ["..HHHH..", ".HnHHnH.", ".hSSSSh.", "..SESE..", ".cCCCCc.", "SCCCCCCS", "SCbbbbCS", ".cCCCCc.", "..PPPP..", "..P..P..", "..L..L..", "..B..B.."],
+        pal: { H: "#5e6c30", h: "#44501f", n: "#7e8a4a", S: "#f2c9a0", E: "#2a1a10", C: "#a08a56", c: "#7a6840", b: "#c4ac70", P: "#76603e", L: "#c8b888", B: "#5a3e24" }
+      },
+      villager: {
+        rows: ["..HHHH..", ".HHHHHH.", ".HSSSSH.", "..SESE..", "..SSSS..", ".cCCCCc.", "SCCCCCCS", "SCCCCCCS", ".cCCCCc.", "..PPPP..", "..P..P..", "..B..B.."],
+        pal: { H: "#5a3a1e", S: "#e0b088", E: "#2a1a10", C: "#c8483a", c: "#8a2a22", P: "#4a3a2a", B: "#2a2018" }
+      }
+    };
+    document.querySelectorAll("canvas[data-sprite]").forEach(function (cv) {
+      var d = S[cv.dataset.sprite], g = cv.getContext("2d");
+      d.rows.forEach(function (row, y) {
+        for (var x = 0; x < row.length; x++) {
+          var c = d.pal[row[x]];
+          if (c) { g.fillStyle = c; g.fillRect(x, y, 1, 1); }
+        }
+      });
+    });
+  </script>
+</body>
+</html>

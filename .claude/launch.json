@@ -4,14 +4,32 @@
     {
       "name": "village-viewer",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["--no-warnings", "village/viewer/serve.ts", "5173"],
+      "runtimeArgs": [
+        "--no-warnings",
+        "village/viewer/serve.ts",
+        "5173"
+      ],
       "port": 5173
     },
     {
       "name": "squad-viewer",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["--no-warnings", "squad/viewer/serve.ts", "5174"],
+      "runtimeArgs": [
+        "--no-warnings",
+        "squad/viewer/serve.ts",
+        "5174"
+      ],
       "port": 5174
+    },
+    {
+      "name": "sim-site",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--no-warnings",
+        "site/serve.ts",
+        "5175"
+      ],
+      "port": 5175
     }
   ]
 }
