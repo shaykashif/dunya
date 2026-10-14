@@ -1690,18 +1690,28 @@ document.addEventListener("click", (ev) => {
 });
 
 const SIDE_KEY = "squad.side";
+const isPhone = (): boolean => window.matchMedia("(max-width: 900px)").matches;
+/** On a phone the toggle reads as + (open the info panel) or − (close it); elsewhere it is the panel icon. */
+function syncSideIcon(): void {
+  const hidden = document.body.classList.contains("side-hidden");
+  $("sidetoggle").innerHTML = icon(isPhone() ? (hidden ? "plus" : "minus") : "panel");
+}
 function setSide(hidden: boolean): void {
   document.body.classList.toggle("side-hidden", hidden);
-  try {
-    localStorage.setItem(SIDE_KEY, hidden ? "0" : "1");
-  } catch {
-    // Not important.
+  syncSideIcon();
+  // On a phone the panel always starts closed, so there is nothing to remember.
+  if (!isPhone()) {
+    try {
+      localStorage.setItem(SIDE_KEY, hidden ? "0" : "1");
+    } catch {
+      // Not important.
+    }
   }
   // The battlefield is wider now, or narrower.
   window.dispatchEvent(new Event("resize"));
 }
 try {
-  if (localStorage.getItem(SIDE_KEY) === "0") document.body.classList.add("side-hidden");
+  if (isPhone() || localStorage.getItem(SIDE_KEY) === "0") document.body.classList.add("side-hidden");
 } catch {
   // Not important.
 }
@@ -1741,6 +1751,8 @@ $<HTMLInputElement>("vol").addEventListener("input", (ev) => {
   syncSound();
 });
 hydrateIcons();
+syncSideIcon();
+window.matchMedia("(max-width: 900px)").addEventListener("change", syncSideIcon);
 syncSound();
 
 $("pause").addEventListener("click", () => {

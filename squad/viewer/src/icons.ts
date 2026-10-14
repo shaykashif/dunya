@@ -40,6 +40,8 @@ const ART: Record<string, string[]> = {
   flag: [".t.......", ".twwwww..", ".twwwwww.", ".twwwww..", ".t.......", ".t.......", ".t.......", ".t.......", ".t......."],
   back: ["...a.....", "..aa.....", ".aaaaaaa.", "..aa....a", "...a....a", ".......a.", "........."],
   panel: [".........", ".kkkkkkk.", ".kwwwkak.", ".kwwwkak.", ".kwwwkak.", ".kwwwkak.", ".kwwwkak.", ".kkkkkkk.", "........."],
+  plus: [".........", "....w....", "....w....", "....w....", "wwwwwwwww", "....w....", "....w....", "....w....", "........."],
+  minus: [".........", ".........", ".........", ".........", "wwwwwwwww", ".........", ".........", ".........", "........."],
   bolt: ["....yyy", "...yyy.", "..yyy..", ".yyyyyy", "...yyy.", "..yyy..", "..yy...", ".yy....", ".y....."],
   pinned: ["ooooooo", ".ooooo.", "..ooo..", "...o..."],
   flagus: ["bbbbrrrrr", "bwbbwwwww", "bbbbrrrrr", "wwwwwwwww", "rrrrrrrrr", "wwwwwwwww", "rrrrrrrrr"],
