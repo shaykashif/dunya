@@ -48,6 +48,7 @@
   button.on { background: #5a5a1e; border-color: var(--gold); color: #fff6d8; }
   button.danger.on { background: #6a1e1e; border-color: var(--red); }
   #controls, #powers, #toggles { display: flex; gap: 4px; align-items: center; }
+  #powers { position: absolute; left: 12px; bottom: 44px; z-index: 5; }
   #help { position: absolute; left: 12px; bottom: 12px; font-size: 15px; color: var(--dim); max-width: calc(100% - 256px); }
   #minimap { position: absolute; right: 12px; bottom: 34px; height: 200px; width: auto; max-width: 216px; image-rendering: pixelated; border: 2px solid var(--edge); box-shadow: 0 3px 0 #000a; cursor: pointer; background: #000; }
   #gridref { position: absolute; right: 12px; bottom: 10px; width: 220px; box-sizing: border-box; padding: 2px 6px; font: 10px "Silkscreen", monospace; color: var(--dim); background: rgba(20,22,14,.9); border: 2px solid var(--edge); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
@@ -196,7 +197,7 @@
     #modal .body { font-size: 17px; }
     table.aar { font-size: 15px; }
   }
-  #quick { display: none; position: fixed; left: 12px; right: 12px; bottom: 12px; max-width: 360px; z-index: 20; background: rgba(22,24,15,.96); border: 2px solid var(--edge); padding: 8px 10px; box-shadow: 0 0 0 2px #000a; }
+  #quick { display: none; position: fixed; left: 12px; right: 12px; bottom: 12px; max-width: 360px; z-index: 20; bottom: calc(64px + env(safe-area-inset-bottom)); background: rgba(22,24,15,.96); border: 2px solid var(--edge); padding: 8px 10px; box-shadow: 0 0 0 2px #000a; }
   #quick.open { display: block; }
   #quick b { display: block; font-size: 20px; }
   #quick small { display: block; color: var(--dim); }

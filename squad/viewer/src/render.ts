@@ -603,7 +603,7 @@ export class Renderer {
     if (opts.orders) this.drawOrders(w, prev);
     if (sel && opts.sight) this.drawSight(w, sel, prev);
     if (opts.names) this.drawNames(w, cam, prev);
-    if (cam.zoom < SQUAD_BANNER_ZOOM) this.drawSquadBanners(w, cam, prev);
+    if (cam.zoom < SQUAD_BANNER_ZOOM) this.drawSquadBanners(w, cam, prev, time);
 
     // Screen space from here: the weather over everything, and the floor buttons.
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1422,10 +1422,14 @@ export class Renderer {
     }
   }
 
-  /** Zoomed right out: a small banner over each squad saying what it is doing. */
-  private drawSquadBanners(w: World, cam: Camera, prev: Map<number, { x: number; y: number }>): void {
+  /** Per squad: when it last spotted contact, and what it last decided (shown briefly on its banner). */
+  squadFlash = new Map<number, { contact: number; decision: string; decidedAt: number }>();
+
+  /** Zoomed right out: a banner over each squad saying what it is doing, how many are able, and what it just noticed or decided. */
+  private drawSquadBanners(w: World, cam: Camera, prev: Map<number, { x: number; y: number }>, time: number): void {
     const g = this.g;
-    const fs = 9 / cam.zoom;
+    const k = 1 / cam.zoom;
+    const fs = 12 * k;
     g.font = `${fs}px "VT323", monospace`;
     for (const sq of w.squads) {
       let n = 0, cx = 0, top = Infinity;
@@ -1439,15 +1443,36 @@ export class Renderer {
       }
       if (n === 0) continue;
       cx /= n;
-      const text = `${sq.name} · ${SQUAD_DOING[sq.state] ?? sq.state}`;
-      const pad = 3 / cam.zoom, tw = g.measureText(text).width, h = fs + pad;
-      const x = Math.round(cx - tw / 2), y = Math.round(top - 8 / cam.zoom - h);
-      g.fillStyle = "rgba(20,18,14,0.8)";
-      g.fillRect(x - pad, y, tw + pad * 2, h);
+      const fl = this.squadFlash.get(sq.id);
+      const spotted = fl ? time - fl.contact : Infinity;
+      const decided = fl ? time - fl.decidedAt : Infinity;
+      const title = `${sq.name} · ${SQUAD_DOING[sq.state] ?? sq.state} · ${n}/${sq.members.length}`;
+      const sub = decided < 6 && fl ? `→ ${fl.decision}` : "";
+      const pad = 4 * k, icon = spotted < 5 ? fs + pad : 0;
+      const tw = Math.max(g.measureText(title).width, sub ? g.measureText(sub).width : 0);
+      const rows = sub ? 2 : 1, h = fs * rows + pad * (rows + 1) * 0.6;
+      const wBox = tw + pad * 2 + icon;
+      const x = Math.round(cx - wBox / 2), y = Math.round(top - 10 * k - h);
+      g.fillStyle = "rgba(20,18,14,0.85)";
+      g.fillRect(x, y, wBox, h);
       g.fillStyle = sq.color;
-      g.fillRect(x - pad, y, pad * 0.7, h);
-      g.fillStyle = sq.side === "us" ? "#e8e8d0" : "#dcdcd0";
-      g.fillText(text, x + pad * 0.7, y + fs * 0.85);
+      g.fillRect(x, y, pad * 0.7, h);
+      let tx = x + pad * 1.2;
+      if (icon) {
+        // A bold red warning block that blinks while the contact is fresh.
+        const on = spotted > 2 || Math.floor(spotted * 6) % 2 === 0;
+        g.fillStyle = on ? "#e8442e" : "#8a2a1e";
+        g.fillRect(tx, y + pad * 0.6, fs, fs + pad * 0.4);
+        g.fillStyle = "#fff4d8";
+        g.fillText("!", tx + fs * 0.36, y + pad * 0.6 + fs * 0.9);
+        tx += icon;
+      }
+      g.fillStyle = "#e8e8d0";
+      g.fillText(title, tx, y + pad * 0.6 + fs * 0.85);
+      if (sub) {
+        g.fillStyle = "#ffe070";
+        g.fillText(sub, tx, y + pad * 0.6 + fs * 1.85 + pad * 0.4);
+      }
     }
   }
 

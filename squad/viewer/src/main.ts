@@ -556,6 +556,19 @@ function effectsFor(e: SimEvent): void {
   const t = now();
   const span = Math.min(0.9, tickSeconds());
   switch (e.type) {
+    case "contact":
+    case "squad_state": {
+      const id = d.squad as number;
+      const fl = renderer.squadFlash.get(id) ?? { contact: -99, decision: "", decidedAt: -99 };
+      if (e.type === "contact") fl.contact = t;
+      else if (d.from !== "deploy") {
+        const intent = String(d.intent ?? "");
+        fl.decision = intent.length > 52 ? `${intent.slice(0, 50)}…` : intent;
+        fl.decidedAt = t;
+      }
+      renderer.squadFlash.set(id, fl);
+      break;
+    }
     case "fire": {
       const [fx, fy] = d.from as [number, number];
       const [ax, ay] = d.at as [number, number];
