@@ -41,6 +41,8 @@
   #topbar { position: absolute; left: 12px; top: 12px; right: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; pointer-events: none; }
   #topbar > * { pointer-events: auto; }
   .chip { background: rgba(22,24,15,.92); border: 2px solid var(--edge); padding: 4px 10px; box-shadow: 0 3px 0 #000a; }
+  a.homelink { color: var(--ink); text-decoration: none; font-size: 17px; white-space: nowrap; }
+  a.homelink:hover { border-color: var(--gold); }
   #clock { font-family: "Silkscreen", monospace; font-size: 13px; letter-spacing: .5px; }
   #clock.paused { color: var(--orange); }
   button { font: 16px "VT323", monospace; color: var(--ink); background: var(--panel2); border: 2px solid var(--edge); padding: 2px 8px; cursor: pointer; box-shadow: 0 2px 0 #000a; }
@@ -226,6 +228,7 @@
     <canvas id="world"></canvas>
     <div id="topbar">
       <button id="sidetoggle" title="Hide or show the side panel (H)"><i data-icon="panel"></i></button>
+      <a class="chip homelink" href="/" title="Back to the simulation list">&#8962; Home</a>
       <div class="chip" id="clock">loading</div>
       <div class="chip" id="controls">
         <button id="pause" title="Pause (space)"><i data-icon="pause"></i></button>
