@@ -730,7 +730,7 @@ export class Renderer {
   /** A small button by each house on screen: the floor shown, click to go up a floor. */
   private drawFloorButtons(w: World, cam: Camera, vw: number, vh: number, views: Map<number, number>): void {
     this.buttons = [];
-    if (cam.zoom < 1.1) return;
+    if (cam.zoom < 0.7) return;
     const g = this.g;
     g.font = `bold 9px "Silkscreen", monospace`;
     for (const b of w.buildings) {
