@@ -598,7 +598,7 @@ export class Renderer {
     }
 
     this.drawSmoke(w, time);
-    this.drawBadges(w, prev);
+    this.drawBadges(w, prev, time);
     this.drawEffects(time, w, cam, prev);
     if (opts.orders) this.drawOrders(w, prev);
     if (sel && opts.sight) this.drawSight(w, sel, prev);
@@ -1151,11 +1151,12 @@ export class Renderer {
   }
 
   /** Small badges over buildings with a sniper or a machine gun in them, and a star over each platoon leader. */
-  private drawBadges(w: World, prev: Map<number, { x: number; y: number }>): void {
+  private drawBadges(w: World, prev: Map<number, { x: number; y: number }>, time: number): void {
     const g = this.g;
     const blit = (rows: string[], x0: number, y0: number, color: string) => {
+      // A heavy black outline, two pixels out, so the badge reads against any roof.
       g.fillStyle = "#000000";
-      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1], [-2, 0], [2, 0], [0, -2], [0, 2]] as const) {
         for (let r = 0; r < rows.length; r++) for (let c = 0; c < rows[r]!.length; c++) if (rows[r]![c] === "x") g.fillRect(x0 + c + dx, y0 + r + dy, 1, 1);
       }
       g.fillStyle = color;
@@ -1180,7 +1181,8 @@ export class Renderer {
     }
     for (const [id, rec] of inHouse) {
       const B = buildingBounds(w.buildings[id]!);
-      const cx = Math.round(B.x + B.w / 2), y = Math.round(B.y) - 14;
+      // Lower on the roof than before, and bobbing gently so it catches the eye.
+      const cx = Math.round(B.x + B.w / 2), y = Math.round(B.y) - 8 + Math.round(Math.sin(time * 3.2 + id) * 1.6);
       const items: { rows: string[]; color: string; wd: number }[] = [];
       if (rec.sniper) items.push({ rows: CROSSHAIR_BADGE, color: rec.sniper.side === "us" ? "#ffd84a" : "#ff6a5a", wd: 9 });
       if (rec.gun) items.push({ rows: GUN_BADGE, color: rec.gun.side === "us" ? "#ffd84a" : "#ff6a5a", wd: 11 });
