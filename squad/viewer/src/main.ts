@@ -1585,6 +1585,14 @@ canvas.addEventListener("pointerup", (ev) => {
     if (paused && !busy) void advance(1);
     return;
   }
+  // A click on a house itself (not a man): step through its floors, same as the button.
+  if (hit === null && world.map.inBounds(tx, ty)) {
+    const b = world.map.building[world.map.idx(tx, ty)]!;
+    if (b >= 0) {
+      renderer.cycleFloor(world, b);
+      return;
+    }
+  }
   // A finger tap: a little card with just that unit, not the whole inspector.
   if (ev.pointerType === "touch" && hit !== null) {
     selected = hit;
