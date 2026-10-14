@@ -367,6 +367,15 @@ def bullet_crack(secs=0.14):
     return fade_out(norm(nwave * 1.4 + air * 0.8 + body), 40)
 
 
+def mortar_fire(secs=0.7):
+    """The 'bloop' of a round dropped down the tube: a pitch-dropping thump, a pop of gas and a ring from the tube."""
+    n = int(SR * secs)
+    t = t_axis(n)
+    thump = np.sin(2 * math.pi * np.cumsum(190 * np.exp(-t * 9) + 38) / SR) * np.exp(-t / 0.12)
+    out = thump + 0.9 * noise_env(n, 400, 3800, 0.03) + 0.25 * np.sin(2 * math.pi * 640 * t) * np.exp(-t / 0.15) + 0.6 * snap(n, 1500, 0.004)
+    return fade_out(norm(out), 200)
+
+
 # ---------- the build ----------
 
 def main():
@@ -466,6 +475,10 @@ def main():
     for i in range(4):
         bank.add(f"debris.{i}", lofi(debris(0.55 + 0.1 * i), bits=8, lp=4200, drive=1.4), "synth")
         bank.group("debris", [f"debris.{i}"])
+    for i in range(3):
+        x = squash(punch(mortar_fire(0.6 + 0.05 * i), 1.2), 3.0)
+        bank.add(f"mortar.fire.{i}", lofi(norm(x), bits=9, lp=4200, hp=40, drive=2.2), "synth")
+        bank.group("mortar.fire", [f"mortar.fire.{i}"])
     for i in range(3):
         bank.add(f"throw.{i}", lofi(whoosh(0.22 + 0.04 * i), bits=9, lp=3800), "synth")
         bank.group("throw", [f"throw.{i}"])

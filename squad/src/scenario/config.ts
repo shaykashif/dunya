@@ -76,7 +76,8 @@ export const DEFAULT_CONFIG = {
     date: "12 June 1944",
   },
   map: {
-    width: 144,
+    /** Wider than deep: room for outlying hamlets, trench lines and flank positions either side of the main road. */
+    width: 240,
     /**
      * Deep enough that the attackers form up out of sight and range of the
      * defenders: the defended hedge is kept at least `startClearance` tiles

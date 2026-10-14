@@ -4,7 +4,7 @@ import { canScramble, generateCandidates, grenadeToClear, orderFor, shootingBack
 import { commandStep } from "../ai/command.ts";
 import { fireTick, startReload, weaponStep } from "../combat/fire.ts";
 import { fireRifleGrenade, missionStep, ordnanceStep, throwGrenade } from "../combat/ordnance.ts";
-import { perceptionStep, rebuildExposure } from "../combat/perception.ts";
+import { perceptionStep, rebuildExposure, scoutStep } from "../combat/perception.ts";
 import { aftermath } from "../battle/aftermath.ts";
 import { fightingPain } from "../entities/body.ts";
 import { pickUp, setDown, stumbleStep, treat, updateInjuries } from "../entities/injuries.ts";
@@ -467,6 +467,7 @@ export class Engine {
     weaponStep(w);
     // 3. Eyes and ears.
     perceptionStep(w);
+    scoutStep(w);
     if (w.tick % w.config.perception.exposureEvery === 0) {
       rebuildExposure(w, "us");
       rebuildExposure(w, "de");

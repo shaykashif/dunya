@@ -168,7 +168,7 @@ describe("ambushes", () => {
       expect(men.every((m) => m.posture === "prone")).toBe(true);
       expect(men.filter((m) => ["woods", "brush", "orchard", "deadfall"].includes(w.map.at(m.x, m.y)) || w.map.besideCover(m.x, m.y)).length).toBeGreaterThanOrEqual(men.length - 1);
       expect(sq.orders.A.fire).toBe("hold");
-      // Nobody in the ambush fires before it is sprung.
+      // Nobody in the ambush fires before it is sprung (a sniper works on his own account).
       let sprung = -1;
       for (let t = 0; t < 900 && sprung < 0 && w.phase === "battle"; t++) {
         await engine.step();
@@ -176,7 +176,7 @@ describe("ambushes", () => {
         if (e) sprung = e.seq;
       }
       if (sprung < 0) continue;
-      const early = log.retained!.find((x) => x.type === "fire" && sq.members.includes(x.data.by as number) && x.seq < sprung);
+      const early = log.retained!.find((x) => x.type === "fire" && sq.members.includes(x.data.by as number) && w.soldier(x.data.by as number).role !== "sniper" && x.seq < sprung);
       expect(early).toBeUndefined();
       checked = true;
       break;

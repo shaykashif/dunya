@@ -189,6 +189,15 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
       const p = s("by");
       return p ? line(`${label(p)} rallies ${d.men as number} men.`, p.side, [p.id]) : null;
     }
+    case "radio": {
+      const p = s("by");
+      if (!p) return null;
+      const sq = w.squads[d.squad as number]!;
+      const what = d.sniper ? "a sniper" : d.automatic ? "an automatic weapon" : "enemy movement";
+      return line(`${sq.name} radios platoon headquarters: ${what} spotted ahead of the line.`, sq.side, [p.id], false);
+    }
+    case "mortar_fire":
+      return null;
     case "sniper_alert": {
       const p = s("by");
       const sq = w.squads[d.squad as number]!;

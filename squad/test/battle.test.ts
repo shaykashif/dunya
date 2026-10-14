@@ -13,7 +13,7 @@ interface Run {
 const runs: Run[] = [];
 
 beforeAll(async () => {
-  for (const seed of [1, 2, 3, 6]) {
+  for (const seed of [1, 2, 3, 6, 4]) {
     const log = new EventLog({ retain: true });
     const engine = createSimulation({ seed, log });
     await engine.runBattle();
@@ -55,8 +55,12 @@ describe("battles", () => {
       const opened = r.events.find((e) => e.type === "open_fire");
       expect(opened).toBeDefined();
       const defender = r.world.attacker === "us" ? "de" : "us";
-      // A sniper works alone, outside his squad's fire discipline.
-      const firstDefenderShot = r.events.find((e) => e.type === "fire" && e.data.side === defender && r.world.soldier(e.data.by as number).role !== "sniper");
+      // A sniper works alone, outside his squad's fire discipline; a forward team fires only to defend itself.
+      const outside = (id: number) => {
+        const s = r.world.soldier(id);
+        return s.role === "sniper" || r.world.squad(s.squadId).task === "scout";
+      };
+      const firstDefenderShot = r.events.find((e) => e.type === "fire" && e.data.side === defender && !outside(e.data.by as number));
       if (firstDefenderShot) expect(firstDefenderShot.seq).toBeGreaterThan(opened!.seq);
     }
   });

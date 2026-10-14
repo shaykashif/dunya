@@ -372,7 +372,7 @@ export class Sfx {
       w.forest = 0.035;
       w.birds = 0.06 * calm;
     } else {
-      w.wind = 0.02;
+      w.wind = 0.012;
       w.birds = 0.1 * calm;
       w.cicadas = 0.02 * calm;
     }
@@ -380,7 +380,8 @@ export class Sfx {
       // Birds fall silent within a moment of the first shot and come back slowly.
       const rate = key === "birds" || key === "cicadas" ? ((w[key] ?? 0) < bed.level ? 6 : 0.25) : 0.8;
       bed.level += ((w[key] ?? 0) - bed.level) * (1 - Math.exp(-dt * rate));
-      bed.gain.gain.value = bed.level;
+      // Wind is loudest in the wide view: pull the beds right back when zoomed out.
+      bed.gain.gain.value = bed.level * (1 - 0.75 * this.wide);
     }
   }
 }

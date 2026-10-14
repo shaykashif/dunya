@@ -447,6 +447,10 @@ export interface Platoon {
   rearY: number;
   fireMissionsLeft: number;
   missions: FireMission[];
+  /** Forward observation teams (an NCO, a sniper and a radioman) who report what they see back to headquarters. */
+  scoutIds: number[];
+  /** Where the platoon's mortar stands: a pit near its headquarters. */
+  mortarPit: Point | null;
   /** Where a squad that called for help, and got no squad sent, wants the mortars. */
   priority: Point | null;
   phase: string;

@@ -113,6 +113,24 @@ function hqSlots(side: Side, sniper: boolean): Slot[] {
   ];
 }
 
+/** A forward observation team: an NCO, a sniper and a radioman with a set that reaches platoon headquarters. */
+function scoutSlots(side: Side): Slot[] {
+  if (side === "us") {
+    const r = US_RANKS;
+    return [
+      { role: "squad_leader", element: "A", rank: r.sgt!, weapon: "m1_garand", ammo: 88, grenades: 2 },
+      { role: "sniper", element: "A", rank: r.pfc!, weapon: "m1903_scoped", ammo: 50, grenades: 1 },
+      { role: "radioman", element: "A", rank: r.t5!, weapon: "m1_carbine", ammo: 45, grenades: 1 },
+    ];
+  }
+  const r = DE_RANKS;
+  return [
+    { role: "squad_leader", element: "A", rank: r.uffz!, weapon: "kar98k", ammo: 60, grenades: 2 },
+    { role: "sniper", element: "A", rank: r.ogefr!, weapon: "kar98k_scoped", ammo: 50, grenades: 1 },
+    { role: "radioman", element: "A", rank: r.gefr!, weapon: "kar98k", ammo: 45, grenades: 1 },
+  ];
+}
+
 const SQUAD_COLORS: Record<Side, string[]> = { us: ["#e8c84a", "#5ab0e8", "#e8844a"], de: ["#e05a5a", "#b08ae8", "#e878a8"] };
 const US_SQUAD_NAMES = ["1st Squad", "2nd Squad", "3rd Squad"];
 const DE_SQUAD_NAMES = ["1. Gruppe", "2. Gruppe", "3. Gruppe"];
@@ -300,6 +318,11 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
     const rearY = role === "attack" ? H - 1 : 0;
     const objective = layout.objective;
     const aidPost = role === "attack" ? w.freeTileNear({ x: objective.x, y: H - 5 }, 8) ?? { x: objective.x, y: H - 5 } : w.freeTileNear({ x: objective.x, y: Math.max(3, objective.y - 14) }, 8) ?? { x: objective.x, y: 3 };
+    const scoutIds: number[] = [];
+    if (role === "defend") {
+      const n = Math.min(layout.scoutSpots.length, 2 + rng.int(2));
+      for (let i = 0; i < n; i++) scoutIds.push(makeSquad(side, `${side === "us" ? "Outpost" : "Spähtrupp"} ${i + 1}`, "#8fd8c0", false, scoutSlots(side), "scout").id);
+    }
     w.platoons[side] = {
       side,
       role,
@@ -311,6 +334,8 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       rearY,
       fireMissionsLeft: cfg.mortars.missions[side],
       missions: [],
+      scoutIds,
+      mortarPit: null,
       priority: null,
       phase: role === "attack" ? "forming up" : "waiting",
       startStrength: 0,
@@ -470,9 +495,57 @@ function deployDefenders(w: World, side: Side, layout: Layout, rng: Rng): void {
       w.emit("ambush_laid", [], { squad: sq.id, at: [site.at.x, site.at.y] });
     }
   }
+  // Forward observation teams lie up ahead of the line, silent, with the sniper in the best hide and the radioman beside him.
+  pl.scoutIds.forEach((id, i) => {
+    const sq = w.squad(id);
+    const spot = layout.scoutSpots[i];
+    if (!spot) return;
+    const men = sq.members.map((m) => w.soldier(m));
+    men.forEach((m, k) => {
+      placeAt(w, m, { x: spot.x + (k === 1 ? 0 : k === 0 ? -2 : 2), y: spot.y + (k === 1 ? 0 : 1) });
+      m.posture = "prone";
+      if (m.role === "sniper") {
+        m.hide = { x: m.x, y: m.y };
+        m.hideTick = 0;
+      }
+    });
+    for (const el of ["A", "B"] as const) {
+      const keep: Record<number, Point> = {};
+      for (const m of men.filter((x) => x.element === el)) keep[m.id] = { x: m.x, y: m.y };
+      sq.orders[el] = { kind: "hold", positions: keep, target: null, pace: "crawl", fire: "hold", issued: 0 };
+    }
+    sq.state = "hold";
+    sq.intent = "lying up ahead of the line, reporting by radio to platoon headquarters";
+    sq.post = spot;
+    sq.facing = { x: 0, y: 1 };
+  });
   const hq = w.squad(pl.hqSquadId);
   const post = w.freeTileNear({ x: layout.objective.x, y: layout.objective.y - 4 }, 6) ?? layout.objective;
   hq.post = post;
   hq.members.forEach((mid, k) => placeAt(w, w.soldier(mid), { x: post.x - 3 + k * 2, y: post.y }));
   hq.state = "hold";
+  // The platoon mortar: a pit with sandbags either side, on open ground behind the headquarters and clear of every roof.
+  {
+    const open = (x: number, y: number) => w.map.inBounds(x, y) && ["grass", "wheat", "orchard", "crater"].includes(w.map.at(x, y));
+    const clear = (x: number, y: number) => {
+      for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) if (w.map.inBounds(x + dx, y + dy) && w.map.building[w.map.idx(x + dx, y + dy)]! >= 0) return false;
+      return open(x, y) && open(x - 1, y) && open(x + 1, y);
+    };
+    let best: Point | null = null;
+    for (let r = 0; r <= 16 && !best; r++) {
+      for (let dy = -r; dy <= r && !best; dy++) {
+        for (let dx = -r; dx <= r && !best; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const x = post.x + 5 + dx, y = post.y - 4 + dy;
+          if (clear(x, y) && w.freeTileNear({ x, y }, 0) !== null) best = { x, y };
+        }
+      }
+    }
+    if (best) {
+      w.map.set(best.x, best.y, "foxhole");
+      w.map.set(best.x - 1, best.y, "wall");
+      w.map.set(best.x + 1, best.y, "wall");
+      pl.mortarPit = best;
+    }
+  }
 }

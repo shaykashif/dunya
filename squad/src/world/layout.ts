@@ -5,7 +5,7 @@
 // south, rising and falling ground, and buildings with rooms and upper floors.
 // The defenders hold a hedge line south of the settlement; the attackers come
 // up from the south.
-import type { Rng } from "../engine/rng.ts";
+import { Rng } from "../engine/rng.ts";
 import type { SimConfig } from "../scenario/config.ts";
 import { GameMap } from "./map.ts";
 import type { MapKind, Point, Terrain } from "./types.ts";
@@ -46,6 +46,8 @@ export interface Layout {
   roadX: number[];
   hamletY: number;
   streamY: number;
+  /** Hides ahead of the defended line where a forward observation team can lie up, widest apart first. */
+  scoutSpots: Point[];
 }
 
 interface KindSpec {
@@ -521,6 +523,89 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
     if (b.kind === "church") hamletPositions.push({ x: b.x + Math.floor(b.w / 2), y: b.y + b.h - 2, z: 2 });
   }
 
+  // ---- Outlying hamlets, trench lines and machine-gun nests ----
+  const deco = new Rng(Math.floor(rng.next() * 2147483646) + 1, "decor");
+  const extraMg: Point[] = [];
+  const trenchTiles: Point[] = [];
+  const diggable = (x: number, y: number) => {
+    if (!map.inBounds(x, y) || map.building[map.idx(x, y)]! >= 0) return false;
+    const t = map.at(x, y);
+    return t === "grass" || t === "wheat" || t === "orchard" || t === "brush" || t === "crater";
+  };
+  /** A zig-zag trench, with a firing pit dug in front of it every so often. */
+  const trench = (x0: number, y0: number, len: number): Point[] => {
+    const out: Point[] = [];
+    let y = y0;
+    for (let i = 0; i < len; i++) {
+      const x = x0 + i;
+      if (i % 7 === 6) {
+        const ny = y + (deco.chance(0.5) ? 1 : -1);
+        if (diggable(x, ny)) y = ny;
+      }
+      if (!diggable(x, y)) continue;
+      set(x, y, "ditch");
+      out.push({ x, y });
+      if (i % 9 === 4 && diggable(x, y + 1)) set(x, y + 1, "foxhole");
+    }
+    return out;
+  };
+  /** A machine-gun nest: a pit with a sandbag wall either side and a second pit behind for the crew. */
+  const nest = (x: number, y: number): boolean => {
+    if (!diggable(x, y)) return false;
+    set(x, y, "foxhole");
+    for (const dx of [-1, 1]) if (diggable(x + dx, y)) set(x + dx, y, "wall");
+    if (diggable(x, y - 1)) set(x, y - 1, "foxhole");
+    extraMg.push({ x, y });
+    return true;
+  };
+  const hubs: Point[] = [{ x: cx, y: cy }];
+  const SAT: [BuildingKind, string, number, number, number][] = [
+    ["farmhouse", "an outlying farmhouse", 9, 6, 2],
+    ["cottage", "a hamlet cottage", 6, 5, 1],
+    ["barn", "a hamlet barn", 8, 6, 1],
+    ["house", "a village house", 7, 6, 2],
+    ["cottage", "a hamlet cottage", 6, 5, 2],
+  ];
+  const hamletsWanted = 5 + deco.int(3);
+  for (let attempt = 0; attempt < 120 && hubs.length < hamletsWanted + 1; attempt++) {
+    const hx = 14 + deco.int(W - 46), hy = 12 + deco.int(Math.max(1, startRow - 34));
+    if (Math.abs(hx - cx) < A.w + 26 && Math.abs(hy - cy) < A.n + A.s + 16) continue;
+    if (!hubs.every((p) => Math.hypot(p.x - hx, p.y - hy) >= 46)) continue;
+    if (Math.abs(hy - (streamAt[Math.min(W - 1, hx)] ?? streamY)) < 9) continue;
+    let placed = 0;
+    const n = 2 + deco.int(3);
+    for (let i = 0; i < n; i++) {
+      const [bk, name, bw, bh, fl] = SAT[deco.int(SAT.length)]!;
+      const bx = hx + (i % 2) * 13 - 4 + deco.int(4), by = hy + Math.floor(i / 2) * 10 + deco.int(3);
+      if (bx < 3 || by < 3 || bx + bw >= W - 3 || by + bh >= H - 3 || hasRoad(map, bx - 1, by - 1, bw + 2, bh + 2)) continue;
+      clearFor(map, bx, by, bw, bh);
+      if (place(bk, name, bx, by, bw, bh, (["n", "s", "e", "w"] as const)[deco.int(4)]!, fl)) placed++;
+    }
+    if (placed === 0) continue;
+    hubs.push({ x: hx, y: hy });
+    // A trench to the south of the hamlet and a gun nest at its corner.
+    const tx = hx - 6 + deco.int(6), ty = hy + 15 + deco.int(4);
+    const t = trench(tx, ty, 12 + deco.int(10));
+    if (t.length > 0) {
+      trenchTiles.push(...t);
+      nest(t[0]!.x - 1, t[0]!.y);
+      nest(t[t.length - 1]!.x + 1, t[t.length - 1]!.y);
+    }
+  }
+  // Trench lines behind the defended hedge, and nests along it, out to both flanks.
+  for (let k = 0; k < 4 + deco.int(3); k++) {
+    const len = 14 + deco.int(14);
+    const x0 = 8 + deco.int(Math.max(1, W - len - 16));
+    const t = trench(x0, lineRow - 3 - deco.int(5), len);
+    trenchTiles.push(...t);
+    if (t.length > 0 && deco.chance(0.7)) nest(t[Math.floor(t.length / 2)]!.x, t[Math.floor(t.length / 2)]!.y - 1);
+  }
+  // A few more strongpoints scattered between the line and the stream.
+  for (let k = 0; k < 8 + deco.int(5); k++) {
+    const x = 8 + deco.int(W - 16), y = lineRow - 14 + deco.int(Math.max(1, streamY - lineRow + 6));
+    nest(x, y);
+  }
+
   // ---- Old shell holes ----
   for (let k = 0; k < 10 + rng.int(8); k++) {
     const x = 4 + rng.int(W - 8), y = 4 + rng.int(H - 8);
@@ -555,6 +640,34 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
     }
   }
 
+  // The extra nests are candidates for the guns; trenches near the line take riflemen.
+  // (Only ones on or behind the line: forward pits are dressing, so no gun starts nearer the enemy than the hedge.)
+  mgPositions.push(...extraMg.filter((p) => p.y <= lineRow && map.passable(p.x, p.y)));
+  for (const p of trenchTiles) if (p.y <= lineRow + 1 && p.y >= lineRow - 9 && map.passable(p.x, p.y)) linePositions.push(p);
+
+  // ---- Where scouts can lie up: concealed ground ahead of the line, beyond sight of the line of departure ----
+  const scoutSpots: Point[] = [];
+  {
+    const lastRow = Math.min(H - 8 - startClearance(cfg), streamY - 4);
+    const cands: { p: Point; s: number }[] = [];
+    for (let y = lineRow + 6; y <= lastRow; y++) {
+      for (let x = 6; x < W - 6; x++) {
+        if (!map.passable(x, y) || map.building[map.idx(x, y)]! >= 0) continue;
+        const t = map.at(x, y);
+        const byHedge = map.at(x, y - 1) === "hedge" || map.at(x, y + 1) === "hedge";
+        const hide = t === "woods" ? 1 : t === "brush" ? 0.85 : byHedge && (t === "grass" || t === "wheat") ? 0.55 : 0;
+        if (hide === 0) continue;
+        cands.push({ p: { x, y }, s: hide + hashTile(x, y) * 0.3 - Math.abs(x - cx) / W });
+      }
+    }
+    cands.sort((a, b) => b.s - a.s);
+    for (const c of cands) {
+      if (scoutSpots.length >= 4) break;
+      if (scoutSpots.every((q) => Math.hypot(q.x - c.p.x, q.y - c.p.y) >= 42)) scoutSpots.push(c.p);
+    }
+    scoutSpots.sort((a, b) => a.x - b.x);
+  }
+
   // Every stretch of wall can take so many hits.
   for (let i = 0; i < W * H; i++) map.wallHp[i] = cfg.destruction.wallHp[map.terrain[i]!] ?? 0;
   map.finalize();
@@ -572,6 +685,7 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
     roadX,
     hamletY,
     streamY,
+    scoutSpots,
   };
 }
 

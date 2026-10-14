@@ -523,6 +523,7 @@ export class Renderer {
 
   draw(w: World, cam: Camera, opts: ViewOptions, prev: Map<number, { x: number; y: number }>, alpha: number, selected: number | null, time: number): void {
     this.alpha = alpha;
+    this.zoomNow = cam.zoom;
     const g = this.g;
     const dpr = window.devicePixelRatio || 1;
     const vw = this.canvas.width / dpr, vh = this.canvas.height / dpr;
@@ -546,6 +547,7 @@ export class Renderer {
 
     // The fallen first, then everyone else from back to front. Men upstairs, or
     // on a floor of a house that is cut away above them, are drawn with that floor.
+    this.drawMortarPits(w);
     const sel = selected !== null ? w.maybe(selected) : null;
     const views = new Map<number, number>();
     for (const b of w.buildings) views.set(b.id, this.viewOf(w, b, sel, opts));
@@ -570,6 +572,7 @@ export class Renderer {
       this.drawCorpseStain(s, p);
       this.drawSoldier(w, s, p, prev, time, s === sel);
     }
+    this.drawOrdnance(w, alpha);
 
     // Mist lies on the ground, round the men's legs; the houses stand up out of it.
     this.drawGroundFog(w, time);
@@ -602,6 +605,9 @@ export class Renderer {
 
   /** Floor shown for each building: the roof (-1), or a floor cut away for looking inside. */
   floorView = new Map<number, number>();
+  /** The man under the pointer, set by the page each frame. */
+  hovered: number | null = null;
+  private zoomNow = 1;
   private buttons: { id: number; x: number; y: number; w: number; h: number }[] = [];
 
   /** How many floors a building has, counting a church tower. */
@@ -842,9 +848,8 @@ export class Renderer {
     g.fillRect(x - 1, y - 18, 2, 20);
     g.fillStyle = color;
     g.fillRect(x + 1, y - 18, 10, 6);
-    g.strokeStyle = "rgba(0,0,0,0.5)";
-    g.lineWidth = 1;
-    g.strokeRect(x + 1, y - 18, 10, 6);
+    g.fillStyle = "rgba(0,0,0,0.5)";
+    pxBox(g, Math.round(x) + 1, Math.round(y) - 18, 10, 6);
   }
 
   private drawSoldier(w: World, s: Soldier, p: { x: number; y: number }, prev: Map<number, { x: number; y: number }>, time: number, selected: boolean): void {
@@ -861,12 +866,27 @@ export class Renderer {
       g.fillRect(p.x - 3, p.y + 6, 6, 1);
       g.globalAlpha = 1;
     }
-    if (selected) {
-      g.strokeStyle = "#ffe14a";
-      g.lineWidth = 1;
-      g.beginPath();
-      g.ellipse(p.x, p.y + 5, 8, 4, 0, 0, Math.PI * 2);
-      g.stroke();
+    // A soft shadow under every man, and a ring under the one the pointer is over or that is selected.
+    if (s.status === "active" || s.status === "casualty") {
+      g.fillStyle = "rgba(0,0,0,0.3)";
+      g.fillRect(Math.round(p.x) - 4, Math.round(p.y) + 5, 8, 2);
+      g.fillRect(Math.round(p.x) - 3, Math.round(p.y) + 4, 6, 1);
+    }
+    if (selected || s.id === this.hovered) {
+      g.fillStyle = selected ? "#ffe14a" : "#ffffff";
+      pxEllipse(g, Math.round(p.x), Math.round(p.y) + 5, 8, 4);
+      if (!selected) {
+        g.fillStyle = "rgba(255,255,255,0.22)";
+        g.fillRect(Math.round(p.x) - 6, Math.round(p.y) + 4, 12, 2);
+      }
+    }
+    // Zoomed out, a man is a speck: a bold block of his side's colour above him keeps him findable.
+    if (this.zoomNow < 1.25 && (s.status === "active" || s.status === "surrendered")) {
+      const m = Math.max(2, Math.round(1.7 / this.zoomNow));
+      g.fillStyle = "#000000cc";
+      g.fillRect(Math.round(p.x) - Math.ceil(m / 2) - 1, Math.round(p.y) - 9 - m, m + 2, m + 2);
+      g.fillStyle = SIDE_COLORS[s.side].name;
+      g.fillRect(Math.round(p.x) - Math.ceil(m / 2), Math.round(p.y) - 8 - m, m, m);
     }
     const { sx, sy, iw, prone } = figureBox(spr, p, walking ? (step ? -1 : 0) : 0);
     if (s.status === "captured") g.globalAlpha = 0.75;
@@ -931,6 +951,81 @@ export class Renderer {
     return gun ? gun.muzzle : { x: p.x, y: p.y };
   }
 
+  /** Grenades from the moment they leave a hand until they burst: arcing through the air, then lying where they landed. */
+  private drawOrdnance(w: World, alpha: number): void {
+    const g = this.g;
+    for (const o of w.ordnance) {
+      if (o.kind !== "frag" && o.kind !== "stick" && o.kind !== "rifle_grenade" && o.kind !== "smoke_grenade") continue;
+      if (o.burstTick <= w.tick) continue;
+      const total = Math.max(1, o.burstTick - o.thrownTick);
+      const age = w.tick - o.thrownTick + Math.max(0, Math.min(1, alpha));
+      const flight = o.kind === "rifle_grenade" ? total * 0.9 : Math.max(1, total * 0.45);
+      const t = Math.min(1, age / flight);
+      const fx = o.from.x * TILE + 8, fy = o.from.y * TILE + 6, tx = o.x * TILE + 8, ty = o.y * TILE + 8;
+      const dist = Math.hypot(tx - fx, ty - fy);
+      const lift = t < 1 ? Math.sin(Math.PI * t) * Math.min(18, 5 + dist * 0.18) : 0;
+      const x = Math.round(fx + (tx - fx) * t), y = Math.round(fy + (ty - fy) * t - lift);
+      // Its shadow on the ground, then the grenade itself.
+      g.fillStyle = "rgba(0,0,0,0.35)";
+      g.fillRect(Math.round(fx + (tx - fx) * t) - 1, Math.round(fy + (ty - fy) * t) + 1, 3, 1);
+      const blink = t >= 1 && o.burstTick - w.tick <= 1 && Math.floor(this.alpha * 4) % 2 === 0;
+      if (o.kind === "stick") {
+        g.fillStyle = "#7a5a34";
+        g.fillRect(x, y - 1, 1, 4);
+        g.fillStyle = blink ? "#fff4c8" : "#4a5a30";
+        g.fillRect(x - 1, y - 3, 3, 3);
+      } else if (o.kind === "smoke_grenade") {
+        g.fillStyle = "#8a8a82";
+        g.fillRect(x - 1, y - 2, 3, 4);
+        g.fillStyle = "#d8d8d0";
+        g.fillRect(x - 1, y - 2, 3, 1);
+      } else if (o.kind === "rifle_grenade") {
+        g.fillStyle = "#3a3a30";
+        g.fillRect(x - 1, y - 1, 3, 3);
+        g.fillStyle = blink ? "#fff4c8" : "#9a9a8a";
+        g.fillRect(x, y - 2, 1, 1);
+      } else {
+        g.fillStyle = "#1a1a12";
+        g.fillRect(x - 2, y - 3, 4, 5);
+        g.fillStyle = blink ? "#fff4c8" : "#4e5e34";
+        g.fillRect(x - 1, y - 2, 2, 3);
+        g.fillStyle = "#b0b0a0";
+        g.fillRect(x + 1, y - 3, 1, 1);
+      }
+    }
+  }
+
+  /** A platoon's mortar in its pit: base plate, tube on its bipod, ammunition beside it. */
+  private drawMortarPits(w: World): void {
+    const g = this.g;
+    for (const side of ["us", "de"] as const) {
+      const pit = w.platoons[side]?.mortarPit;
+      if (!pit) continue;
+      const x = pit.x * TILE, y = pit.y * TILE;
+      g.fillStyle = "#2a2a24";
+      g.fillRect(x + 4, y + 11, 9, 3);
+      g.fillStyle = "#4a4a40";
+      g.fillRect(x + 5, y + 11, 7, 1);
+      g.fillStyle = "#6a6a5c";
+      pxLine(g, x + 9, y + 11, x + 6, y + 2);
+      pxLine(g, x + 10, y + 11, x + 7, y + 2);
+      g.fillStyle = "#2c2f2a";
+      pxLine(g, x + 8, y + 10, x + 5, y + 3);
+      g.fillStyle = "#16160f";
+      g.fillRect(x + 4, y + 1, 4, 2);
+      g.fillStyle = "#8a8a7c";
+      pxLine(g, x + 12, y + 7, x + 15, y + 13);
+      pxLine(g, x + 6, y + 8, x + 3, y + 13);
+      g.fillStyle = "#6a5a38";
+      g.fillRect(x + 11, y + 1, 4, 3);
+      g.fillStyle = "#4a3e26";
+      g.fillRect(x + 11, y + 3, 4, 1);
+      g.fillStyle = "#9a8a50";
+      g.fillRect(x + 1, y + 6, 2, 4);
+      g.fillRect(x + 1, y + 11, 2, 3);
+    }
+  }
+
   /** A building at three-quarter view: its south wall and its roof. */
   private drawBuilding(w: World, b: Building): void {
     let c = this.houses.get(b.id);
@@ -989,13 +1084,9 @@ export class Renderer {
             e.y0 = m.y;
           }
           const a = Math.max(0, t - 0.25), b = Math.min(1, t + 0.1);
-          g.strokeStyle = e.color;
-          g.globalAlpha = 0.9;
-          g.lineWidth = 1;
-          g.beginPath();
-          g.moveTo(e.x0 + (e.x1 - e.x0) * a, e.y0 + (e.y1 - e.y0) * a);
-          g.lineTo(e.x0 + (e.x1 - e.x0) * b, e.y0 + (e.y1 - e.y0) * b);
-          g.stroke();
+          g.fillStyle = e.color;
+          g.globalAlpha = 0.95;
+          pxLine(g, e.x0 + (e.x1 - e.x0) * a, e.y0 + (e.y1 - e.y0) * a, e.x0 + (e.x1 - e.x0) * b, e.y0 + (e.y1 - e.y0) * b);
           g.globalAlpha = 1;
           break;
         }
@@ -1078,49 +1169,33 @@ export class Renderer {
           const p = this.worldPos(s, prev, this.alpha);
           const tx = pos.x * TILE + 8, ty = pos.y * TILE + 8;
           if (Math.hypot(tx - p.x, ty - p.y) < 6) continue;
-          g.strokeStyle = color;
-          g.globalAlpha = 0.35;
-          g.lineWidth = 1;
-          g.setLineDash(o.kind === "move" || o.kind === "assault" || o.kind === "withdraw" ? [] : [2, 2]);
-          g.beginPath();
-          g.moveTo(p.x, p.y);
-          g.lineTo(tx, ty);
-          g.stroke();
-          g.setLineDash([]);
-          g.globalAlpha = 0.8;
-          g.strokeRect(tx - 2, ty - 2, 4, 4);
+          g.fillStyle = color;
+          g.globalAlpha = 0.45;
+          pxLine(g, p.x, p.y, tx, ty, o.kind === "move" || o.kind === "assault" || o.kind === "withdraw" ? 0 : 2);
+          g.globalAlpha = 0.9;
+          pxBox(g, Math.round(tx) - 2, Math.round(ty) - 2, 4, 4);
           g.globalAlpha = 1;
         }
         if (o.kind === "suppress" && o.target) {
           const tx = o.target.x * TILE + 8, ty = o.target.y * TILE + 8;
-          g.strokeStyle = color;
-          g.globalAlpha = 0.7;
-          g.beginPath();
-          g.arc(tx, ty, 10, 0, Math.PI * 2);
-          g.stroke();
+          g.fillStyle = color;
+          g.globalAlpha = 0.85;
+          pxEllipse(g, Math.round(tx), Math.round(ty), 10, 10);
           g.globalAlpha = 1;
         }
       }
       if (sq.focus && sq.state !== "advance") {
         const fx = sq.focus.x * TILE + 8, fy = sq.focus.y * TILE + 8;
-        g.strokeStyle = "#ff5a4a";
-        g.lineWidth = 1.5;
-        g.beginPath();
-        g.moveTo(fx - 4, fy - 4);
-        g.lineTo(fx + 4, fy + 4);
-        g.moveTo(fx + 4, fy - 4);
-        g.lineTo(fx - 4, fy + 4);
-        g.stroke();
+        g.fillStyle = "#ff5a4a";
+        for (const o of [0, 1]) {
+          pxLine(g, fx - 4 + o, fy - 4, fx + 4 + o, fy + 4);
+          pxLine(g, fx + 4 + o, fy - 4, fx - 4 + o, fy + 4);
+        }
       }
       if (sq.flankPoint && (sq.state === "flank" || sq.state === "assault")) {
         const fx = sq.flankPoint.x * TILE + 8, fy = sq.flankPoint.y * TILE + 8;
-        g.strokeStyle = color;
-        g.lineWidth = 1.5;
-        g.setLineDash([4, 3]);
-        g.beginPath();
-        g.arc(fx, fy, 14, 0, Math.PI * 2);
-        g.stroke();
-        g.setLineDash([]);
+        g.fillStyle = color;
+        pxEllipse(g, Math.round(fx), Math.round(fy), 14, 14, 3);
       }
     }
   }
@@ -1132,20 +1207,12 @@ export class Renderer {
       const e = w.maybe(id);
       if (!e) continue;
       const q = this.worldPos(e, prev, this.alpha);
-      g.strokeStyle = "rgba(255,225,74,0.55)";
-      g.lineWidth = 0.8;
-      g.setLineDash([3, 3]);
-      g.beginPath();
-      g.moveTo(p.x, p.y);
-      g.lineTo(q.x, q.y);
-      g.stroke();
-      g.setLineDash([]);
+      g.fillStyle = "rgba(255,225,74,0.7)";
+      pxLine(g, p.x, p.y, q.x, q.y, 3);
     }
     if (s.underFire && w.tick - s.underFire.tick < 10) {
-      g.strokeStyle = "rgba(255,90,74,0.6)";
-      g.beginPath();
-      g.arc(s.underFire.x * TILE + 8, s.underFire.y * TILE + 8, 6, 0, Math.PI * 2);
-      g.stroke();
+      g.fillStyle = "rgba(255,90,74,0.75)";
+      pxEllipse(g, Math.round(s.underFire.x * TILE + 8), Math.round(s.underFire.y * TILE + 8), 6, 6);
     }
   }
 
@@ -1164,6 +1231,50 @@ export class Renderer {
       g.fillText(text, p.x - tw / 2, p.y + 13);
     }
   }
+}
+
+/** A line in square 1-pixel blocks (Bresenham); `dash` > 0 draws that many on, that many off. */
+function pxLine(g: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, dash = 0): void {
+  let x = Math.round(x0), y = Math.round(y0);
+  const X = Math.round(x1), Y = Math.round(y1);
+  const dx = Math.abs(X - x), dy = -Math.abs(Y - y), sx = x < X ? 1 : -1, sy = y < Y ? 1 : -1;
+  let err = dx + dy, n = 0;
+  for (let guard = 0; guard < 5000; guard++) {
+    if (dash === 0 || n % (dash * 2) < dash) g.fillRect(x, y, 1, 1);
+    n++;
+    if (x === X && y === Y) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+}
+
+/** An ellipse outline in square 1-pixel blocks. */
+function pxEllipse(g: CanvasRenderingContext2D, cx: number, cy: number, rx: number, ry: number, dash = 0): void {
+  const n = Math.max(12, Math.ceil(Math.PI * 2 * Math.max(rx, ry)));
+  let lx = NaN, ly = NaN, k = 0;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const x = Math.round(cx + Math.cos(a) * rx), y = Math.round(cy + Math.sin(a) * ry);
+    if (x === lx && y === ly) continue;
+    lx = x;
+    ly = y;
+    if (dash === 0 || k++ % (dash * 2) < dash) g.fillRect(x, y, 1, 1);
+  }
+}
+
+/** A hollow square in 1-pixel blocks. */
+function pxBox(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+  g.fillRect(x, y, w, 1);
+  g.fillRect(x, y + h - 1, w, 1);
+  g.fillRect(x, y, 1, h);
+  g.fillRect(x + w - 1, y, 1, h);
 }
 
 /** The whole field in miniature, with both sides as dots and the camera's view. */

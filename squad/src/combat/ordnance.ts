@@ -307,6 +307,7 @@ export function missionStep(w: World): void {
           continue;
         }
         incoming(w, m.kind, side, m.target, cfg.spotScatter, m.calledBy, true);
+        if (pl.mortarPit && m.kind === "mortar") w.emit("mortar_fire", [], { side, at: [pl.mortarPit.x, pl.mortarPit.y], target: [m.target.x, m.target.y] });
         m.fired = 1;
       } else if (w.tick >= m.effectTick && (w.tick - m.effectTick) % cfg.roundInterval === 0 && m.fired >= 1) {
         if (dangerClose(w, side, m)) {
@@ -315,6 +316,7 @@ export function missionStep(w: World): void {
           continue;
         }
         incoming(w, m.kind, side, m.target, cfg.effectScatter, m.calledBy);
+        if (pl.mortarPit && m.kind === "mortar") w.emit("mortar_fire", [], { side, at: [pl.mortarPit.x, pl.mortarPit.y], target: [m.target.x, m.target.y] });
         m.fired++;
       }
     }

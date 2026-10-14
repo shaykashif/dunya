@@ -295,6 +295,25 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
   // ---- Blown: catch his breath while nobody is shooting at him ----
   if (s.fatigue > cfg.fatigue.winded * 0.75 && !underFire) out.push(cand("hold", "breathe", "catch his breath", { duration: 3, value: 0.15 + 0.4 * s.fatigue, safety: 0.2 }));
 
+  // ---- The medic goes where the platoon goes: a few paces behind the nearest squad, not waiting at the rear ----
+  if (s.role === "medic" && !s.pinned && s.suppression < 0.5) {
+    const pl = w.platoons[s.side];
+    const mates = pl.squadIds
+      .flatMap((id) => w.squad(id).members)
+      .map((id) => w.soldier(id))
+      .filter((m) => w.able(m) && m.role !== "medic" && m.role !== "sniper" && m.z === 0);
+    let nearest: Soldier | null = null;
+    for (const m of mates) if (!nearest || dist(m, s) < dist(nearest, s)) nearest = m;
+    if (nearest && dist(nearest, s) > 8) {
+      const back = pl.rearY > nearest.y ? 1 : -1;
+      const spot = w.freeTileNear({ x: nearest.x, y: nearest.y + back * 3 }, 4, s.id);
+      if (spot && w.map.reachable(s, spot)) {
+        const hot = underFire || exposureAt(w, s, spot) > 0.5;
+        out.push(cand("move", `follow:${spot.x},${spot.y}`, "keep up with the platoon", { dest: spot, pace: hot ? "crouch" : "walk", value: 0.7, ordered: true, danger: 0.15 * exposureAt(w, s, spot), safety: 0.1 }));
+      }
+    }
+  }
+
   // ---- Hold where he is ----
   out.push(cand("hold", "hold", contacts.length ? "keep watch from cover" : "wait", { duration: 2, value: 0.18 + (atPosition(s, order) ? 0.12 : 0), ordered: atPosition(s, order) && (order.kind === "hold" || order.kind === "overwatch" || order.kind === "suppress"), safety: coverHere * 0.6 }));
 

@@ -143,6 +143,50 @@ export function hearShot(w: World, shooter: Soldier, spec: WeaponSpec): void {
 }
 
 /** Known, live enemy contacts of a squad, freshest first. */
+/**
+ * Forward teams with a working radio pass what they see back to platoon
+ * headquarters and the squads on the line, a fresh sighting at a time. Kill
+ * the radioman and the line is blind to them again.
+ */
+export function scoutStep(w: World): void {
+  for (const side of ["us", "de"] as const) {
+    const pl = w.platoons[side];
+    if (!pl || pl.scoutIds.length === 0) continue;
+    // A squad lying in ambush keeps its eyes on its own patch and its mouth shut; the radio does not wake it.
+    const listeners = [pl.hqSquadId, ...pl.squadIds].map((id) => w.squad(id)).filter((q) => q.state !== "ambush");
+    for (const id of pl.scoutIds) {
+      const sq = w.squad(id);
+      const radio = sq.members.map((m) => w.soldier(m)).find((m) => m.role === "radioman" && m.status === "active" && m.conscious && !m.broken);
+      if (!radio) continue;
+      let seen: Contact | null = null;
+      let passed = 0;
+      for (const c of Object.values(sq.contacts)) {
+        if (w.tick - c.tick > 1) continue;
+        const e = w.soldier(c.id);
+        if (e.status !== "active") continue;
+        seen = c;
+        for (const l of listeners) {
+          const known = l.contacts[c.id];
+          if (known && w.tick - known.tick <= 2) continue;
+          updateContact(w, l, e, { x: c.x, y: c.y }, false);
+          const nc = l.contacts[c.id];
+          if (nc) {
+            nc.identified = c.identified;
+            nc.automatic = c.automatic;
+            nc.sniper = c.sniper;
+            nc.z = c.z;
+          }
+          passed++;
+        }
+      }
+      if (seen && passed > 0 && w.tick >= (radio.cooldowns["radio"] ?? 0)) {
+        radio.cooldowns["radio"] = w.tick + 12;
+        w.emit("radio", [radio.id], { by: radio.id, squad: sq.id, at: [seen.x, seen.y], enemy: seen.id, automatic: seen.automatic, sniper: seen.sniper });
+      }
+    }
+  }
+}
+
 export function liveContacts(w: World, squad: Squad, maxAge = 45): Contact[] {
   return Object.values(squad.contacts)
     .filter((c) => !c.down && w.tick - c.tick <= maxAge)

@@ -105,15 +105,15 @@ function soundsFor(e: SimEvent): void {
         if (weapon !== "pistol" || k === 0) sfx.bulletPass(fx, fy, ax, ay, (k / shown) * span, 1.6);
       }
       const delay = span * 0.6 + 0.05;
-      if ((d.hits as number[]).length > 0) sfx.play("impact.flesh", { x: ax, y: ay, gain: 0.9, reach: 1.1, close: true, delay });
+      if ((d.hits as number[]).length > 0) sfx.play("impact.flesh", { x: ax, y: ay, gain: 0.9, reach: 0.8, close: true, closeSpan: 14, delay });
       else {
         // A miss: a whizz past, then whatever it struck.
         const surf = world.map.inBounds(Math.floor(ax), Math.floor(ay)) ? impactOf(world.map.at(Math.floor(ax), Math.floor(ay))) : "dirt";
         const r = Math.random();
-        if (r < 0.85) sfx.playLimited("crack", 45, "crack", { x: ax, y: ay, gain: 1.1, reach: 1.1, delay: span * 0.4 });
-        else if (r < 0.95) sfx.play("whiz", { x: ax, y: ay, gain: 0.3, reach: 1, close: true, delay: span * 0.4 });
-        sfx.play(`impact.${surf}`, { x: ax, y: ay, gain: surf === "stone" ? 1.1 : 0.9, reach: 1.4, close: true, delay });
-        if ((surf === "stone" || surf === "wood") && Math.random() < 0.3) sfx.play("impact.ricochet", { x: ax, y: ay, gain: 0.5, reach: 1.1, close: true, delay: delay + 0.04 });
+        if (r < 0.85) sfx.playLimited("crack", 45, "crack", { x: ax, y: ay, gain: 1.1, reach: 0.8, close: true, closeSpan: 14, delay: span * 0.4 });
+        else if (r < 0.95) sfx.play("whiz", { x: ax, y: ay, gain: 0.3, reach: 0.8, close: true, closeSpan: 14, delay: span * 0.4 });
+        sfx.play(`impact.${surf}`, { x: ax, y: ay, gain: surf === "stone" ? 1.1 : 0.9, reach: 0.8, close: true, closeSpan: 14, delay });
+        if ((surf === "stone" || surf === "wood") && Math.random() < 0.3) sfx.play("impact.ricochet", { x: ax, y: ay, gain: 0.5, reach: 0.8, close: true, closeSpan: 14, delay: delay + 0.04 });
       }
       break;
     }
@@ -132,6 +132,12 @@ function soundsFor(e: SimEvent): void {
     case "barrel_change": {
       const s = person(d.by);
       if (s) sfx.play("clank", { x: s.x, y: s.y, gain: 0.22, reach: 1, close: true });
+      break;
+    }
+    case "mortar_fire": {
+      const [x, y] = d.at as [number, number];
+      sfx.noteGunfire();
+      sfx.play("mortar.fire", { x, y, gain: 3.2, reach: 4.5, anywhere: true, carry: 2.5, priority: true });
       break;
     }
     case "grenade_thrown": {
@@ -298,6 +304,13 @@ function effectsFor(e: SimEvent): void {
     case "smoke": {
       const [x, y] = d.at as [number, number];
       renderer.addEffect({ kind: "pop", x: x * TILE + 8, y: y * TILE + 8, seed: e.seq, born: t, dur: 1.2, delay: 0 });
+      break;
+    }
+    case "mortar_fire": {
+      const [x, y] = d.at as [number, number];
+      renderer.addEffect({ kind: "flash", x: x * TILE + 6, y: y * TILE + 3, r: 5, born: t, dur: 0.12, delay: 0 });
+      renderer.addEffect({ kind: "puff", x: x * TILE + 6, y: y * TILE + 2, color: "rgba(200,200,190,A)", born: t, dur: 0.7, delay: 0.05 });
+      renderer.addEffect({ kind: "puff", x: x * TILE + 8, y: y * TILE + 6, color: "rgba(180,170,150,A)", born: t, dur: 0.6, delay: 0.1 });
       break;
     }
     case "callout": {
@@ -535,6 +548,7 @@ function frame(t: number): void {
   }
   panCamera(dt);
   easeZoom(dt);
+  renderer.hovered = hover ? pickAt(hover.sx, hover.sy) : null;
   renderer.draw(world, cam, opts, prev, alpha, selected, t / 1000);
   const halfW = rect.width / cam.zoom / 2;
   sfx.setListener((cam.x + halfW) / TILE, (cam.y + rect.height / cam.zoom / 2) / TILE, halfW / TILE);
@@ -1076,7 +1090,7 @@ canvas.addEventListener(
     const rect = canvas.getBoundingClientRect();
     const px = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? rect.height : 1);
     const from = zoomGoal?.zoom ?? cam.zoom;
-    zoomToward(from - Math.max(-250, Math.min(250, px)) * 0.006, ev.clientX - rect.left, ev.clientY - rect.top);
+    zoomToward(from * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.005), ev.clientX - rect.left, ev.clientY - rect.top);
   },
   { passive: false },
 );
@@ -1151,7 +1165,7 @@ function panCamera(dt: number): void {
   if (keys.has("d") || keys.has("arrowright")) { cam.x += v; moved = true; }
   if (keys.has("q") || keys.has("e")) {
     const rect = canvas.getBoundingClientRect();
-    zoomToward(cam.zoom + (keys.has("e") ? 1 : -1) * dt * 4, rect.width / 2, rect.height / 2);
+    zoomToward(cam.zoom * Math.exp((keys.has("e") ? 1 : -1) * dt * 2.4), rect.width / 2, rect.height / 2);
   }
   if (moved) {
     follow = false;
