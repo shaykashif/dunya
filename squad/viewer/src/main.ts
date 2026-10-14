@@ -1,6 +1,7 @@
 import type { Engine } from "../../src/engine/engine.ts";
 import { aimFactor, armFactor, bleedingOf, cannotWalk, disfigurement, fightingPain, mobility, severityWord, sightFactor } from "../../src/entities/body.ts";
 import { describeInjury } from "../../src/entities/injuries.ts";
+import { firstBlood, verdict } from "../../src/battle/verdict.ts";
 import { EventLog, type SimEvent } from "../../src/log/events.ts";
 import { createSimulation } from "../../src/sim.ts";
 import type { BodyPart, Injury, Side, Soldier, Squad } from "../../src/world/types.ts";
@@ -931,9 +932,12 @@ function openModal(title: string, html: string): void {
 
 function openReport(): void {
   const r = world.result;
+  const v = verdict(world);
+  const blood = firstBlood(world, roleName);
   const head = r
-    ? `<div class="verdict">${r.winner === null ? "No decision" : r.winner === "us" ? "American victory" : "German victory"}</div><p>${esc(r.reason[0]!.toUpperCase() + r.reason.slice(1))}, at ${clock(world, r.tick)} after ${Math.round(r.tick / 60)} minutes of fighting.</p>`
+    ? `<div class="verdict">${r.winner === null ? "No decision" : r.winner === "us" ? "American victory" : "German victory"} · ${esc(v.label)}${r.winner === null ? "" : ` <small>(${v.score}/100)</small>`}</div><p>${esc(r.reason[0]!.toUpperCase() + r.reason.slice(1))}, at ${clock(world, r.tick)} after ${Math.round(r.tick / 60)} minutes of fighting.</p><p>${esc(v.summary)}</p>`
     : `<p class="hint">The battle is still going on (${world.clock()}). This is how it stands.</p>`;
+  const firstFall = blood ? `<h3>First to fall</h3><p>${esc(blood.text)}</p>` : "";
   const rows = (["us", "de"] as Side[]).map((side) => {
     const all = world.side(side);
     const c = (f: (s: Soldier) => boolean) => all.filter(f).length;
@@ -951,6 +955,7 @@ function openReport(): void {
   const after = world.aftermath ?? {};
   const html = `${head}
     <table class="aar"><tr><th></th><th>men</th><th>killed</th><th>wounded</th><th>prisoners</th><th>left field</th><th>rounds / hits</th></tr>${rows.join("")}</table>
+    ${firstFall}
     ${deeds.length ? `<h3>Notable</h3><p>${deeds.join("<br>")}</p>` : ""}
     <h3>The fallen</h3>
     <ul class="plain">${fallen.map((s) => `<li class="l-death"><time>${clock(world, s.deathTick ?? 0)}</time> ${personLink(s)}, ${esc(roleName(s))} of ${esc(world.squad(s.squadId).name)}, ${s.age}, ${esc(s.hometown)} — ${s.causeOfDeath === "wounds" ? "died of wounds" : "killed"}${worstWound(s) || s.injuries.length ? `: ${esc(describeInjury(s.injuries.slice().sort((a, b) => b.severity - a.severity)[0]!))}` : ""}</li>`).join("") || "<li>None.</li>"}</ul>

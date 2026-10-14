@@ -2,6 +2,7 @@
 import { createWriteStream, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventLog } from "../log/events.ts";
+import { firstBlood, verdict } from "../battle/verdict.ts";
 import { createSimulation, summarize, type SideSummary } from "../sim.ts";
 import { parseArgs } from "./args.ts";
 
@@ -43,6 +44,10 @@ console.log(side("US", summary.us));
 console.log(side("German", summary.de));
 console.log(`  ordnance  ${summary.grenades} grenades thrown, ${summary.mortarRounds} mortar and artillery rounds`);
 console.log(`  medics    ${summary.medicTreatments} treatments; a month on, ${summary.diedLater} more dead of wounds, ${summary.crippled} never to fight again`);
+const v = verdict(w);
+console.log(`  verdict   ${v.label}${v.winner === null ? "" : ` (${v.score}/100)`}: ${v.summary}`);
+const fb = firstBlood(w);
+if (fb) console.log(`  first     ${fb.text}`);
 console.log(`  events    ${summary.events}`);
 console.log(`  hash      ${summary.hash}`);
 if (out) console.log(`  written to ${out}`);

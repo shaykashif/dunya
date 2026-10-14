@@ -1,6 +1,7 @@
 // Whole battles: they end, the rules hold every tick (the engine checks its
 // invariants), and the tactics the fork is about actually happen.
 import { beforeAll, describe, expect, it } from "vitest";
+import { firstBlood, verdict } from "../src/battle/verdict.ts";
 import { EventLog, type SimEvent } from "../src/log/events.ts";
 import { createSimulation } from "../src/sim.ts";
 import type { World } from "../src/world/world.ts";
@@ -83,6 +84,20 @@ describe("battles", () => {
   it("medics treat the wounded, and men take over a fallen leader's squad", () => {
     expect(runs.some((r) => r.events.some((e) => e.type === "wounds_treated" && r.world.maybe(e.data.by as number)?.role === "medic"))).toBe(true);
     expect(runs.some((r) => r.events.some((e) => e.type === "takes_command"))).toBe(true);
+  });
+
+  it("every result has a character and a first man to fall", () => {
+    for (const r of runs) {
+      const v = verdict(r.world);
+      expect(v.label.length).toBeGreaterThan(0);
+      expect(v.score).toBeGreaterThanOrEqual(0);
+      expect(v.score).toBeLessThanOrEqual(100);
+      for (const side of ["us", "de"] as const) expect(v.losses[side].irrecoverable).toBeLessThanOrEqual(v.losses[side].start);
+      const fb = firstBlood(r.world);
+      const dead = r.world.soldiers.filter((s) => s.status === "dead");
+      expect(fb === null).toBe(dead.length === 0);
+      if (fb) expect(dead.every((s) => (s.deathTick ?? 0) >= fb.tick)).toBe(true);
+    }
   });
 
   it("the aftermath covers every wounded survivor", () => {

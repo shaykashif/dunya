@@ -3,7 +3,7 @@
 // automatic weapon and send the rifle team round a flank to assault, as 1944
 // doctrine taught both armies. Defenders hold their fire until the enemy is in
 // the open, and fall back by bounds when flanked or badly hurt.
-import { clusters, liveContacts, sideContacts } from "../combat/perception.ts";
+import { clusters, liveContacts, sideContacts, updateContact } from "../combat/perception.ts";
 import { isLeader, label, note, shout, spotOf } from "../entities/soldier.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { Building } from "../world/layout.ts";
@@ -182,6 +182,99 @@ function holdHere(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, fire
   }
 }
 
+/**
+ * Spreads a squad into a line abreast facing the enemy: every man to his own
+ * spot a few paces from his neighbours, with a line of fire if the ground
+ * gives one, and gets him there at a run. `shift` slides the whole line
+ * sideways from `center`, so squads can be put either side of each other.
+ */
+function deployLine(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, target: Point, center: Point, spacing = 3.5, shift = 0): void {
+  const all = [...men.A, ...men.B];
+  if (all.length === 0) return;
+  const f = facingFrom(center, target);
+  const px = -f.y, py = f.x;
+  const sorted = [...all].sort((a, b) => (a.x - center.x) * px + (a.y - center.y) * py - ((b.x - center.x) * px + (b.y - center.y) * py) || a.id - b.id);
+  const spot: Record<number, Point> = {};
+  const used: Point[] = [];
+  sorted.forEach((m, i) => {
+    const off = (i - (sorted.length - 1) / 2) * spacing + shift;
+    const base = { x: Math.round(center.x + px * off), y: Math.round(center.y + py * off) };
+    let best: Point | null = null, bestScore = -Infinity;
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const p = { x: base.x + dx, y: base.y + dy };
+        if (!w.map.inBounds(p.x, p.y) || !w.map.passable(p.x, p.y)) continue;
+        const t = w.map.at(p.x, p.y);
+        if (t === "hedge" || t === "water" || t === "building") continue;
+        if (!w.isFree(p.x, p.y, m.id, 0) || used.some((u) => cheb(u, p) < 2)) continue;
+        let score = -Math.hypot(dx, dy) * 0.3 + w.map.cover(p, target, "crouch") * 0.8;
+        if (canFireOn(w, p, target)) score += 1;
+        if (t === "foxhole" || t === "ditch") score += 0.3;
+        if (score > bestScore && w.map.reachable(m, p)) {
+          bestScore = score;
+          best = p;
+        }
+      }
+    }
+    const pick = best ?? w.freeTileNear(base, 4, m.id) ?? spotOf(m);
+    used.push(pick);
+    spot[m.id] = pick;
+  });
+  for (const el of ["A", "B"] as const) {
+    const mine: Record<number, Point> = {};
+    for (const m of men[el]) mine[m.id] = spot[m.id]!;
+    setOrder(w, sq, el, order("suppress", mine, "rush", "free", target));
+  }
+}
+
+/**
+ * Contact is the platoon's business. When a squad is shot at, the others
+ * within earshot hear the shouting and the guns: each is told where the enemy
+ * is and takes its place in a line either side of the squad in contact, spread
+ * out, rather than bunched on the road behind it.
+ */
+function platoonAlarm(w: World, pl: Platoon): void {
+  const squads = pl.squadIds.map((id) => w.squad(id));
+  const hit = squads.filter((s) => (s.state === "react" || s.state === "fix" || s.state === "flank" || s.state === "assault") && s.focus && w.tick - s.stateTick < 90);
+  if (hit.length === 0) return;
+  const lead = hit.reduce((a, s) => (s.stateTick < a.stateTick ? s : a), hit[0]!);
+  const leadMen = ableMen(w, lead);
+  if (leadMen.length === 0 || !lead.focus) return;
+  const center = centroid(leadMen);
+  const target = lead.focus;
+  const side = (n: number) => (n % 2 === 0 ? -1 : 1) * Math.ceil((n + 1) / 2);
+  let k = 0;
+  for (const o of squads) {
+    if (o === lead || (o.state !== "advance" && o.state !== "deploy" && o.state !== "support")) continue;
+    const men = elements(w, o);
+    const all = [...men.A, ...men.B];
+    if (all.length === 0 || dist(centroid(all), center) > 110) continue;
+    // What the squad in contact knows, the others now know.
+    for (const c of Object.values(lead.contacts)) {
+      if (w.tick - c.tick > 4) continue;
+      const e = w.maybe(c.id);
+      if (!e || e.status !== "active") continue;
+      updateContact(w, o, e, { x: c.x, y: c.y }, false);
+      const nc = o.contacts[c.id];
+      if (nc) {
+        nc.identified = c.identified;
+        nc.automatic = c.automatic;
+        nc.sniper = c.sniper;
+      }
+    }
+    const leader = w.maybe(o.leaderId);
+    o.focus = target;
+    const slot = side(k++);
+    // A little way back from the squad in contact, then spread along the line.
+    const back = facingFrom(center, target);
+    const slotCenter = { x: Math.round(center.x - back.x * 4 + -back.y * slot * 15), y: Math.round(center.y - back.y * 4 + back.x * slot * 15) };
+    const at = w.freeTileNear(slotCenter, 5) ?? slotCenter;
+    deployLine(w, o, men, target, at);
+    setState(w, o, "react", `${lead.name} is in contact: spreading out on the line and returning fire`);
+    if (leader) shout(w, leader, leader.side === "us" ? "Spread out! On line, face front!" : "Auseinander! Schützenlinie!", "contact", 40);
+  }
+}
+
 // ---------- Attackers ----------
 
 function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
@@ -222,8 +315,8 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
       if (focus && dist(pos, focus.at) <= 75) {
         setState(w, sq, "react", "contact! getting down and returning fire");
         shout(w, leader, leader.side === "us" ? (focus.automatic ? "MG! Get down!" : "Contact front!") : focus.automatic ? "MG! Deckung!" : "Feind voraus!", "contact", 40);
-        // The drill: get down, get into a spot you can shoot from, return fire.
-        holdHere(w, sq, men, "free", focus.at);
+        // The drill: get down, spread out into a line, get into spots you can shoot from, return fire.
+        deployLine(w, sq, men, focus.at, pos);
         return;
       }
       advanceByBounds(w, sq, men, objective, toEnemy);
@@ -885,6 +978,7 @@ function platoonStep(w: World, pl: Platoon): void {
   const hq = w.squad(pl.hqSquadId);
   const pltLeader = w.maybe(hq.leaderId);
   if (!pl.withdrawing) answerCalls(w, pl);
+  if (pl.role === "attack" && !pl.withdrawing) platoonAlarm(w, pl);
   // Support: an idle squad goes round to help one that is stuck.
   if (pl.role === "attack" && !pl.withdrawing) {
     const stuck = pl.squadIds.map((id) => w.squad(id)).find((s) => (s.state === "fix" || (s.state === "flank" && w.tick - s.stateTick > 90)) && s.focus && w.tick - s.stateTick > 40);

@@ -1307,6 +1307,53 @@ export function drawMinimap(canvas: HTMLCanvasElement, w: World, cam: Camera, vi
     g.fillStyle = s.status === "dead" ? "#000" : s.status === "active" ? (s.side === "us" ? "#ffd84a" : "#ff5a5a") : "#f4f0e8";
     g.fillRect(s.x, s.y, s.status === "active" ? 2 : 1, s.status === "active" ? 2 : 1);
   }
+  // Points of interest: where mortar and artillery rounds have landed, where they are about to, and each headquarters.
+  const px = (x: number, y: number, c: string, n = 1) => {
+    g.fillStyle = c;
+    g.fillRect(Math.round(x), Math.round(y), n, n);
+  };
+  for (const im of w.impacts) {
+    if (im.kind !== "mortar" && im.kind !== "artillery") continue;
+    const age = w.tick - im.tick;
+    const r = im.kind === "artillery" ? 3 : 2;
+    const col = age < 15 ? "#ffffff" : age < 40 ? "#ff9a2a" : "#b8481e";
+    const x = im.x, y = im.y;
+    for (let k = -r; k <= r; k++) {
+      px(x + k, y, col);
+      px(x, y + k, col);
+    }
+    px(x, y, "#fff4c8");
+  }
+  for (const o of w.ordnance) {
+    if ((o.kind !== "mortar" && o.kind !== "artillery") || o.burstTick <= w.tick) continue;
+    // A round in the air: a blinking ring where it will land.
+    if (Math.floor(w.tick) % 2 !== 0 && o.burstTick - w.tick > 1) continue;
+    const r = o.kind === "artillery" ? 4 : 3;
+    for (const [dx, dy] of [[-r, -r], [r, -r], [-r, r], [r, r], [0, -r], [0, r], [-r, 0], [r, 0]] as const) px(o.x + dx, o.y + dy, "#ff3a2a");
+  }
+  for (const side of ["us", "de"] as const) {
+    const pl = w.platoons[side];
+    if (!pl) continue;
+    const hq = w.squad(pl.hqSquadId);
+    const men = hq.members.map((id) => w.soldier(id)).filter((m) => m.status !== "dead" && m.status !== "routed" && m.carriedById === null);
+    if (men.length === 0) continue;
+    const cx = men.reduce((a, m) => a + m.x, 0) / men.length, cy = men.reduce((a, m) => a + m.y, 0) / men.length;
+    const col = side === "us" ? "#ffd84a" : "#ff5a5a";
+    // A hollow square with a dark ring round it, so it reads on any ground.
+    g.fillStyle = "#000000";
+    g.fillRect(Math.round(cx) - 3, Math.round(cy) - 3, 7, 7);
+    g.fillStyle = col;
+    g.fillRect(Math.round(cx) - 2, Math.round(cy) - 2, 5, 5);
+    g.fillStyle = "#000000";
+    g.fillRect(Math.round(cx) - 1, Math.round(cy) - 1, 3, 3);
+    px(cx, cy, col);
+    if (pl.mortarPit) {
+      px(pl.mortarPit.x, pl.mortarPit.y - 1, col);
+      px(pl.mortarPit.x - 1, pl.mortarPit.y, col);
+      px(pl.mortarPit.x + 1, pl.mortarPit.y, col);
+      px(pl.mortarPit.x, pl.mortarPit.y + 1, col);
+    }
+  }
   g.strokeStyle = "#fff";
   g.lineWidth = 1;
   g.strokeRect(cam.x / TILE, cam.y / TILE, viewW / cam.zoom / TILE, viewH / cam.zoom / TILE);

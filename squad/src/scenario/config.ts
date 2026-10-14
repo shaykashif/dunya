@@ -381,8 +381,9 @@ export const DEFAULT_CONFIG = {
   },
   aftermath: { days: 30, aidStationCare: 0.8 },
   forces: {
-    usSquads: [2, 3] as [number, number],
-    deSquads: [2, 2] as [number, number],
+    /** Rifle squads in the platoon: about fifty men a side with headquarters and, for the defenders, the forward teams. */
+    usSquads: [4, 4] as [number, number],
+    deSquads: [4, 4] as [number, number],
     /** Chance the Germans attack and the Americans defend. */
     germanAttackChance: 0.25,
     sniperChance: 0.45,

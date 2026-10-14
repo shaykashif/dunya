@@ -375,15 +375,24 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
   }
 
   // ---- Smoke: to cover a move across open ground, a withdrawal, or a casualty ----
-  if (s.smokes > 0 && isLeader(s) && !(s.cooldowns["smoke"] && w.tick < s.cooldowns["smoke"]!) && threats.length > 0) {
+  // Any man with a smoke grenade may throw it when his squad is pinned, going in to assault, or falling back across open ground.
+  if (s.smokes > 0 && !(s.cooldowns["smoke"] && w.tick < s.cooldowns["smoke"]!) && !(sq.shelledTick > w.tick - 3) && threats.length > 0 && w.phase === "battle") {
     const t = threats[0]!;
-    const moving = sq.state === "fall_back" || sq.state === "flank" || sq.state === "assault";
-    const exposedMen = sq.members.map((id) => w.soldier(id)).filter((m) => w.onField(m) && exposureAt(w, m, m) > 0.6);
-    if ((moving && exposedMen.length >= 2) || exposedMen.some((m) => m.status === "casualty")) {
-      const mid = { x: Math.round(t.x + (s.x - t.x) * 0.35), y: Math.round(t.y + (s.y - t.y) * 0.35) };
-      if (dist(s, mid) <= cfg.explosives.throwRange.frag + 2) {
-        out.push(cand("smoke", `smoke:${mid.x},${mid.y}`, "throw smoke to screen the men", { at: mid, duration: 1, value: 1, ordered: true, danger: 0.2, care: 0.4 }));
-      }
+    const mates = sq.members.map((id) => w.soldier(id)).filter((m) => w.onField(m));
+    const pinnedMen = mates.filter((m) => m.pinned || m.suppression > 0.5).length;
+    const pinnedDown = mates.length > 0 && pinnedMen >= Math.max(2, Math.ceil(mates.length * 0.3)) && (s.pinned || s.suppression > 0.2 || underFire);
+    const assaulting = sq.state === "assault" && w.tick - sq.stateTick < 25;
+    const moving = sq.state === "fall_back" || sq.state === "flank";
+    const exposedMen = mates.filter((m) => exposureAt(w, m, m) > 0.6);
+    const squadSmoke = w.clouds.some((c) => c.until > w.tick && dist(c, s) < 14);
+    const want = !squadSmoke && (pinnedDown || assaulting || (moving && exposedMen.length >= 2) || exposedMen.some((m) => m.status === "casualty"));
+    // Between the man and the enemy, never farther than he can throw and never right on his own men.
+    const d = dist(s, t);
+    const reach = Math.min(cfg.explosives.throwRange.frag, Math.max(5, d * 0.5));
+    const mid = { x: Math.round(s.x + ((t.x - s.x) / (d || 1)) * reach), y: Math.round(s.y + ((t.y - s.y) / (d || 1)) * reach) };
+    if (want && d > 7 && w.map.inBounds(mid.x, mid.y)) {
+      const bonus = pinnedDown ? 0.6 : assaulting ? 0.5 : 0;
+      out.push(cand("smoke", `smoke:${mid.x},${mid.y}`, pinnedDown ? "throw smoke to break up the enemy's aim and get the squad moving" : assaulting ? "throw smoke to cover the assault" : "throw smoke to screen the men", { at: mid, duration: 1, value: 0.9 + bonus, ordered: true, danger: 0.2, care: 0.4 }));
     }
   }
 

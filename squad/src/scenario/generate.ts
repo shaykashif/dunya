@@ -66,8 +66,8 @@ function usSquad(rng: Rng): Slot[] {
     { role: "asst_gunner", element: "A", rank: pv(), weapon: "m1_garand", ammo: 64, team: 240, grenades: 2 },
     { role: "ammo_bearer", element: "A", rank: pv(), weapon: "m1_garand", ammo: 64, team: 240, grenades: 2 },
     { role: "grenadier", element: "B", rank: pv(), weapon: "m1_garand", ammo: 80, grenades: 2, rifleGrenades: 6 },
-    { role: "rifleman", element: "B", rank: r.cpl!, weapon: "m1_garand", ammo: 88, grenades: 2 },
-    { role: "rifleman", element: "B", rank: pv(), weapon: "m1_garand", ammo: 88, grenades: 2 },
+    { role: "rifleman", element: "B", rank: r.cpl!, weapon: "m1_garand", ammo: 88, grenades: 2, smokes: 1 },
+    { role: "rifleman", element: "B", rank: pv(), weapon: "m1_garand", ammo: 88, grenades: 2, smokes: 1 },
     { role: "rifleman", element: "B", rank: pv(), weapon: "m1_garand", ammo: 88, grenades: 2 },
     { role: "rifleman", element: "B", rank: pv(), weapon: "m1_garand", ammo: 88, grenades: 2 },
   ];
@@ -82,8 +82,8 @@ function deSquad(rng: Rng, sniper: boolean): Slot[] {
     { role: "machine_gunner", element: "A", rank: r.ogefr!, weapon: "mg42", ammo: 250, grenades: 1 },
     { role: "asst_gunner", element: "A", rank: sch(), weapon: "kar98k", ammo: 45, team: 500, grenades: 1 },
     { role: "ammo_bearer", element: "A", rank: sch(), weapon: "kar98k", ammo: 45, team: 400, grenades: 1 },
-    { role: "rifleman", element: "B", rank: r.gefr!, weapon: "kar98k", ammo: 60, grenades: 2 },
-    { role: "rifleman", element: "B", rank: sch(), weapon: "kar98k", ammo: 60, grenades: 2 },
+    { role: "rifleman", element: "B", rank: r.gefr!, weapon: "kar98k", ammo: 60, grenades: 2, smokes: 1 },
+    { role: "rifleman", element: "B", rank: sch(), weapon: "kar98k", ammo: 60, grenades: 2, smokes: 1 },
     { role: "rifleman", element: "B", rank: sch(), weapon: "kar98k", ammo: 60, grenades: 2 },
     { role: "rifleman", element: "B", rank: sch(), weapon: "kar98k", ammo: 60, grenades: 2 },
   ];
@@ -131,9 +131,9 @@ function scoutSlots(side: Side): Slot[] {
   ];
 }
 
-const SQUAD_COLORS: Record<Side, string[]> = { us: ["#e8c84a", "#5ab0e8", "#e8844a"], de: ["#e05a5a", "#b08ae8", "#e878a8"] };
-const US_SQUAD_NAMES = ["1st Squad", "2nd Squad", "3rd Squad"];
-const DE_SQUAD_NAMES = ["1. Gruppe", "2. Gruppe", "3. Gruppe"];
+const SQUAD_COLORS: Record<Side, string[]> = { us: ["#e8c84a", "#5ab0e8", "#e8844a", "#9ae85a"], de: ["#e05a5a", "#b08ae8", "#e878a8", "#e8e05a"] };
+const US_SQUAD_NAMES = ["1st Squad", "2nd Squad", "3rd Squad", "4th Squad"];
+const DE_SQUAD_NAMES = ["1. Gruppe", "2. Gruppe", "3. Gruppe", "4. Gruppe"];
 
 function gauss(rng: Rng): number {
   return (rng.next() + rng.next() + rng.next() - 1.5) / 0.5;
@@ -305,7 +305,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
   const defender = enemyOf(attacker);
   const nUs = cfg.forces.usSquads[0] + rng.int(cfg.forces.usSquads[1] - cfg.forces.usSquads[0] + 1);
   const nDe = cfg.forces.deSquads[0] + rng.int(cfg.forces.deSquads[1] - cfg.forces.deSquads[0] + 1);
-  const counts: Record<Side, number> = { us: attacker === "us" ? nUs : Math.min(nUs, 2), de: attacker === "de" ? Math.max(nDe, 3) : nDe };
+  const counts: Record<Side, number> = { us: nUs, de: nDe };
   for (const side of [attacker, defender] as const) {
     const role = side === attacker ? "attack" : "defend";
     const hq = makeSquad(side, side === "us" ? "Platoon HQ" : "Zugtrupp", "#c8c8c8", true, hqSlots(side, side === "us" && rng.chance(cfg.forces.usSniperChance)), "hq");
@@ -376,7 +376,9 @@ function deployAttackers(w: World, side: Side, rng: Rng): void {
   pl.squadIds.forEach((id, i) => {
     const sq = w.squad(id);
     const reserve = sq.task === "reserve";
-    const cx = Math.max(8, Math.min(W - 9, Math.round(pl.objective.x + (reserve ? 0 : (i - (Math.min(n, 2) - 1) / 2) * 30) + (rng.next() - 0.5) * 6)));
+    const lineIds = pl.squadIds.filter((q) => w.squad(q).task !== "reserve");
+    const j = Math.max(0, lineIds.indexOf(id));
+    const cx = Math.max(8, Math.min(W - 9, Math.round(pl.objective.x + (reserve ? 0 : (j - (lineIds.length - 1) / 2) * 24) + (rng.next() - 0.5) * 6)));
     const cy = reserve ? H - 3 : H - 6;
     sq.members.forEach((mid, k) => placeAt(w, w.soldier(mid), { x: cx - 4 + (k % 4) * 2, y: cy - Math.floor(k / 4) * 2 + (reserve ? 0 : 1) }));
   });
