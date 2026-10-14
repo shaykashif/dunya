@@ -155,7 +155,7 @@ function scoutSlots(side: Side): Slot[] {
   ];
 }
 
-const SQUAD_COLORS: Record<Side, string[]> = { us: ["#e8c84a", "#5ab0e8", "#e8844a", "#9ae85a", "#e87ae0"], de: ["#e05a5a", "#b08ae8", "#e878a8", "#e8e05a", "#7ae8d0"] };
+const SQUAD_COLORS: Record<Side, string[]> = { us: ["#e8c84a", "#5ab0e8", "#e8844a", "#9ae85a", "#e87ae0"], de: ["#b08ae8", "#2fd0b8", "#f0f0f0", "#8a9cff", "#c8b08a"] };
 const US_SQUAD_NAMES = ["1st Squad", "2nd Squad", "3rd Squad", "4th Squad", "5th Squad"];
 const DE_SQUAD_NAMES = ["1. Gruppe", "2. Gruppe", "3. Gruppe", "4. Gruppe", "5. Gruppe"];
 
