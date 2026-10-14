@@ -460,7 +460,8 @@ function soundsFor(e: SimEvent): void {
     case "mortar_fire": {
       const [x, y] = d.at as [number, number];
       sfx.noteGunfire();
-      sfx.play("mortar.fire", { x, y, gain: 3.2, reach: 4.5, anywhere: true, carry: 2.5, priority: true });
+      // The thump of the tube is only heard from close by: zoomed in on the mortar itself.
+      sfx.play("mortar.fire", { x, y, gain: 3.2, reach: 2, close: true, closeSpan: 14, priority: true });
       break;
     }
     case "grenade_thrown": {
