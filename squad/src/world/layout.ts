@@ -103,6 +103,15 @@ function pickKind(cfg: SimConfig, rng: Rng): MapKind {
   return kinds[kinds.length - 1]!;
 }
 
+/**
+ * How far apart the two sides must start: beyond the longest sight on the
+ * field, a sniper's scope in clear weather, so nobody can see anybody, let
+ * alone shoot, until the attackers have moved.
+ */
+export function startClearance(cfg: SimConfig): number {
+  return Math.ceil(cfg.perception.maxRange * cfg.perception.scope) + cfg.map.startMargin;
+}
+
 export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
   const kind = cfg.map.kind ?? pickKind(cfg, rng);
   const spec = KINDS[kind];
@@ -122,8 +131,12 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
 
   const hamletY = rows.reduce((best, r) => (Math.abs(r - spec.settlementRow) < Math.abs(best - spec.settlementRow) ? r : best), rows[0]!);
   // The defended line is the next hedge south of the settlement, two fields or so.
+  // It stays out of sight of the line of departure: the attackers form up as far
+  // as 16 rows up from the south edge, and a defender may be placed a few tiles
+  // in front of his hedge.
   const minGap = spec.area.s + 4;
-  const lineRow = rows.filter((r) => r >= hamletY + minGap && r <= H - 38).sort((a, b) => Math.abs(a - (hamletY + spec.lineGap)) - Math.abs(b - (hamletY + spec.lineGap)))[0] ?? Math.min(H - 38, hamletY + spec.lineGap);
+  const lastLine = H - 16 - startClearance(cfg) - 6;
+  const lineRow = rows.filter((r) => r >= hamletY + minGap && r <= lastLine).sort((a, b) => Math.abs(a - (hamletY + spec.lineGap)) - Math.abs(b - (hamletY + spec.lineGap)))[0] ?? Math.min(lastLine, hamletY + spec.lineGap);
   if (!rows.includes(lineRow)) rows.push(lineRow);
   // No hedge inside the settlement.
   for (let k = rows.length - 1; k >= 0; k--) if (rows[k] !== hamletY && rows[k]! > hamletY - spec.area.n && rows[k]! < hamletY + spec.area.s && kind === "town") rows.splice(k, 1);

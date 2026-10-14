@@ -103,6 +103,25 @@ function objectiveFor(w: World, sq: Squad, pl: Platoon): Point {
   return w.freeTileNear({ x: Math.round(pl.objective.x + offset), y: pl.objective.y }, 6) ?? pl.objective;
 }
 
+/** Whether a point is near enough the defended hedge to be seen from it: from there on a squad moves by bounds. */
+function nearTheLine(w: World, p: Point): boolean {
+  const row = w.layout.line.rowAt[Math.max(0, Math.min(w.map.width - 1, Math.round(p.x)))] ?? w.layout.line.y;
+  return Math.abs(p.y - row) < w.config.perception.maxRange + 8;
+}
+
+/**
+ * Where a squad forming up far back marches to first: straight up its own
+ * lane to just out of sight of the enemy's hedge, so the squads come into
+ * view spread across the front rather than strung out together along the
+ * easiest road. Null once it is already that close.
+ */
+function approachPoint(w: World, pos: Point): Point | null {
+  if (nearTheLine(w, pos)) return null;
+  const row = w.layout.line.rowAt[Math.max(0, Math.min(w.map.width - 1, pos.x))] ?? w.layout.line.y;
+  const y = Math.round(row + Math.sign(pos.y - row) * (w.config.perception.maxRange + 20));
+  return w.freeTileNear({ x: pos.x, y }, 6) ?? null;
+}
+
 /** The enemy position a squad is fighting: its strongest known cluster, nearest first among equals. */
 function pickFocus(w: World, sq: Squad, at: Point): { at: Point; n: number; automatic: boolean } | null {
   const live = liveContacts(w, sq, 40);
@@ -185,7 +204,8 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
     case "support": {
       // The reserve lets the line squads get ahead before following.
       if (sq.task === "reserve" && w.tick < 150) return;
-      sq.route = boundsTo(w, sq.side, pos, objective);
+      const lane = approachPoint(w, pos);
+      sq.route = lane ? [...boundsTo(w, sq.side, pos, lane), ...boundsTo(w, sq.side, lane, objective)] : boundsTo(w, sq.side, pos, objective);
       sq.routeIdx = 0;
         sq.boundWp = -1;
       sq.bounding = "A";
@@ -383,7 +403,8 @@ function advanceByBounds(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] 
     return;
   }
   const all = [...men.A, ...men.B];
-  const danger = sq.firstContactTick !== null || dist(centroid(all), objective) < 95;
+  const here = centroid(all);
+  const danger = sq.firstContactTick !== null || dist(here, objective) < 95 || nearTheLine(w, here);
   const fwd = facingFrom(wp, sq.route[sq.routeIdx + 1] ?? objective);
   const face = Math.abs(fwd.x) + Math.abs(fwd.y) > 0 ? fwd : facing;
   if (!danger) {
