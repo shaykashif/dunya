@@ -112,6 +112,7 @@ export class Sfx {
   private voices = 0;
   private lastPlayed = new Map<string, number>();
   private loading = false;
+  private keepAlive: HTMLAudioElement | null = null;
   private cx = 0;
   private cy = 0;
   private half = 25;
@@ -140,8 +141,10 @@ export class Sfx {
 
   /** Browsers only let audio start after a gesture; call this from the first one. */
   unlock(): void {
+    this.playbackSession();
     if (this.ctx) {
-      if (this.ctx.state === "suspended") void this.ctx.resume();
+      // iOS parks the context as "interrupted" (after a call, a tab switch, the lock screen), not just "suspended".
+      if (this.ctx.state !== "running") void this.ctx.resume().catch(() => {});
       return;
     }
     if (this.loading) return;
@@ -149,9 +152,51 @@ export class Sfx {
     if (!AC) return;
     this.loading = true;
     const ctx = new AC();
+    void ctx.resume().catch(() => {});
     void this.load(ctx).catch(() => {
       this.loading = false;
     });
+  }
+
+  /**
+   * iPhones route Web Audio through the "ambient" session, which the ring/silent switch mutes. Ask for "playback",
+   * and where that API is missing (iOS before 17) loop a silent <audio> element, which flips the session the same way.
+   */
+  private playbackSession(): void {
+    try {
+      const nav = navigator as unknown as { audioSession?: { type: string } };
+      if (nav.audioSession) nav.audioSession.type = "playback";
+    } catch {
+      // Not supported: the fallback below covers it.
+    }
+    if (this.keepAlive) {
+      if (this.keepAlive.paused) void this.keepAlive.play().catch(() => {});
+      return;
+    }
+    try {
+      const n = 800;
+      const wav = new DataView(new ArrayBuffer(44 + n * 2));
+      const tag = (o: number, t: string): void => [...t].forEach((c, i) => wav.setUint8(o + i, c.charCodeAt(0)));
+      tag(0, "RIFF");
+      wav.setUint32(4, 36 + n * 2, true);
+      tag(8, "WAVEfmt ");
+      wav.setUint32(16, 16, true);
+      wav.setUint16(20, 1, true);
+      wav.setUint16(22, 1, true);
+      wav.setUint32(24, 8000, true);
+      wav.setUint32(28, 16000, true);
+      wav.setUint16(32, 2, true);
+      wav.setUint16(34, 16, true);
+      tag(36, "data");
+      wav.setUint32(40, n * 2, true);
+      const el = new Audio(URL.createObjectURL(new Blob([wav.buffer], { type: "audio/wav" })));
+      el.loop = true;
+      el.setAttribute("playsinline", "");
+      this.keepAlive = el;
+      void el.play().catch(() => {});
+    } catch {
+      // No audio element: nothing more to try.
+    }
   }
 
   private async load(ctx: AudioContext): Promise<void> {

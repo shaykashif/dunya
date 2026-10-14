@@ -1710,7 +1710,11 @@ function syncSound(): void {
   $<HTMLInputElement>("vol").value = String(Math.round(sfx.volume * 100));
 }
 let started = false;
-for (const ev of ["pointerdown", "keydown"] as const) window.addEventListener(ev, () => started && sfx.unlock(), { capture: true });
+// iOS only counts touchend and click as audio-unlocking gestures (not pointerdown), and drops audio when the tab is hidden.
+for (const ev of ["pointerdown", "touchend", "click", "keydown"] as const) window.addEventListener(ev, () => started && sfx.unlock(), { capture: true });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && started) sfx.unlock();
+});
 // Any input of the player's own takes the camera back from a followed message.
 window.addEventListener("pointerdown", (ev) => {
   if (cine && !(ev.target as HTMLElement).closest(".bolt")) endCine(true);
