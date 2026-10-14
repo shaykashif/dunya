@@ -865,7 +865,6 @@ function runnersStep(w: World, pl: Platoon, boss: Soldier | undefined | null): v
 /** The platoon leader answers: the best free squad goes, or else the mortars are told where. */
 function answerCalls(w: World, pl: Platoon): void {
   const pltLeader = w.maybe(w.squad(pl.hqSquadId).leaderId);
-  runnersStep(w, pl, pltLeader);
   for (const caller of pl.squadIds.map((id) => w.squad(id))) {
     const call = caller.help;
     if (!call || call.answered || call.arrives > w.tick) continue;
@@ -1547,6 +1546,11 @@ function displaceStep(w: World, sq: Squad, pl: Platoon, men: readonly Soldier[],
 /** Engine rule each tick: platoons think every ten seconds, squads every two. */
 export function commandStep(w: World): void {
   if (w.phase !== "battle") return;
+  // Runners are on their feet every second, not only when the platoon leader next thinks.
+  for (const side of [w.attacker, enemyOf(w.attacker)] as const) {
+    const pl = w.platoons[side];
+    runnersStep(w, pl, w.maybe(w.squad(pl.hqSquadId).leaderId));
+  }
   for (const side of [w.attacker, enemyOf(w.attacker)] as const) {
     const pl = w.platoons[side];
     if (w.tick % 10 === (side === "us" ? 0 : 5)) platoonStep(w, pl);

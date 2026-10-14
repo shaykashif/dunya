@@ -1637,6 +1637,19 @@ canvas.addEventListener("pointerup", (ev) => {
   const rect = canvas.getBoundingClientRect();
   const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
   const tx = Math.floor((sx / cam.zoom + cam.x) / TILE), ty = Math.floor((sy / cam.zoom + cam.y) / TILE);
+  // A runner: click him to run along with him.
+  for (const r of world.runners) {
+    const rx = r.x * TILE + 8, ry = r.y * TILE + 8;
+    const px = (rx - cam.x) * cam.zoom, py = (ry - cam.y) * cam.zoom;
+    if (Math.hypot(px - sx, py - 4 * cam.zoom - sy) <= Math.max(18, 10 * cam.zoom)) {
+      runnerFollow = { squad: r.squadId, lastMark: 0 };
+      scopeTour = null;
+      follow = false;
+      userCamera = true;
+      zoomGoal = null;
+      return;
+    }
+  }
   // A sniper's scope: ride the line of sight to whoever he is watching.
   const scope = renderer.scopeAt(sx, sy);
   if (scope) {
