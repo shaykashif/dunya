@@ -1654,11 +1654,7 @@ window.addEventListener("keydown", (ev) => {
     paused = !paused;
     syncControls();
     ev.preventDefault();
-  } else if (ev.shiftKey && /^Digit[1-6]$/.test(ev.code)) setSpeed(Number(ev.code.slice(5)) - 1);
-  else if (!ev.shiftKey && k === "1") setPower(power === "artillery" ? "inspect" : "artillery");
-  else if (!ev.shiftKey && k === "2") setPower(power === "smoke" ? "inspect" : "smoke");
-  else if (!ev.shiftKey && k === "3") setPower(power === "sniper" ? "inspect" : "sniper");
-  else if (k >= "4" && k <= "6") setSpeed(Number(k) - 1);
+  } else if (k >= "1" && k <= "6") setSpeed(Number(k) - 1);
   else if (k === "r") toggle("roofs");
   else if (k === "n") toggle("names");
   else if (k === "o") toggle("orders");
