@@ -294,6 +294,8 @@ export const DEFAULT_CONFIG = {
     effectDelay: 12,
     /** Seconds a round is in the air after it is fired; men within earshot hear it coming for the last two. */
     flight: { mortar: 9, artillery: 12, smoke_shell: 9 },
+    /** Seconds from a player's call to the first burst; the guns are already laid. */
+    callIn: { artillery: 5, smoke_shell: 5 },
     whistleRadius: 10,
     roundInterval: 2,
     spotScatter: 7,
