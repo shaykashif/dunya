@@ -4,7 +4,7 @@
 // doctrine taught both armies. Defenders hold their fire until the enemy is in
 // the open, and fall back by bounds when flanked or badly hurt.
 import { clusters, liveContacts, sideContacts, updateContact } from "../combat/perception.ts";
-import { isLeader, label, note, shout, spotOf } from "../entities/soldier.ts";
+import { gasp as gaspAt, isLeader, label, note, shout, spotOf } from "../entities/soldier.ts";
 import { incoming } from "../combat/ordnance.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { Building } from "../world/layout.ts";
@@ -1450,7 +1450,7 @@ function shellReaction(w: World, sq: Squad, pl: Platoon, leader: Soldier): boole
   w.emit("shelled", [leader.id], { squad: sq.id, at: [burst.x, burst.y], ranging, covered: Math.round(covered * 100) / 100 });
   if (sq.side === "de") {
     const gasp = men.find((m) => m.id !== leader.id) ?? leader;
-    shout(w, gasp, "Heiliger Strohsack!", "strohsack", 240);
+    gaspAt(w, gasp);
   }
   if (!sq.isHQ && pl.role === "attack" && sq.focus && dist(pos, sq.focus) <= cfg.rushThrough && strength(w, sq) > 0.4) {
     setState(w, sq, "assault", "mortars falling all around: no use staying, rushing the position");

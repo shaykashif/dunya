@@ -5,7 +5,7 @@ import { aimFactor, sightFactor } from "../entities/body.ts";
 import { kill } from "../entities/death.ts";
 import { HIT_LEGS, hitWeights, impactHealth, injure, pickPart } from "../entities/injuries.ts";
 import { moraleOnLoss, shakeMorale, suppress } from "../entities/morale.ts";
-import { clamp01, label, note, shout } from "../entities/soldier.ts";
+import { clamp01, gasp, label, note, shout } from "../entities/soldier.ts";
 import type { Rng } from "../engine/rng.ts";
 import { r3 } from "../log/events.ts";
 import type { WeaponSpec } from "../scenario/config.ts";
@@ -170,7 +170,7 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
     const fall = 1 - Math.min(1, d / (cfg.fire.suppressRadius + 0.5));
     suppress(w, o, spec.suppression * rounds * fall);
     // Caught by surprise: a German who was not already under fire swears.
-    if (o.side === "de" && (o.underFire === null || w.tick - o.underFire.tick > 40)) shout(w, o, "Heiliger Strohsack!", "strohsack", 240);
+    if (o.side === "de" && (o.underFire === null || w.tick - o.underFire.tick > 40)) gasp(w, o);
     o.underFire = fireBearing(w, o, shooter);
   }
   if (target && target.status === "active") target.underFire = fireBearing(w, target, shooter);

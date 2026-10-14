@@ -68,3 +68,9 @@ export function shout(w: World, s: Soldier, text: string, cooldownKey: string | 
   }
   w.emit("callout", [s.id], { by: s.id, text, at: [s.x, s.y] });
 }
+
+/** A German's startled oath: rare, a few in a whole battle, and never the same man twice soon. */
+export function gasp(w: World, s: Soldier): void {
+  if (s.side !== "de" || !w.rng.get("runners").chance(0.04)) return;
+  shout(w, s, "Heiliger Strohsack!", "strohsack", 1500);
+}
