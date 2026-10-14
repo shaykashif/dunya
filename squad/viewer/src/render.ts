@@ -5,7 +5,7 @@ import type { Building } from "../../src/world/layout.ts";
 import type { Soldier, Terrain } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
 import { blastShake, drawBlast, drawCollapse, drawDebris, shotShake, drawSmokeCloud, dustSpurt, muzzleFlash, shellShadow, smokePop } from "./fx.ts";
-import { Flora, buildingBounds, buildingShadow, buildingSprite, groundShadow, pick, type Prop } from "./scenery.ts";
+import { Flora, buildingBounds, wallHeight, buildingShadow, buildingSprite, groundShadow, pick, type Prop } from "./scenery.ts";
 import { blastStep, holeStep } from "../../src/world/map.ts";
 import { SIDE_COLORS, TILE, hash2, soldierSprite } from "./sprites.ts";
 
@@ -1258,9 +1258,11 @@ export class Renderer {
       inHouse.set(b, rec);
     }
     for (const [id, rec] of inHouse) {
-      const B = buildingBounds(w.buildings[id]!);
-      // Lower on the roof than before, and bobbing gently so it catches the eye.
-      const cx = Math.round(B.x + B.w / 2), y = Math.round(B.y) - 8 + Math.round(Math.sin(time * 3.2 + id) * 1.6);
+      const b = w.buildings[id]!;
+      // Sits just over the highest point: the cross on a chapel's spire, the ridge of any other roof. Bobs gently.
+      const cx = Math.round(b.x * TILE + (b.w * TILE) / 2);
+      const top = b.kind === "church" ? (b.y + b.h) * TILE - (wallHeight(b) + 46) - 22 - 9 : b.y * TILE - wallHeight(b);
+      const y = Math.round(top) - 3 + Math.round(Math.sin(time * 3.2 + id) * 1.6);
       const items: { rows: string[]; color: string; wd: number }[] = [];
       if (rec.sniper) items.push({ rows: CROSSHAIR_BADGE, color: rec.sniper.side === "us" ? "#ffd84a" : "#ff6a5a", wd: 9 });
       if (rec.gun) items.push({ rows: GUN_BADGE, color: rec.gun.side === "us" ? "#ffd84a" : "#ff6a5a", wd: 11 });
