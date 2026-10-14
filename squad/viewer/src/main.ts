@@ -5,6 +5,7 @@ import { EventLog, type SimEvent } from "../../src/log/events.ts";
 import { createSimulation } from "../../src/sim.ts";
 import type { BodyPart, Injury, Side, Soldier, Squad } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
+import { Sfx, impactOf, surfaceOf } from "./audio.ts";
 import { clock, describe, label, roleName, worstWound, type FeedLine } from "./feed.ts";
 import { BLAST_SECONDS } from "./fx.ts";
 import { Renderer, drawMinimap, gridSquare, type Camera, type ViewOptions } from "./render.ts";
@@ -29,6 +30,7 @@ const gridref = $("gridref");
 /** Where the pointer is over the battlefield, in screen pixels; null when it is off it. */
 let hover: { sx: number; sy: number } | null = null;
 const renderer = new Renderer(canvas);
+const sfx = new Sfx();
 const miniBase: { img: ImageData | null; version: number; world: World | null } = { img: null, version: -1, world: null };
 
 let engine: Engine;
@@ -60,6 +62,7 @@ const tickSeconds = () => 1 / SPEEDS[speed]!.tps;
 function onEvent(e: SimEvent): void {
   if (!world) return;
   effectsFor(e);
+  soundsFor(e);
   const line = describe(e, world);
   if (line) {
     feed.push(line);
@@ -68,6 +71,168 @@ function onEvent(e: SimEvent): void {
     if (line.major) dirty.events = true;
   }
   toastFor(e);
+}
+
+// ---------- Sound ----------
+
+const BOLT_GUNS = new Set(["kar98k", "kar98k_scoped", "m1903_scoped"]);
+
+function surfaceAt(x: number, y: number): string {
+  const tx = Math.floor(x), ty = Math.floor(y);
+  return world.map.inBounds(tx, ty) ? surfaceOf(world.map.at(tx, ty)) : "grass";
+}
+
+function soundsFor(e: SimEvent): void {
+  if (!sfx.ready) return;
+  const d = e.data;
+  const span = Math.min(0.9, tickSeconds());
+  const person = (id: unknown) => world.maybe(id as number);
+  switch (e.type) {
+    case "fire": {
+      const [fx, fy] = d.from as [number, number];
+      const [ax, ay] = d.at as [number, number];
+      const weapon = (d.weapon as string | null) ?? "pistol";
+      const rounds = d.rounds as number;
+      const shown = Math.min(rounds, 8);
+      sfx.noteGunfire();
+      const loud = (weapon === "mg42" ? 4 : weapon === "pistol" ? 2.8 : 3.4) * (shown > 3 ? 0.8 : 1);
+      for (let k = 0; k < shown; k++) {
+        sfx.play(`shot.${weapon}`, { x: fx, y: fy, gain: loud, reach: 3.6, anywhere: true, delay: (k / shown) * span, byDistance: true, priority: k === 0 });
+      }
+      if (BOLT_GUNS.has(weapon)) sfx.play("gun.bolt", { x: fx, y: fy, gain: 0.2, reach: 0.9, close: true, delay: 0.55 + span });
+      for (let k = 0; k < shown; k++) {
+        if (weapon !== "pistol" || k === 0) sfx.bulletPass(fx, fy, ax, ay, (k / shown) * span, 1.6);
+      }
+      const delay = span * 0.6 + 0.05;
+      if ((d.hits as number[]).length > 0) sfx.play("impact.flesh", { x: ax, y: ay, gain: 0.9, reach: 1.1, close: true, delay });
+      else {
+        // A miss: a whizz past, then whatever it struck.
+        const surf = world.map.inBounds(Math.floor(ax), Math.floor(ay)) ? impactOf(world.map.at(Math.floor(ax), Math.floor(ay))) : "dirt";
+        const r = Math.random();
+        if (r < 0.85) sfx.playLimited("crack", 45, "crack", { x: ax, y: ay, gain: 1.1, reach: 1.1, delay: span * 0.4 });
+        else if (r < 0.95) sfx.play("whiz", { x: ax, y: ay, gain: 0.3, reach: 1, close: true, delay: span * 0.4 });
+        sfx.play(`impact.${surf}`, { x: ax, y: ay, gain: surf === "stone" ? 1.1 : 0.9, reach: 1.4, close: true, delay });
+        if ((surf === "stone" || surf === "wood") && Math.random() < 0.3) sfx.play("impact.ricochet", { x: ax, y: ay, gain: 0.5, reach: 1.1, close: true, delay: delay + 0.04 });
+      }
+      break;
+    }
+    case "reload": {
+      const s = person(d.by);
+      if (!s) break;
+      const weapon = d.weapon as string | null;
+      if (weapon && BOLT_GUNS.has(weapon)) sfx.playLimited(`r${s.id}`, 200, "gun.clip", { x: s.x, y: s.y, gain: 0.2, reach: 1, close: true });
+      else if (weapon === "mg42" || weapon === "bar") sfx.playLimited(`r${s.id}`, 200, "clank", { x: s.x, y: s.y, gain: 0.2, reach: 1, close: true });
+      else {
+        sfx.playLimited(`r${s.id}`, 200, "gun.mag", { x: s.x, y: s.y, gain: 0.2, reach: 1, close: true });
+        sfx.play("gun.slide", { x: s.x, y: s.y, gain: 0.15, reach: 1, close: true, delay: 0.45 });
+      }
+      break;
+    }
+    case "barrel_change": {
+      const s = person(d.by);
+      if (s) sfx.play("clank", { x: s.x, y: s.y, gain: 0.22, reach: 1, close: true });
+      break;
+    }
+    case "grenade_thrown": {
+      const [fx, fy] = d.from as [number, number];
+      sfx.play("throw", { x: fx, y: fy, gain: 0.2, reach: 1.2, close: true });
+      break;
+    }
+    case "incoming": {
+      const [x, y] = d.at as [number, number];
+      const flight = Math.max(0.2, ((d.burst as number) - world.tick) * tickSeconds());
+      const total = 2.2;
+      sfx.play("whistle", { x, y, gain: 0.9, reach: 4, delay: Math.max(0, flight - total), offset: Math.max(0, total - flight) });
+      break;
+    }
+    case "explosion": {
+      const [x, y] = d.at as [number, number];
+      const kind = d.kind === "artillery" ? "artillery" : d.kind === "mortar" ? "mortar" : "frag";
+      sfx.noteGunfire();
+      const gain = kind === "artillery" ? 2.6 : kind === "mortar" ? 2.4 : 2.6;
+      sfx.play(`boom.${kind}`, { x, y, gain, reach: kind === "artillery" ? 7 : kind === "mortar" ? 5.5 : 4.5, anywhere: true, priority: true });
+      break;
+    }
+    case "smoke": {
+      const [x, y] = d.at as [number, number];
+      sfx.play("smoke", { x, y, gain: 0.55, reach: 2 });
+      break;
+    }
+    case "destroyed": {
+      const tiles = d.tiles as [number, number, string][];
+      for (let k = 0; k < Math.min(3, tiles.length); k++) sfx.play("debris", { x: tiles[k]![0], y: tiles[k]![1], gain: 0.6, reach: 2.2, delay: 0.05 + k * 0.12 });
+      break;
+    }
+    case "building_collapse": {
+      const b = world.buildings[d.building as number]!;
+      sfx.play("collapse", { x: b.x + b.w / 2, y: b.y + b.h / 2, gain: 0.95, reach: 6, priority: true });
+      break;
+    }
+    case "casualty":
+    case "death": {
+      const s = person(d.person ?? e.actors[0]);
+      if (s) sfx.playLimited(`p${s.id}`, 600, "voice.pain", { x: s.x, y: s.y, gain: e.type === "death" ? 0.2 : 0.25, reach: 1.7, close: true, rate: e.type === "death" ? 0.88 : 1 });
+      break;
+    }
+    case "callout": {
+      const s = person(d.by);
+      if (s) sfx.playLimited("callout", 250, "voice.shout", { x: s.x, y: s.y, gain: 0.18, reach: 1.5, close: true, rate: 0.9 });
+      break;
+    }
+    case "stumble":
+    case "dove": {
+      const s = person(d.person ?? e.actors[0]);
+      if (!s) break;
+      sfx.playLimited(`d${s.id}`, 500, `land.${surfaceAt(s.x, s.y)}`, { x: s.x, y: s.y, gain: 0.2, reach: 1.3, close: true });
+      sfx.play("voice.effort", { x: s.x, y: s.y, gain: 0.12, reach: 1.1, close: true });
+      break;
+    }
+    case "breach": {
+      if (d.stage !== "enter") break;
+      const s = person(e.actors[0]);
+      if (s) sfx.play("door", { x: s.x, y: s.y, gain: 0.7, reach: 1.8 });
+      break;
+    }
+  }
+}
+
+const strideAcc = new Map<number, number>();
+const lastSpot = new Map<number, { x: number; y: number }>();
+
+/** Boots on the ground: a step every stride a man covers, in the sound of what he stands on. */
+function footsteps(alpha: number): void {
+  if (!sfx.ready || paused || speed >= 4) return;
+  let budget = 10;
+  for (const s of world.soldiers) {
+    if (s.status === "dead" || s.status === "casualty" || s.carriedById !== null || s.posture === "prone" || !world.onField(s)) continue;
+    const p = renderer.worldPos(s, prev, alpha);
+    const x = (p.x - 8) / TILE, y = (p.y - 8) / TILE;
+    const last = lastSpot.get(s.id);
+    if (!last) {
+      lastSpot.set(s.id, { x, y });
+      continue;
+    }
+    const moved = Math.hypot(x - last.x, y - last.y);
+    last.x = x;
+    last.y = y;
+    if (moved === 0 || moved > 2) continue;
+    if (!sfx.audible(x, y, 1.1)) {
+      strideAcc.set(s.id, 0);
+      continue;
+    }
+    const stride = s.posture === "crouch" ? 0.65 : 0.8;
+    const acc = (strideAcc.get(s.id) ?? 0) + moved;
+    if (acc < stride) {
+      strideAcc.set(s.id, acc);
+      continue;
+    }
+    strideAcc.set(s.id, acc - stride);
+    if (budget-- <= 0) return;
+    const was = prev.get(s.id);
+    const run = was !== undefined && Math.hypot(s.x - was.x, s.y - was.y) > 0.9;
+    const surf = s.z > 0 ? "wood" : surfaceAt(x, y);
+    sfx.play(`step.${surf}.${run ? "run" : "walk"}`, { x, y, gain: run ? 0.15 : 0.1, reach: 1.1, close: true, rate: s.posture === "crouch" ? 0.92 : 1 });
+  }
 }
 
 function effectsFor(e: SimEvent): void {
@@ -370,6 +535,10 @@ function frame(t: number): void {
   panCamera(dt);
   easeZoom(dt);
   renderer.draw(world, cam, opts, prev, alpha, selected, t / 1000);
+  const halfW = rect.width / cam.zoom / 2;
+  sfx.setListener((cam.x + halfW) / TILE, (cam.y + rect.height / cam.zoom / 2) / TILE, halfW / TILE);
+  sfx.ambience(dt, world.weather.kind);
+  footsteps(alpha);
   drawMinimap(minimap, world, cam, rect.width, rect.height, miniBase);
   updateGridRef();
   updateHud();
@@ -965,6 +1134,10 @@ window.addEventListener("keydown", (ev) => {
   else if (k === "c") toggle("chronicle");
   else if (k === "b") openModal("Battle log", `<ul class="plain">${feedHtml(feed)}</ul>`);
   else if (k === "f") follow = !follow;
+  else if (k === "m") {
+    sfx.setEnabled(!sfx.enabled);
+    syncSound();
+  }
   else if (k === "x") setPower(power === "artillery" ? "inspect" : "artillery");
   else if (k === "z") setPower(power === "smoke" ? "inspect" : "smoke");
   else if (k === "k") setPower(power === "sniper" ? "inspect" : "sniper");
@@ -1072,6 +1245,26 @@ document.addEventListener("click", (ev) => {
   }
 });
 
+function syncSound(): void {
+  const b = $("sound");
+  b.textContent = !sfx.enabled || sfx.volume === 0 ? "🔇" : "🔊";
+  b.classList.toggle("on", sfx.enabled);
+  $<HTMLInputElement>("vol").value = String(Math.round(sfx.volume * 100));
+}
+for (const ev of ["pointerdown", "keydown"] as const) window.addEventListener(ev, () => sfx.unlock(), { capture: true });
+$("sound").addEventListener("click", () => {
+  sfx.unlock();
+  sfx.setEnabled(!sfx.enabled);
+  syncSound();
+});
+$<HTMLInputElement>("vol").addEventListener("input", (ev) => {
+  sfx.unlock();
+  sfx.setVolume(Number((ev.target as HTMLInputElement).value) / 100);
+  if (!sfx.enabled) sfx.setEnabled(true);
+  syncSound();
+});
+syncSound();
+
 $("pause").addEventListener("click", () => {
   paused = !paused;
   syncControls();
@@ -1117,4 +1310,5 @@ requestAnimationFrame(frame);
     follow = false;
   },
   select,
+  sfx,
 };
