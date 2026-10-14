@@ -57,6 +57,10 @@
   .source { position: fixed; top: 12px; right: 12px; display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--panel); border: 2px solid var(--edge); box-shadow: 0 3px 0 #000a; color: var(--ink); text-decoration: none; font-size: 18px; }
   .source:hover { border-color: var(--gold); }
   .source svg { width: 16px; height: 16px; fill: currentColor; }
+  @media (max-width: 700px) {
+    .source { top: auto; bottom: calc(12px + env(safe-area-inset-bottom)); right: 50%; transform: translateX(50%); }
+    body { padding-bottom: 64px; }
+  }
 </style>
 </head>
 <body>
