@@ -787,7 +787,7 @@ function toastFor(e: SimEvent): void {
       setTimeout(() => {
         if (!reportShown) {
           reportShown = true;
-          showEndPrompt();
+          openReport();
         }
       }, 600);
       break;
@@ -805,7 +805,6 @@ function newBattle(seed: number): void {
   reportShown = false;
   quickId = null;
   $("quick").classList.remove("open");
-  $("endprompt").classList.remove("open");
   renderer.reset();
   lastSquadAlert.clear();
   miniBase.img = null;
@@ -1397,20 +1396,6 @@ setInterval(() => {
   if (quickId !== null) renderQuick();
 }, 1000);
 
-function showEndPrompt(): void {
-  $("endprompt").classList.add("open");
-}
-
-$("endnew").addEventListener("click", () => {
-  $("endprompt").classList.remove("open");
-  $("random").click();
-});
-$("endreport").addEventListener("click", () => {
-  $("endprompt").classList.remove("open");
-  openReport();
-});
-$("endclose").addEventListener("click", () => $("endprompt").classList.remove("open"));
-
 function setTab(name: string): void {
   tab = name;
   document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
@@ -1468,8 +1453,13 @@ function openReport(): void {
     <h3>The fallen</h3>
     <ul class="plain">${fallen.map((s) => `<li class="l-death"><time>${clock(world, s.deathTick ?? 0)}</time> ${personLink(s)}, ${esc(roleName(s))} of ${esc(world.squad(s.squadId).name)}, ${s.age}, ${esc(s.hometown)} — ${s.causeOfDeath === "wounds" ? "died of wounds" : "killed"}${worstWound(s) || s.injuries.length ? `: ${esc(describeInjury(s.injuries.slice().sort((a, b) => b.severity - a.severity)[0]!))}` : ""}</li>`).join("") || "<li>None.</li>"}</ul>
     <h3>The wounded, and a month later</h3>
-    <ul class="plain">${hurt.map((s) => `<li class="l-wound">${personLink(s)} (${esc(world.squad(s.squadId).name)}): ${s.injuries.filter((i) => !i.permanent && i.severity >= 0.1).map((i) => esc(describeInjury(i))).join("; ")}${after[s.id] ? ` — <i>${esc(after[s.id]!.outcome)}</i>` : ""}</li>`).join("") || "<li>None.</li>"}</ul>`;
+    <ul class="plain">${hurt.map((s) => `<li class="l-wound">${personLink(s)} (${esc(world.squad(s.squadId).name)}): ${s.injuries.filter((i) => !i.permanent && i.severity >= 0.1).map((i) => esc(describeInjury(i))).join("; ")}${after[s.id] ? ` — <i>${esc(after[s.id]!.outcome)}</i>` : ""}</li>`).join("") || "<li>None.</li>"}</ul>
+    ${r ? `<div class="qbtns" style="justify-content:center;margin:14px 0 4px"><button id="aarnew">${icon("dice")} New battle (new seed)</button></div>` : ""}`;
   openModal(`After-action report · ${world.config.time.date}`, html);
+  document.getElementById("aarnew")?.addEventListener("click", () => {
+    $("modal").classList.remove("open");
+    $("random").click();
+  });
 }
 
 // ---------- Input ----------

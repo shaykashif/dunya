@@ -205,10 +205,6 @@
   #quick b { display: block; font-size: 20px; }
   #quick small { display: block; color: var(--dim); }
   .qbtns { display: flex; gap: 8px; margin-top: 8px; }
-  #endprompt { display: none; position: fixed; left: 50%; top: 18%; transform: translateX(-50%); z-index: 30; background: rgba(22,24,15,.97); border: 2px solid #f2c84a; padding: 12px 16px; text-align: center; box-shadow: 0 0 0 2px #000a, 0 0 18px #000a; }
-  #endprompt.open { display: block; }
-  #endprompt p { margin: 0 0 10px; font-size: 22px; }
-  #endprompt .qbtns { justify-content: center; flex-wrap: wrap; }
   #bolts { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 6; }
   .bolt { position: absolute; width: 26px; height: 30px; margin: -15px 0 0 -13px; padding: 0; display: grid; place-items: center; background: rgba(22,24,15,.94); border: 2px solid #f2c84a; box-shadow: 0 0 0 2px #000a, 0 0 10px #ffe070aa; cursor: pointer; pointer-events: auto; animation: boltpulse .9s ease-in-out infinite; }
   .bolt .px { height: 20px; }
@@ -276,7 +272,6 @@
     </div>
   </aside>
   <div id="quick"></div>
-  <div id="endprompt"><p>The battle is over. Fight another with a new seed?</p><div class="qbtns"><button id="endnew">New battle</button><button id="endreport">Report</button><button id="endclose">Not now</button></div></div>
   <div id="modal"><div class="box"><header><h2 id="mtitle">Report</h2><button id="mclose"><i data-icon="close"></i> close</button></header><div class="body" id="mbody"></div></div></div>
   <script src="dist/viewer.js"></script>
 </body>
