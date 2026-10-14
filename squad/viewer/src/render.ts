@@ -6,7 +6,7 @@ import type { Soldier, Terrain } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
 import { blastShake, drawBlast, drawCollapse, drawDebris, shotShake, drawSmokeCloud, dustSpurt, muzzleFlash, shellShadow, smokePop } from "./fx.ts";
 import { Flora, buildingBounds, buildingShadow, buildingSprite, groundShadow, pick, type Prop } from "./scenery.ts";
-import { holeStep } from "../../src/world/map.ts";
+import { blastStep, holeStep } from "../../src/world/map.ts";
 import { SIDE_COLORS, TILE, hash2, soldierSprite } from "./sprites.ts";
 
 export interface ViewOptions {
@@ -462,6 +462,9 @@ function weaponShape(s: Soldier, sx: number, sy: number, iw: number, prone: bool
   return { x, y, w: len, h: big ? 2 : 1, muzzle: { x: left ? x - 1 : x + len, y: y + (big ? 1 : 0.5) }, bipod: null };
 }
 
+const FLAG_MARK = ["x....", "xxxx.", "xxxxx", "xxxx.", "x....", "x...."];
+const PIN_MARK = ["xxxxx", ".xxx.", "..x.."];
+
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly g: CanvasRenderingContext2D;
@@ -634,10 +637,19 @@ export class Renderer {
   private drawCorpseStain(s: Soldier, p: { x: number; y: number }): void {
     if (s.status !== "dead" && s.status !== "casualty") return;
     const g = this.g;
-    g.fillStyle = "rgba(120,10,10,0.55)";
-    g.beginPath();
-    g.ellipse(p.x, p.y + 4, s.status === "dead" ? 7 : 4, s.status === "dead" ? 3.5 : 2, 0, 0, Math.PI * 2);
-    g.fill();
+    // A pool of square blocks on the world's 2-pixel grid: ragged at the edge, darker in the middle.
+    const B = 2;
+    const rx = s.status === "dead" ? 8 : 5, ry = s.status === "dead" ? 4 : 2.5;
+    const ox = Math.floor(p.x / B) * B, oy = Math.floor((p.y + 4) / B) * B;
+    for (let gy = -Math.ceil(ry / B) * B; gy <= Math.ceil(ry / B) * B; gy += B) {
+      for (let gx = -Math.ceil(rx / B) * B; gx <= Math.ceil(rx / B) * B; gx += B) {
+        const nx = gx / rx, ny = gy / ry;
+        const d = nx * nx + ny * ny + (hash2(s.id, gx, gy) - 0.5) * 0.9;
+        if (d >= 1) continue;
+        g.fillStyle = d < 0.35 ? "#4a0808" : d < 0.7 ? "#6e0f0f" : "#8a1a16";
+        g.fillRect(ox + gx, oy + gy, B, B);
+      }
+    }
   }
 
   /** An upper floor seen from above with the roof off: boards, inner walls, windows, the stairs. */
@@ -655,6 +667,12 @@ export class Renderer {
           px(x, y, "#9a7650", TILE, TILE);
           for (let row = 0; row < 16; row += 4) px(x, y + row, "#86643f", 16, 1);
           for (let k = 0; k < 4; k++) px(x + ((k * 7 + ty * 5) % 16), y + k * 4, "#7a5a38", 1, 4);
+          // Scorched and splintered where blasts have gone off.
+          const burn = blastStep(w.map.blasts[w.map.idx(tx, ty)]!);
+          for (let k = 0; k < burn * 5; k++) {
+            px(x + Math.floor(hash2(tx, ty, k + 400) * 14), y + Math.floor(hash2(ty, tx, k + 430) * 14), k % 3 === 0 ? "#1c140e" : "#3a2a1a", 2, 2);
+          }
+          for (let k = 0; k < burn * 2; k++) px(x + Math.floor(hash2(tx, ty, k + 460) * 14), y + Math.floor(hash2(ty, tx, k + 490) * 14), "#d4b88a", 2, 1);
           if (t === "stairs") {
             for (let k = 0; k < 4; k++) {
               px(x + 2, y + 2 + k * 3, "#b8946a", 12, 2);
@@ -670,6 +688,13 @@ export class Renderer {
             px(x + 4, y + 4, "#5a7a94", 3, 3);
           } else if (t === "rubble") {
             px(x + 2, y + 2, "#2a2218", 12, 12);
+          }
+          // Pocked and scorched by blasts and bullets.
+          const pocks = holeStep(w.map.holes[w.map.idx(tx, ty)]!) + blastStep(w.map.blasts[w.map.idx(tx, ty)]!);
+          for (let k = 0; k < pocks * 3; k++) {
+            const hx = x + 1 + Math.floor(hash2(tx, ty, k + 500) * 14), hy = y + 1 + Math.floor(hash2(ty, tx, k + 530) * 14);
+            px(hx, hy, "#1e1a16", 2, 2);
+            px(hx + 2, hy, "#a89c84");
           }
         } else {
           // Below the tower: the church roof.
@@ -745,7 +770,7 @@ export class Renderer {
    * worked out a few times a second into a small image, one pixel a block,
    * which is then stretched over the whole map in a single draw.
    */
-  private fog: { world: World; canvas: HTMLCanvasElement; img: ImageData; low: Float32Array; cols: number; stamp: number } | null = null;
+  private fog: { world: World; canvas: HTMLCanvasElement; img: ImageData; low: Float32Array; cols: number; stamp: number; row: number } | null = null;
 
   private drawGroundFog(w: World, time: number): void {
     if (w.weather.kind !== "fog") return;
@@ -769,32 +794,46 @@ export class Renderer {
           low[gy * cols + gx] = hi > lo ? 1 - (w.map.elev[ty * W + tx]! - lo) / (hi - lo) : 0.5;
         }
       }
-      this.fog = { world: w, canvas, img: new ImageData(cols, rows), low, cols, stamp: -1 };
+      this.fog = { world: w, canvas, img: new ImageData(cols, rows), low, cols, stamp: -1, row: 0 };
     }
     const fog = this.fog;
-    const stamp = Math.floor(time * 5);
-    if (stamp !== fog.stamp) {
-      fog.stamp = stamp;
-      const drift = time * 1.5, flicker = Math.floor(time * 0.5);
-      const d = fog.img.data, cols = fog.cols, rows = fog.canvas.height;
-      const alpha = [0, Math.round(0.22 * 255), Math.round(0.38 * 255), Math.round(0.55 * 255)];
-      for (let gy = 0; gy < rows; gy++) {
-        const wy = (gy * P) / 72, fy0 = Math.floor(wy), fy = wy - fy0;
-        for (let gx = 0; gx < cols; gx++) {
-          const wx = (gx * P - drift) / 96, fx0 = Math.floor(wx), fx = wx - fx0;
-          const a = hash2(fx0, fy0, 9), b = hash2(fx0 + 1, fy0, 9), c = hash2(fx0, fy0 + 1, 9), e = hash2(fx0 + 1, fy0 + 1, 9);
-          let v = a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + e * fx * fy;
-          v = v * 0.7 + fog.low[gy * cols + gx]! * 0.45 + (hash2(gx, gy, flicker) - 0.5) * 0.06;
-          const k = (gy * cols + gx) * 4;
-          d[k] = 222;
-          d[k + 1] = 226;
-          d[k + 2] = 228;
-          d[k + 3] = alpha[v > 0.78 ? 3 : v > 0.58 ? 2 : v > 0.4 ? 1 : 0]!;
-        }
+    const cols = fog.cols, rows = fog.canvas.height;
+    // Refreshed a slice of rows a frame, so each frame costs the same however far out the camera is.
+    const per = Math.max(1, Math.ceil(rows / 14));
+    const drift = time * 1.5, flicker = Math.floor(time * 0.5);
+    const d = fog.img.data;
+    const alpha = [0, Math.round(0.22 * 255), Math.round(0.38 * 255), Math.round(0.55 * 255)];
+    const first = fog.stamp < 0 ? 0 : fog.row;
+    const count = fog.stamp < 0 ? rows : per;
+    fog.stamp = 0;
+    for (let n = 0; n < count; n++) {
+      const gy = (first + n) % rows;
+      const wy = (gy * P) / 72, fy0 = Math.floor(wy), fy = wy - fy0;
+      for (let gx = 0; gx < cols; gx++) {
+        const wx = (gx * P - drift) / 96, fx0 = Math.floor(wx), fx = wx - fx0;
+        const a = hash2(fx0, fy0, 9), b = hash2(fx0 + 1, fy0, 9), c = hash2(fx0, fy0 + 1, 9), e = hash2(fx0 + 1, fy0 + 1, 9);
+        let v = a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + e * fx * fy;
+        v = v * 0.7 + fog.low[gy * cols + gx]! * 0.45 + (hash2(gx, gy, flicker) - 0.5) * 0.06;
+        const k = (gy * cols + gx) * 4;
+        d[k] = 222;
+        d[k + 1] = 226;
+        d[k + 2] = 228;
+        d[k + 3] = alpha[v > 0.78 ? 3 : v > 0.58 ? 2 : v > 0.4 ? 1 : 0]!;
       }
-      fog.canvas.getContext("2d")!.putImageData(fog.img, 0, 0);
     }
-    this.g.drawImage(fog.canvas, 0, 0, fog.cols * P, fog.canvas.height * P);
+    fog.row = (first + count) % rows;
+    const ctx = fog.canvas.getContext("2d")!;
+    if (first + count <= rows) ctx.putImageData(fog.img, 0, 0, 0, first, cols, count);
+    else {
+      ctx.putImageData(fog.img, 0, 0, 0, first, cols, rows - first);
+      ctx.putImageData(fog.img, 0, 0, 0, 0, cols, first + count - rows);
+    }
+    // Only the part of the fog bank on screen, and none of it outside the world.
+    const g = this.g, m = g.getTransform();
+    const cw = g.canvas.width, ch = g.canvas.height;
+    const x0 = Math.max(0, Math.floor((-m.e / m.a) / P)), x1 = Math.min(cols, Math.ceil(((cw - m.e) / m.a) / P));
+    const y0 = Math.max(0, Math.floor((-m.f / m.d) / P)), y1 = Math.min(rows, Math.ceil(((ch - m.f) / m.d) / P));
+    if (x1 > x0 && y1 > y0) g.drawImage(fog.canvas, x0, y0, x1 - x0, y1 - y0, x0 * P, y0 * P, (x1 - x0) * P, (y1 - y0) * P);
   }
 
   private drawFlag(x: number, y: number, color: string): void {
@@ -854,21 +893,33 @@ export class Renderer {
       mark = s.conscious ? (cannotWalk(s) ? "+" : "+") : "z";
       col = s.injuries.some((i) => i.bleeding > 0.05) ? "#ff4a3a" : "#f4f0e8";
     } else if (s.status === "surrendered") {
-      mark = "⚐";
+      mark = "flag";
       col = "#f4f0e8";
     } else if (s.status === "active" && s.broken) {
       mark = "!";
       col = "#b08ae8";
     } else if (s.status === "active" && s.pinned) {
-      mark = "▼";
+      mark = "pin";
       col = "#f0963a";
     }
     if (mark) {
-      g.font = "bold 7px monospace";
-      g.fillStyle = "#000a";
-      g.fillText(mark, p.x - 2, sy - 1);
-      g.fillStyle = col;
-      g.fillText(mark, p.x - 2.5, sy - 1.5);
+      const bmp = mark === "flag" ? FLAG_MARK : mark === "pin" ? PIN_MARK : null;
+      if (bmp) {
+        // Drawn in square pixels rather than a font glyph.
+        const bx = Math.round(p.x - bmp[0]!.length / 2), by = Math.round(sy - bmp.length - 1);
+        for (const [dx, dy, fill] of [[1, 1, "#000a"], [0, 0, col]] as const) {
+          g.fillStyle = fill;
+          bmp.forEach((row, ry) => {
+            for (let rx = 0; rx < row.length; rx++) if (row[rx] === "x") g.fillRect(bx + rx + dx, by + ry + dy, 1, 1);
+          });
+        }
+      } else {
+        g.font = "bold 7px monospace";
+        g.fillStyle = "#000a";
+        g.fillText(mark, p.x - 2, sy - 1);
+        g.fillStyle = col;
+        g.fillText(mark, p.x - 2.5, sy - 1.5);
+      }
     }
   }
 
@@ -887,7 +938,7 @@ export class Renderer {
     if (!c || c.version !== stamp || c.world !== w) {
       // Only redraw when a shell has changed this house's own tiles.
       let look = b.destroyed ? "X" : "";
-      for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) look += w.map.at(x, y)[0] + String(Math.min(9, w.map.roofHits[w.map.idx(x, y)]!)) + holeStep(w.map.holes[w.map.idx(x, y)]!);
+      for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) look += w.map.at(x, y)[0] + String(Math.min(9, w.map.roofHits[w.map.idx(x, y)]!)) + holeStep(w.map.holes[w.map.idx(x, y)]!) + blastStep(w.map.blasts[w.map.idx(x, y)]!);
       if (!c || c.world !== w || c.look !== look) c = { version: stamp, world: w, look, img: buildingSprite(w, b) };
       c.version = stamp;
       this.houses.set(b.id, c);

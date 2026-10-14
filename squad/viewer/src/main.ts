@@ -6,6 +6,7 @@ import { createSimulation } from "../../src/sim.ts";
 import type { BodyPart, Injury, Side, Soldier, Squad } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
 import { Sfx, impactOf, surfaceOf } from "./audio.ts";
+import { hydrateIcons, icon } from "./icons.ts";
 import { clock, describe, label, roleName, worstWound, type FeedLine } from "./feed.ts";
 import { BLAST_SECONDS } from "./fx.ts";
 import { Renderer, drawMinimap, gridSquare, type Camera, type ViewOptions } from "./render.ts";
@@ -624,7 +625,7 @@ function renderForces(): void {
     const pow = all.filter((s) => s.status === "captured" || s.status === "surrendered").length;
     const gone = all.filter((s) => s.status === "routed").length;
     const seg = (k: number, c: string) => (k > 0 ? `<i style="width:${(k / n) * 100}%;background:${c}"></i>` : "");
-    rows.push(`<div class="force"><div class="name"><span style="color:${SIDE_COLORS[side].name}">${side === "us" ? "🇺🇸" : "✠"} ${esc(pl.name)}</span><small>${pl.role === "attack" ? "attacking" : "defending"} · ${esc(pl.phase)}</small></div>
+    rows.push(`<div class="force"><div class="name"><span style="color:${SIDE_COLORS[side].name}">${icon(side === "us" ? "flagus" : "flagde")} ${esc(pl.name)}</span><small>${pl.role === "attack" ? "attacking" : "defending"} · ${esc(pl.phase)}</small></div>
       <div class="stack">${seg(able, "#7ac860")}${seg(pinned, "#f0963a")}${seg(hurt, "#e05a4a")}${seg(dead, "#3a3a3a")}${seg(pow, "#b0b0b0")}${seg(gone, "#6a5a8a")}</div>
       <div class="legend"><span><i style="background:#7ac860"></i>${able} fighting</span><span><i style="background:#f0963a"></i>${pinned} pinned</span><span><i style="background:#e05a4a"></i>${hurt} wounded</span><span><i style="background:#3a3a3a"></i>${dead} dead</span>${pow ? `<span><i style="background:#b0b0b0"></i>${pow} prisoners</span>` : ""}${gone ? `<span><i style="background:#6a5a8a"></i>${gone} gone</span>` : ""}<span>· ${pl.fireMissionsLeft} mortar missions</span></div></div>`);
   }
@@ -645,10 +646,10 @@ function renderEvents(): void {
 }
 
 function statusIcon(s: Soldier): string {
-  if (s.status === "dead") return "✝";
-  if (s.status === "casualty") return "✚";
-  if (s.status === "captured" || s.status === "surrendered") return "⚐";
-  if (s.status === "routed") return "↩";
+  if (s.status === "dead") return icon("dead");
+  if (s.status === "casualty") return icon("medic");
+  if (s.status === "captured" || s.status === "surrendered") return icon("flag");
+  if (s.status === "routed") return icon("back");
   if (s.broken) return "!";
   if (s.pinned) return "▼";
   return "";
@@ -825,7 +826,7 @@ function renderInspector(): void {
   const el = $("inspector");
   const s = world.maybe(selected);
   if (!s) {
-    el.innerHTML = `<p class="hint">Click a soldier on the map or a name above. Squads show as coloured bars under their men; ▼ pinned, ! broken, ✚ wounded, ⚐ surrendered.</p>`;
+    el.innerHTML = `<p class="hint">Click a soldier on the map or a name above. Squads show as coloured bars under their men; ${icon("pinned")} pinned, ! broken, ${icon("medic")} wounded, ${icon("flag")} surrendered.</p>`;
     return;
   }
   const sq = world.squad(s.squadId);
@@ -1075,7 +1076,7 @@ canvas.addEventListener(
     const rect = canvas.getBoundingClientRect();
     const px = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? rect.height : 1);
     const from = zoomGoal?.zoom ?? cam.zoom;
-    zoomToward(from * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.008 * zoomRate(from)), ev.clientX - rect.left, ev.clientY - rect.top);
+    zoomToward(from - Math.max(-250, Math.min(250, px)) * 0.006, ev.clientX - rect.left, ev.clientY - rect.top);
   },
   { passive: false },
 );
@@ -1089,14 +1090,6 @@ minimap.addEventListener("click", (ev) => {
   userCamera = true;
   follow = false;
 });
-
-/**
- * How hard a notch of the wheel (or a held Q/E) pulls the zoom: big strides
- * when looking at the whole field, fine steps when close in on a few men.
- */
-function zoomRate(zoom: number): number {
-  return Math.max(0.45, Math.min(1.8, 1.1 / Math.sqrt(zoom)));
-}
 
 function zoomToward(zoom: number, sx: number, sy: number): void {
   zoomGoal = { zoom: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom)), sx, sy };
@@ -1158,8 +1151,7 @@ function panCamera(dt: number): void {
   if (keys.has("d") || keys.has("arrowright")) { cam.x += v; moved = true; }
   if (keys.has("q") || keys.has("e")) {
     const rect = canvas.getBoundingClientRect();
-    const f = Math.exp((keys.has("e") ? 1 : -1) * dt * 6 * zoomRate(cam.zoom));
-    zoomToward(cam.zoom * f, rect.width / 2, rect.height / 2);
+    zoomToward(cam.zoom + (keys.has("e") ? 1 : -1) * dt * 4, rect.width / 2, rect.height / 2);
   }
   if (moved) {
     follow = false;
@@ -1199,7 +1191,7 @@ function lookAtSquad(id: number): void {
 }
 
 function syncControls(): void {
-  $("pause").textContent = paused ? "▶" : "⏸";
+  $("pause").innerHTML = icon(paused ? "play" : "pause");
   $("speeds").innerHTML = SPEEDS.map((s, i) => `<button data-speed="${i}" class="${i === speed ? "on" : ""}">${s.label}</button>`).join("");
   document.querySelectorAll<HTMLButtonElement>("[data-toggle]").forEach((b) => b.classList.toggle("on", opts[b.dataset.toggle as keyof ViewOptions]));
 }
@@ -1247,7 +1239,7 @@ document.addEventListener("click", (ev) => {
 
 function syncSound(): void {
   const b = $("sound");
-  b.textContent = !sfx.enabled || sfx.volume === 0 ? "🔇" : "🔊";
+  b.innerHTML = icon(!sfx.enabled || sfx.volume === 0 ? "mute" : "sound");
   b.classList.toggle("on", sfx.enabled);
   $<HTMLInputElement>("vol").value = String(Math.round(sfx.volume * 100));
 }
@@ -1263,6 +1255,7 @@ $<HTMLInputElement>("vol").addEventListener("input", (ev) => {
   if (!sfx.enabled) sfx.setEnabled(true);
   syncSound();
 });
+hydrateIcons();
 syncSound();
 
 $("pause").addEventListener("click", () => {

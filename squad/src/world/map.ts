@@ -59,6 +59,8 @@ export class GameMap {
   readonly wallHp: Uint8Array;
   /** Shell hits each tile of a roof has taken. */
   readonly roofHits: Uint8Array;
+  /** Scorch and splinters left by blasts on a building tile, shown on its roof and upper floors. Cosmetic. */
+  readonly blasts: Uint8Array;
   /** Metres per storey on each tile: a church tower's storeys are tall, putting its belfry high above the roofs. */
   readonly storey: Float32Array;
   /** Bullet strikes on each stretch of wall. */
@@ -78,6 +80,7 @@ export class GameMap {
     this.top = new Float32Array(width * height);
     this.wallHp = new Uint8Array(width * height);
     this.roofHits = new Uint8Array(width * height);
+    this.blasts = new Uint8Array(width * height);
     this.holes = new Uint8Array(width * height);
     this.storey = new Float32Array(width * height).fill(rules.floorHeight);
     this.seeAt = new Float32Array(width * height).fill(1);
@@ -273,6 +276,16 @@ export class GameMap {
     return false;
   }
 
+  /** A blast scorches this building tile: roofs and floors darken and splinter. */
+  blastMark(x: number, y: number, n = 1): void {
+    const i = this.idx(x, y);
+    const before = this.blasts[i]!;
+    if (before >= 255) return;
+    const after = Math.min(255, before + n);
+    this.blasts[i] = after;
+    if (blastStep(after) !== blastStep(before)) this.scars++;
+  }
+
   /** A round strikes a wall: one more pockmark. */
   scar(x: number, y: number): void {
     const i = this.idx(x, y);
@@ -461,6 +474,11 @@ export function findPath(map: GameMap, from: number, to: number, opts: { blocked
   for (let c = to; c !== from; c = sc.came[c]!) path.push(c);
   path.reverse();
   return path;
+}
+
+/** Blast marks counted in steps, for drawing: none, singed, scorched, blackened. */
+export function blastStep(n: number): number {
+  return n <= 0 ? 0 : n < 3 ? 1 : n < 7 ? 2 : 3;
 }
 
 /** Bullet holes counted in steps, for drawing: none, a few, many, riddled. */

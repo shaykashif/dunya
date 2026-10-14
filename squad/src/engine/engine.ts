@@ -1,6 +1,6 @@
 // The tick loop. The engine is the sole authority on what happens: decision
 // sources only pick among candidates, and every outcome is applied here.
-import { generateCandidates, orderFor } from "../ai/candidates.ts";
+import { canScramble, generateCandidates, grenadeToClear, orderFor, shootingBack } from "../ai/candidates.ts";
 import { commandStep } from "../ai/command.ts";
 import { fireTick, startReload, weaponStep } from "../combat/fire.ts";
 import { fireRifleGrenade, missionStep, ordnanceStep, throwGrenade } from "../combat/ordnance.ts";
@@ -445,6 +445,8 @@ export class Engine {
       if (s.broken && kind !== "flee") s.act = null;
       else if (firedOn && (kind === "hold" || (kind === "move" && a.cand.pace === "walk") || kind === "resupply" || kind === "capture")) s.act = null;
       else if (s.pinned && (kind === "move" || kind === "take_cover") && a.cand.pace !== "crawl" && a.cand.pace !== "rush") s.act = null;
+      // A grenade lands near him: whatever he was doing, unless he is busy shooting back, gives way to getting clear.
+      else if (!a.cand.key.startsWith("clear:") && kind !== "flee" && canScramble(s) && !shootingBack(w, s) && grenadeToClear(w, s)) s.act = null;
     }
   }
 

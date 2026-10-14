@@ -174,7 +174,32 @@ function explode(w: World, o: Ordnance): void {
   }
   // Shells leave holes, knock walls down, bring houses in and smash trees.
   shellDamage(w, o);
+  blastScars(w, o);
   w.emit("explosion", hurt, { kind: o.kind, at: [o.x, o.y], z: o.z, by: o.byId, hurt });
+}
+
+const WALL_TILES = new Set(["building", "window", "door", "wall"]);
+
+/**
+ * Every blast marks the buildings round it: pocked walls, and scorch and
+ * splinters on the roof and floors. No dice are rolled, so it changes nothing
+ * about how a battle goes.
+ */
+function blastScars(w: World, o: Ordnance): void {
+  const map = w.map;
+  const reach = o.kind === "artillery" ? 5 : o.kind === "mortar" ? 4 : 3;
+  for (let dy = -reach; dy <= reach; dy++) {
+    for (let dx = -reach; dx <= reach; dx++) {
+      const x = o.x + dx, y = o.y + dy;
+      if (!map.inBounds(x, y)) continue;
+      const d = Math.hypot(dx, dy);
+      if (d > reach) continue;
+      const i = map.idx(x, y);
+      const near = d <= 1.5 ? 3 : d <= 3 ? 2 : 1;
+      if (WALL_TILES.has(map.terrain[i]!)) for (let k = 0; k < near; k++) map.scar(x, y);
+      if (map.building[i]! >= 0) map.blastMark(x, y, near);
+    }
+  }
 }
 
 /** Men who see a grenade land beside them may throw themselves clear. */

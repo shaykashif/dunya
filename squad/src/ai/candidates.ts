@@ -9,7 +9,7 @@ import { armFactor, bleedingOf, cannotWalk } from "../entities/body.ts";
 import { needsAid, needsCarrying } from "../entities/injuries.ts";
 import { isGunner, isLeader } from "../entities/soldier.ts";
 import { cheb, dist } from "../world/map.ts";
-import type { Candidate, ElementOrder, Point, Soldier } from "../world/types.ts";
+import type { Candidate, ElementOrder, Ordnance, Point, Soldier } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { chooseHide, compromised, isSniper, needsHide, sniperPriority, watchingWounded } from "./sniper.ts";
 import { canFireOn, findCover } from "./tactics.ts";
@@ -38,6 +38,46 @@ function atPosition(s: Soldier, o: ElementOrder): boolean {
   if (!p) return true;
   const loose = o.kind === "hold" || o.kind === "overwatch" || o.kind === "suppress";
   return cheb(s, p) <= (loose ? 4 : 0);
+}
+
+/** A grenade in flight is something to get away from inside this many tiles. */
+function clearRadius(w: World, kind: "frag" | "stick" | "rifle_grenade"): number {
+  return Math.max(3, Math.round(w.config.explosives[kind].radius * 0.65));
+}
+
+/**
+ * The live grenade this man should be scrambling away from: one that will burst
+ * on his floor within its danger distance of him, that he can see or is next to.
+ */
+export function grenadeToClear(w: World, s: Soldier): Ordnance | null {
+  let best: Ordnance | null = null;
+  let bd = Infinity;
+  for (const o of w.ordnance) {
+    if (o.kind !== "frag" && o.kind !== "stick" && o.kind !== "rifle_grenade") continue;
+    if (o.burstTick <= w.tick || o.z !== s.z) continue;
+    const d = cheb(s, o);
+    if (d > clearRadius(w, o.kind)) continue;
+    if (d > 2 && w.map.visibility(s.x, s.y, o.x, o.y, null, s.z, o.z) < 0.3) continue;
+    if (d < bd) {
+      bd = d;
+      best = o;
+    }
+  }
+  return best;
+}
+
+/** Already busy shooting back: under fire, with an enemy in sight and a loaded weapon. */
+export function shootingBack(w: World, s: Soldier): boolean {
+  const kind = s.act?.cand.kind;
+  if (kind === "fire" || kind === "suppress") return true;
+  const underFire = s.underFire !== null && w.tick - s.underFire.tick < 6;
+  if (!underFire || s.loaded <= 0 || !weaponOf(w, s)) return false;
+  return s.sees.some((id) => w.soldier(id).status === "active");
+}
+
+/** Whether he is in a state to run: not pinned, hobbled, or carrying a friend. */
+export function canScramble(s: Soldier): boolean {
+  return !s.pinned && !cannotWalk(s) && s.carryingId === null && s.carriedById === null && s.conscious && s.status === "active";
 }
 
 export function generateCandidates(w: World, s: Soldier): Candidate[] {
@@ -105,6 +145,33 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
   if (alert) threats.unshift({ x: alert.x, y: alert.y });
   // ---- Shells landing close ----
   const shells = w.impacts.filter((i) => w.tick - i.tick <= 4 && cheb(i, s) <= 9 && s.z === 0);
+
+  // ---- A grenade coming down close by: get outside its reach, unless already busy shooting back ----
+  if (canScramble(s) && !shootingBack(w, s)) {
+    const g = grenadeToClear(w, s);
+    if (g && (g.kind === "frag" || g.kind === "stick" || g.kind === "rifle_grenade")) {
+      const safe = clearRadius(w, g.kind);
+      let best: Point | null = null;
+      let bestScore = -Infinity;
+      for (let dy = -(safe + 3); dy <= safe + 3; dy++) {
+        for (let dx = -(safe + 3); dx <= safe + 3; dx++) {
+          const x = s.x + dx, y = s.y + dy;
+          if ((dx === 0 && dy === 0) || !w.isFree(x, y, s.id, s.z)) continue;
+          const p = s.z > 0 ? { x, y, z: s.z } : { x, y };
+          if (cheb(p, g) <= safe || !w.map.reachable(s, p)) continue;
+          // Nearest clear ground, better with something solid between it and the burst.
+          const shielded = w.map.visibility(g.x, g.y, x, y, null, g.z, s.z) === 0 ? 2 : 0;
+          const score = shielded - Math.hypot(dx, dy) * 0.6 - exposureAt(w, s, p) * 0.3;
+          if (score > bestScore) {
+            bestScore = score;
+            best = p;
+          }
+        }
+      }
+      if (best) out.push(cand("take_cover", `clear:${best.x},${best.y}`, "scramble clear of the grenade", { dest: best, pace: "rush", value: 1.4, safety: 1, danger: 0.05 }));
+      else out.push(cand("hug", "hug:grenade", "throw himself flat from the grenade", { duration: 1, value: 1.0, safety: 1 }));
+    }
+  }
 
   // ---- Fire at men he can see ----
   if (spec && !reloading && s.loaded > 0) {
