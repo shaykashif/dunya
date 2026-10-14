@@ -109,6 +109,19 @@ src/
   cli/         simulate and replay commands
 test/
 viewer/        pixel-art browser viewer (build.ts bundles it with esbuild, serve.ts serves it)
+  audio/       the lo-fi sound bank (bank.bin + bank.json), built by sfx/build.py
+sfx/           build.py: turns the raw gun recordings and the NOX Essentials pack into that bank
 ```
+
+## Sound
+
+The viewer plays gunshots, reloads, footsteps by ground type, explosions, shell whistles, building collapses, voices and weather beds, placed by distance and pan from the middle of the screen. `M` mutes. The sounds are packed in `viewer/audio/`; to rebuild them from the source recordings:
+
+```
+pip install numpy scipy
+python sfx/build.py "<Raw Master Tracks>" "<Essentials_Series_NOX_SOUND>"
+```
+
+Gunshot recordings carry 10-35 s of faint room echo; each is cut at the point the tail actually dies (at most 1.7 s) and faded. Everything is band-limited, saturated and bit-crushed at 16 kHz for the lo-fi sound. The sheet of what each take is, and which take fed which sound, is in `viewer/audio/sources.json`.
 
 The choices made along the way are in [`DECISIONS.md`](DECISIONS.md).

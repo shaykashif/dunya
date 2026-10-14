@@ -10,6 +10,7 @@ const types: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".map": "application/json",
+  ".json": "application/json",
   ".css": "text/css",
   ".svg": "image/svg+xml",
   ".xml": "application/xml",
