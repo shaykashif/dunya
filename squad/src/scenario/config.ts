@@ -191,6 +191,9 @@ export const DEFAULT_CONFIG = {
     /** A German runner is a man on foot: he sprints this many tiles a second to the Zugführer, and is given up after this long. An American squad radio is instant. */
     runnerSpeed: 2.2,
     runnerGiveUp: 240,
+    /** A runner is in danger from any enemy who can see him within this many tiles; this is the chance per second from one man at point-blank. */
+    runnerRange: 35,
+    runnerRisk: 0.05,
     /** A squad calls again no sooner than this. */
     again: 300,
     /** It calls when this share of its men are pinned, or it has been stuck fixing the enemy this long, or it is down to this strength in contact. */

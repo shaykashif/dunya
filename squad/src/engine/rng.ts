@@ -100,6 +100,7 @@ export class Rng {
 /** One stream per subsystem so a new draw in one place does not shift others. */
 export type StreamName =
   | "scenario"
+  | "runners"
   | "map"
   | "perception"
   | "fire"

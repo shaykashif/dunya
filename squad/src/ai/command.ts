@@ -827,6 +827,23 @@ function runnersStep(w: World, pl: Platoon, boss: Soldier | undefined | null): v
       continue;
     }
     const sq = w.squad(r.squadId);
+    // A man alone in the open: rifle fire from anyone who can see him, and any shell that lands close.
+    const fate = w.rng.get("runners");
+    let risk = 0;
+    for (const e of w.soldiers) {
+      if (e.side === r.side || !w.able(e) || e.role === "tank" || e.role === "field_gun") continue;
+      const d = dist(e, r);
+      if (d > cfg.runnerRange) continue;
+      const vis = w.map.visibility(e.x, e.y, Math.round(r.x), Math.round(r.y), w.smoke, e.z, 0);
+      if (vis < 0.3) continue;
+      risk += cfg.runnerRisk * (1 - d / cfg.runnerRange) * vis * (e.suppression > 0.5 ? 0.4 : 1);
+    }
+    const shelled = w.impacts.some((i) => w.tick - i.tick <= 1 && i.side !== r.side && dist(i, r) <= 4);
+    if (shelled || fate.chance(Math.min(0.5, risk))) {
+      sq.help = sq.help ? { ...sq.help, answered: true } : sq.help;
+      w.emit("runner_killed", [], { squad: sq.id, at: [Math.round(r.x), Math.round(r.y)], by: shelled ? "shell" : "fire" });
+      continue;
+    }
     const goal: Point = boss && w.able(boss) ? { x: boss.x, y: boss.y } : r.dest;
     r.px = r.x;
     r.py = r.y;

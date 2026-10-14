@@ -789,6 +789,13 @@ function toastFor(e: SimEvent): void {
       }
       break;
     }
+    case "runner_killed": {
+      const sq = world.squads[d.squad as number]!;
+      const at = d.at as number[];
+      toast("death", `Runner down · ${sq.side === "us" ? "US" : "German"}`, `${sq.name}'s runner is ${d.by === "shell" ? "caught by a shell" : "shot down"} before he reaches the platoon leader.`, [], sq.color, sq.id);
+      renderer.addEffect({ kind: "pop", x: at[0]! * TILE + 8, y: at[1]! * TILE + 8, seed: e.seq, born: now(), dur: 1.2, delay: 0 });
+      break;
+    }
     case "help_sent": {
       const to = world.squads[d.to as number]!;
       const sent = d.squad !== null ? world.squads[d.squad as number]! : null;
