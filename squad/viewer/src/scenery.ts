@@ -464,11 +464,12 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
       const marks = blastStep(w.map.blasts[w.map.idx(xx, yy)]!);
       if (marks === 0 || w.map.at(xx, yy) === "rubble") continue;
       const X = ox + (xx - b.x) * TILE, Y = oy + (yy - b.y) * TILE - WH;
-      for (let k = 0; k < 4 + marks * 4; k++) {
-        const sx = X + 1 + Math.floor(hash2(xx, yy, k + 300) * 13), sy = Y + 1 + Math.floor(hash2(yy, xx, k + 330) * 13);
-        px(sx, sy, k % 3 === 0 ? "#1e1812" : "#33281e", 2, 2);
+      // A few scorch patches and splinters, not a rash: enough to read as damage from a distance.
+      for (let k = 0; k < 1 + marks * 2; k++) {
+        const sx = X + 1 + Math.floor(hash2(xx, yy, k + 300) * 12), sy = Y + 1 + Math.floor(hash2(yy, xx, k + 330) * 12);
+        px(sx, sy, k % 2 === 0 ? "#2a2018" : "#3a2c20", 3, 2);
       }
-      for (let k = 0; k < marks * 2; k++) {
+      for (let k = 0; k < marks; k++) {
         const sx = X + Math.floor(hash2(xx, yy, k + 360) * 14), sy = Y + Math.floor(hash2(yy, xx, k + 390) * 14);
         px(sx, sy, "#c8b48a", 2, 1);
       }

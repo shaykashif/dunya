@@ -605,6 +605,8 @@ export interface SmokeCloud {
   radius: number;
   born: number;
   until: number;
+  /** Black smoke from a burning vehicle: it rises and does not hide what is under it. */
+  dark?: boolean;
 }
 
 export interface Corpse {

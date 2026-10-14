@@ -464,7 +464,7 @@ function pickTarget(w: World, s: Soldier, range: number, minRange: number, pred:
 }
 
 function setWreckSmoke(w: World, s: Soldier): void {
-  if (w.clouds.length < 40) w.clouds.push({ id: w.nextId("cloud"), x: s.x, y: s.y, radius: 2.4, born: w.tick, until: w.tick + 40 });
+  if (w.clouds.length < 40) w.clouds.push({ id: w.nextId("cloud"), x: s.x, y: s.y - 1.4, radius: 1.8, born: w.tick, until: w.tick + 45, dark: true });
 }
 
 function repairStep(w: World, t: Tank, s: Soldier): void {

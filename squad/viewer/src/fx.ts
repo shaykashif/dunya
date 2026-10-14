@@ -39,6 +39,7 @@ const blocks = new Blocks();
 // ---------- Smoke clouds ----------
 
 const SMOKE = ["#8a8882", "#acaaa2", "#cfcdc5", "#efede7"];
+const SOOT = ["#1c1b19", "#2c2a27", "#403d38", "#5a5650"];
 
 /**
  * A smoke screen as a billowing mass of square puffs. The density field is a
@@ -50,7 +51,9 @@ export function drawSmokeCloud(g: CanvasRenderingContext2D, c: SmokeCloud, tick:
   const age = tick - c.born;
   const grow = Math.min(1, 0.3 + age / 8);
   const fade = Math.max(0, Math.min(1, (c.until - tick) / 25));
-  const cx = (c.x + age * 0.02) * TILE + 8, cy = c.y * TILE + 8;
+  const palette = c.dark ? SOOT : SMOKE;
+  // Black smoke climbs as it ages.
+  const cx = (c.x + age * 0.02) * TILE + 8, cy = c.y * TILE + 8 - (c.dark ? Math.min(age, 45) * 0.28 * TILE * 0.4 : 0);
   const r = c.radius * grow * TILE;
   const n = 9;
   const bx: number[] = [], by: number[] = [], br: number[] = [];
@@ -83,11 +86,11 @@ export function drawSmokeCloud(g: CanvasRenderingContext2D, c: SmokeCloud, tick:
       if (solid < dither(gx, gy)) continue;
       const v = dens * 0.8 + lit * 0.55;
       const shadeIdx = v > 0.75 ? 3 : v > 0.45 ? 2 : v > 0.15 ? 1 : 0;
-      blocks.add(SMOKE[shadeIdx]!, gx * P, gy * P, P);
+      blocks.add(palette[shadeIdx]!, gx * P, gy * P, P);
     }
   }
-  g.globalAlpha = 0.88;
-  blocks.flush(g, SMOKE);
+  g.globalAlpha = c.dark ? 0.82 : 0.88;
+  blocks.flush(g, palette);
   g.globalAlpha = 1;
 }
 
