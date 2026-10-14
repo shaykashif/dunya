@@ -1,39 +1,28 @@
+// Frame-exact 60 fps capture: virtual clock stepped one frame at a time, audio rendered offline on the same timeline.
 import { chromium } from "playwright-core";
 import os from "node:os"; import path from "node:path"; import fs from "node:fs";
-const seed = process.argv[2] ?? "42";
-const DUR = Number(process.argv[3] ?? 50); // seconds of footage
-const out = path.resolve("out_" + seed); fs.rmSync(out, { recursive: true, force: true }); fs.mkdirSync(out);
+const seed = process.argv[2] ?? "15";
+const DUR = Number(process.argv[3] ?? 42);
+const FPS = 60;
+const out = path.resolve("out60_" + seed); fs.rmSync(out, { recursive: true, force: true }); fs.mkdirSync(out);
 const exe = path.join(os.homedir(), "AppData","Local","ms-playwright","chromium_headless_shell-1243","chrome-headless-shell-win64","chrome-headless-shell.exe");
-const browser = await chromium.launch({ executablePath: exe, args: ["--autoplay-policy=no-user-gesture-required", "--enable-gpu-rasterization"] });
+const browser = await chromium.launch({ executablePath: exe, args: ["--enable-gpu-rasterization"] });
 const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
 await ctx.addInitScript(() => {
-  const tee = new WeakMap();
-  const orig = AudioNode.prototype.connect;
-  AudioNode.prototype.connect = function (dest, ...a) {
-    if (dest instanceof AudioDestinationNode) {
-      let t = tee.get(dest.context);
-      if (!t) { t = dest.context.createMediaStreamDestination(); tee.set(dest.context, t); window.__tap = t; }
-      orig.call(this, t);
-    }
-    return orig.call(this, dest, ...a);
-  };
+  // The sound engine gets an offline context whose clock is the page's (virtual) clock.
+  class FakeAC extends OfflineAudioContext {
+    constructor() { super(2, 48000 * 75, 48000); window.__ac = this; }
+    get currentTime() { return window.__base === undefined ? 0 : (performance.now() - window.__base) / 1000; }
+  }
+  window.AudioContext = FakeAC; window.webkitAudioContext = FakeAC;
 });
 const page = await ctx.newPage();
-const t0 = Date.now();
-const cdp = await ctx.newCDPSession(page);
-const times = []; let nf = 0;
-cdp.on("Page.screencastFrame", async (f) => {
-  fs.writeFileSync(path.join(out, `f${String(nf).padStart(5, "0")}.jpg`), Buffer.from(f.data, "base64"));
-  times.push(f.metadata.timestamp); nf++;
-  try { await cdp.send("Page.screencastFrameAck", { sessionId: f.sessionId }); } catch {}
-});
 page.on("pageerror", (e) => console.log("ERR", e.message));
 await page.goto(`http://localhost:5174/?seed=${seed}`);
 await page.waitForTimeout(1500);
-// black title card while the sim is fast-forwarded to first contact
 await page.evaluate(() => {
-  const d = document.createElement("div"); d.id = "card"; d.style.pointerEvents = "none";
-  d.style.cssText = "position:fixed;inset:0;z-index:99999;pointer-events:none;background:#0c0e08;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 1.2s;font-family:'Silkscreen',monospace;color:#ece6cc";
+  const d = document.createElement("div"); d.id = "card";
+  d.style.cssText = "position:fixed;inset:0;z-index:99999;pointer-events:none;background:#0c0e08;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Silkscreen',monospace;color:#ece6cc";
   d.innerHTML = `<div style="font-size:92px;letter-spacing:6px;text-shadow:0 6px 0 #000">BATTLE MODE</div><div style="font:44px 'VT323',monospace;color:#e8c84a;margin-top:14px">Normandy, June 1944 · every soldier simulated</div>`;
   document.body.appendChild(d);
   const st = document.createElement("style");
@@ -41,22 +30,20 @@ await page.evaluate(() => {
   document.head.appendChild(st);
 });
 await page.mouse.click(900, 500);
-await page.evaluate(() => document.body.classList.add("side-hidden"));
-// fast-forward to first firefight
+await page.evaluate(() => { document.body.classList.add("side-hidden"); window.squad.sfx.setEnabled(false); });
+// fast-forward to first firefight (real clock)
 await page.evaluate(async () => {
   const w = window.squad.world();
+  const all = () => [...w.soldiers.values ? w.soldiers.values() : w.soldiers].filter((m) => m.status !== "dead" && m.conscious !== false);
   const near = () => {
-    const s = [...w.soldiers.values ? w.soldiers.values() : w.soldiers].filter((m) => m.status !== "dead" && m.conscious !== false);
-    const us = s.filter((m) => m.side === "us"), de = s.filter((m) => m.side !== "us");
+    const s = all(); const us = s.filter((m) => m.side === "us"), de = s.filter((m) => m.side !== "us");
     let best = 1e9;
     for (const a of us) for (const b of de) { const d = Math.hypot(a.x - b.x, a.y - b.y); if (d < best) best = d; }
     return best;
   };
-  window.__near = near;
   for (let i = 0; i < 90 && near() > 22; i++) await window.squad.advance(10);
 });
-console.log("near", await page.evaluate(() => window.__near()));
-// director: cuts between the busiest fights
+// director
 await page.evaluate(() => {
   const w = window.squad.world();
   const all = () => [...w.soldiers.values ? w.soldiers.values() : w.soldiers].filter((m) => m.status !== "dead" && m.conscious !== false);
@@ -88,91 +75,101 @@ await page.evaluate(() => {
     requestAnimationFrame(tick);
   };
   tick();
+  // caption, end card and fades, all driven per frame rather than by CSS transitions
+  const cap = document.createElement("div"); cap.id = "cap";
+  cap.style.cssText = "position:fixed;left:0;right:0;top:46px;z-index:99997;text-align:center;font:64px 'Silkscreen',monospace;letter-spacing:3px;color:#ece6cc;text-shadow:0 5px 0 #000,0 0 18px #000;opacity:0;pointer-events:none";
+  document.body.appendChild(cap);
+  window.__cap = (t) => { cap.textContent = t; cap.style.opacity = t ? "1" : "0"; };
+  const end = document.createElement("div");
+  end.style.cssText = "position:fixed;left:0;right:0;bottom:0;height:230px;z-index:99998;background:linear-gradient(transparent,rgba(12,14,8,.94) 60%);display:flex;flex-direction:column;justify-content:flex-end;padding:0 80px 50px;font-family:'Silkscreen',monospace;opacity:0;pointer-events:none";
+  end.innerHTML = `<div style="font-size:78px;letter-spacing:3px;color:#ece6cc;text-shadow:0 5px 0 #000">BATTLE SIMULATION</div><div style="font:46px 'VT323',monospace;color:#e8c84a;margin-top:8px">Call in barrages. Watch every man fight. Free in your browser · sim.shaykas.com</div>`;
+  document.body.appendChild(end);
+  const card = document.getElementById("card");
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  window.__fx = (t, dur) => {
+    card.style.opacity = String(Math.max(1 - clamp(t / 1.2), clamp((t - (dur - 1.2)) / 1.2)));
+    if (t > dur - 1.2) card.innerHTML = "";
+    end.style.opacity = String(clamp((t - (dur - 8)) / 1));
+    window.squad.sfx.voices = 0; // sources never "end" in an offline context
+  };
+  window.__fx(0, 99);
 });
-await page.keyboard.press("3"); // 5x
-await page.keyboard.press("r"); // roofs off
-// audio tap recorder
-const started = await page.evaluate(async () => {
-  window.squad.sfx.unlock();
-  for (let i = 0; i < 90 && !window.__tap; i++) await new Promise((r) => setTimeout(r, 100));
-  if (!window.__tap) return false;
-  const rec = new MediaRecorder(window.__tap.stream, { mimeType: "audio/webm;codecs=opus" });
-  window.__chunks = []; rec.ondataavailable = (e) => window.__chunks.push(e.data);
-  rec.start(500); window.__recorder = rec; return true;
-});
-console.log("audio tap", started);
-await cdp.send("Page.startScreencast", { format: "jpeg", quality: 92, maxWidth: 1920, maxHeight: 1080, everyNthFrame: 1 });
-const recStart = Date.now();
-await page.evaluate(() => { document.getElementById("card").style.opacity = "0"; });
-const at = async (s, fn) => { const wait = recStart + s * 1000 - Date.now(); if (wait > 0) await page.waitForTimeout(wait); await fn(); };
-await page.evaluate(() => {
-  window.__cut(3.2);
-  const c = document.createElement("div"); c.id = "cap";
-  c.style.cssText = "position:fixed;left:0;right:0;top:46px;z-index:99997;text-align:center;font:64px 'Silkscreen',monospace;letter-spacing:3px;color:#ece6cc;text-shadow:0 5px 0 #000,0 0 18px #000;opacity:0;transition:opacity .35s;pointer-events:none";
-  document.body.appendChild(c);
-  window.__cap = (t) => { c.style.opacity = "0"; if (t) setTimeout(() => { c.textContent = t; c.style.opacity = "1"; }, 380); };
-});
-const cap = (t) => page.evaluate((t) => window.__cap(t), t);
+await page.keyboard.press("4");
+// switch to virtual time (paused, so the clock jump costs no sim time)
+await page.keyboard.press("Space");
+await page.clock.install({ time: 1e12 });
+await page.clock.pauseAt(1e12 + 100);
+await page.clock.fastForward(300000);          // virtual performance.now must pass the real value the viewer last saw
+await page.clock.runFor(100);
+await page.keyboard.press("Space");
+await page.evaluate(() => { window.__base = performance.now(); window.squad.sfx.setEnabled(true); });
+const cdp = await ctx.newCDPSession(page);
 const key = (k) => page.keyboard.press(k);
-const shot = async (sec, zoom, barrage, speedKey = "4") => at(sec, async () => {
+const shotFn = (zoom, barrage, speedKey = "4") => async () => {
   await key(barrage ? "3" : speedKey);
   const h = await page.evaluate((zoom) => { const h = window.__cut(zoom); return h && { x: h.x, y: h.y, ex: h.ex, ey: h.ey }; }, zoom);
   if (h && barrage) await page.evaluate((h) => { const sq = window.squad; sq.barrage(h.ex, h.ey); setTimeout(() => sq.barrage(h.ex + 4, h.ey - 3), 1000); setTimeout(() => sq.barrage(h.ex - 4, h.ey + 3), 2000); }, h);
-});
-await key("4");
-await cap("EVERY SOLDIER SIMULATED");
-await at(3.3, () => cap(""));
-await shot(3.6, 5, false);
-await shot(7.5, 4, false);
-await shot(11, 3.4, true);   // barrage 1
-await at(11.2, () => cap("CALL IN A BARRAGE"));
-await at(15.5, () => cap(""));
-await shot(16, 5.5, false);
-await at(17, () => cap("FLANK. PIN. ASSAULT."));
-await shot(21, 4.5, false);
-await at(22.5, () => cap(""));
-await at(23.4, async () => {
-  await key("r"); // roofs on, so the fall-in shows
-  await key("3");
-  const h = await page.evaluate(() => {
-    const w = window.squad.world(); const hot = window.__hot(false);
-    const bs = w.buildings.filter((b) => !b.destroyed && b.w * b.h >= 30 && b.kind !== "church");
-    if (!bs.length) return null;
-    const ref = hot ?? { x: 120, y: 100 };
-    bs.sort((a, b) => Math.hypot(a.x + a.w / 2 - ref.x, a.y + a.h / 2 - ref.y) - Math.hypot(b.x + b.w / 2 - ref.x, b.y + b.h / 2 - ref.y));
-    const t = bs[0]; const cx = t.x + t.w / 2, cy = t.y + t.h / 2;
-    window.__cut(3.6, { x: cx, y: cy, ex: cx, ey: cy, score: 1, near: [] });
-    return { cx, cy };
-  });
-  if (h) {
-    await page.waitForTimeout(600);
-    await page.evaluate((h) => { window.squad.barrage(h.cx, h.cy); setTimeout(() => window.squad.barrage(h.cx + 2, h.cy), 900); }, h);
-  }
-});
-await at(24.5, () => cap("HOUSES COME DOWN"));
-await at(30, () => cap(""));
-await at(30, () => key("r"));  // roofs off again
-await shot(30.5, 5.5, false);
-await shot(34, 3.4, true);   // barrage 3
-await shot(38, 5, false);
-await at(DUR - 8, () => page.evaluate(() => {
-  const d = document.createElement("div");
-  d.style.cssText = "position:fixed;left:0;right:0;bottom:0;height:230px;z-index:99998;background:linear-gradient(transparent,rgba(12,14,8,.94) 60%);display:flex;flex-direction:column;justify-content:flex-end;padding:0 80px 50px;font-family:'Silkscreen',monospace;opacity:0;transition:opacity 1s";
-  d.innerHTML = `<div style="font-size:78px;letter-spacing:3px;color:#ece6cc;text-shadow:0 5px 0 #000">BATTLE SIMULATION</div><div style="font:46px 'VT323',monospace;color:#e8c84a;margin-top:8px">Call in barrages. Watch every man fight. Free in your browser · sim.shaykas.com</div>`;
-  document.body.appendChild(d); requestAnimationFrame(() => (d.style.opacity = "1"));
-}));
-await at(DUR - 1, async () => {});
-await page.evaluate(() => { const d = document.getElementById("card"); d.style.opacity = "1"; d.innerHTML = ""; });
-await page.waitForTimeout(1300);
-const b64 = await page.evaluate(async () => {
-  const rec = window.__recorder; await new Promise((r) => { rec.onstop = r; rec.stop(); });
-  const blob = new Blob(window.__chunks, { type: "audio/webm" });
-  const buf = new Uint8Array(await blob.arrayBuffer()); let s = ""; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+};
+const cap = (t) => () => page.evaluate((t) => window.__cap(t), t);
+let houseTarget = null;
+const events = [
+  [0, async () => { await key("4"); await page.evaluate(() => window.__cut(3.2)); }],
+  [0, cap("EVERY SOLDIER SIMULATED")],
+  [3.3, cap("")],
+  [3.6, shotFn(5, false)],
+  [7.5, shotFn(4, false)],
+  [11, shotFn(3.4, true)],
+  [11.2, cap("CALL IN A BARRAGE")],
+  [15.5, cap("")],
+  [16, shotFn(5.5, false)],
+  [17, cap("FLANK. PIN. ASSAULT.")],
+  [21, shotFn(4.5, false)],
+  [22.5, cap("")],
+  [23.4, async () => {
+    await key("r"); await key("3");
+    houseTarget = await page.evaluate(() => {
+      const w = window.squad.world(); const hot = window.__hot(false);
+      const bs = w.buildings.filter((b) => !b.destroyed && b.w * b.h >= 30 && b.kind !== "church");
+      if (!bs.length) return null;
+      const ref = hot ?? { x: 120, y: 100 };
+      bs.sort((a, b) => Math.hypot(a.x + a.w / 2 - ref.x, a.y + a.h / 2 - ref.y) - Math.hypot(b.x + b.w / 2 - ref.x, b.y + b.h / 2 - ref.y));
+      const t = bs[0]; const cx = t.x + t.w / 2, cy = t.y + t.h / 2;
+      window.__cut(3.6, { x: cx, y: cy, ex: cx, ey: cy, score: 1, near: [] });
+      return { cx, cy };
+    });
+  }],
+  [24.0, async () => { if (houseTarget) await page.evaluate((h) => { window.squad.barrage(h.cx, h.cy); setTimeout(() => window.squad.barrage(h.cx + 2, h.cy), 900); }, houseTarget); }],
+  [24.5, cap("HOUSES COME DOWN")],
+  [30, cap("")],
+  [30, () => key("r")],
+  [30.5, shotFn(5.5, false)],
+  [34, shotFn(3.4, true)],
+  [38, shotFn(5, false)],
+].sort((a, b) => a[0] - b[0]);
+const N = Math.round(DUR * FPS);
+let ei = 0;
+const t0 = Date.now();
+for (let f = 0; f < N; f++) {
+  const t = f / FPS;
+  while (ei < events.length && events[ei][0] <= t + 1e-6) { await events[ei][1](); ei++; }
+  await page.evaluate(([t, d]) => window.__fx(t, d), [t, DUR]);
+  const step = Math.round((f + 1) * 1000 / FPS) - Math.round(f * 1000 / FPS);
+  await page.clock.runFor(step);
+  const shot = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 93 });
+  fs.writeFileSync(path.join(out, `f${String(f).padStart(5, "0")}.jpg`), Buffer.from(shot.data, "base64"));
+  if (f % 120 === 0) console.log("frame", f, "/", N, ((Date.now() - t0) / 1000).toFixed(0) + "s");
+}
+// render the audio
+const b64 = await page.evaluate(async (dur) => {
+  const buf = await window.__ac.startRendering();
+  const n = Math.min(buf.length, Math.round((dur + 0.2) * buf.sampleRate));
+  const L = buf.getChannelData(0), R = buf.getChannelData(1);
+  const pcm = new Int16Array(n * 2);
+  for (let i = 0; i < n; i++) { pcm[2 * i] = Math.max(-1, Math.min(1, L[i])) * 32767; pcm[2 * i + 1] = Math.max(-1, Math.min(1, R[i])) * 32767; }
+  const u8 = new Uint8Array(pcm.buffer); let s = "";
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
   return btoa(s);
-});
-fs.writeFileSync(path.join(out, "audio.webm"), Buffer.from(b64, "base64"));
-await cdp.send("Page.stopScreencast");
-await ctx.close();
-fs.writeFileSync(path.join(out, "sync.json"), JSON.stringify({ recStart: recStart / 1000, times }));
+}, DUR);
+fs.writeFileSync(path.join(out, "audio.pcm"), Buffer.from(b64, "base64"));
 await browser.close();
-console.log("done", (recStart - t0) / 1000);
+console.log("done");
