@@ -149,12 +149,16 @@ function placeBolts(): void {
   for (const c of chains.values()) {
     if (!c.popup) continue;
     const age = t - c.born;
-    c.popup.classList.toggle("old", age > 45);
-    if (age > 240) {
+    // The order has been carried out when the first round lands; one that is never acted on is dropped after a while.
+    const landed = c.rounds.length > 0 && world.tick >= c.rounds[0]!.burst + 1;
+    const ignored = !c.ordered && world.tick - c.tick > 150;
+    const watching = cine !== null && cine.chain === c;
+    if ((landed || ignored || age > 240) && !watching) {
       c.popup.remove();
       c.popup = null;
       continue;
     }
+    c.popup.classList.toggle("old", age > 45);
     const sx = (c.from.x * TILE + 8 - cam.x) * cam.zoom, sy = (c.from.y * TILE + 8 - cam.y) * cam.zoom - 22;
     const m = 20;
     const x = Math.max(m, Math.min(rect.width - m, sx)), y = Math.max(m + 40, Math.min(rect.height - m, sy));
@@ -502,7 +506,7 @@ function engines(dt: number): void {
     }
     engineClock.set(t.id, 0.85);
     if (!sfx.audible(s.x, s.y, 4)) continue;
-    sfx.play("tank.engine", { x: s.x, y: s.y, gain: moving ? 1.5 : 0.35, reach: moving ? 4 : 1.6, rate: moving ? 1 : 0.8 });
+    sfx.play("tank.engine", { x: s.x, y: s.y, gain: moving ? 0.7 : 0.18, reach: moving ? 3.2 : 1.4, rate: moving ? 1 : 0.8 });
   }
 }
 
@@ -1170,11 +1174,95 @@ function whereText(s: Soldier): string {
   return `${(ground[t] ?? t).replace(/^./, (c) => c.toUpperCase())} · ${up} m above the stream`;
 }
 
+const VEHICLE_BLURB: Record<string, string> = {
+  "M4 Sherman": "A thirty-ton medium tank with a 75 mm gun and a machine gun beside it, built by the thousand and easy to keep running. Quick and reliable, but its sides are thin and a petrol engine burns readily when one is hit.",
+  "Panzer IV": "A twenty-five-ton workhorse of the German armoured force with a long 75 mm gun. Thick across the front and dangerous at range, but slower to turn its turret and short of friends once the infantry about it are gone.",
+  "57 mm anti-tank gun": "A towed American anti-tank gun on two small wheels behind a steel shield. Low and hard to see, it can punch through most of what the Germans drive, but it has no armour to speak of and its three-man crew are exposed beside it.",
+  "5 cm Pak 38": "A light German anti-tank gun behind a thin shield, towed by its crew or a truck. It is hard to spot in a hedge and hits hard at close range, but one high-explosive shell silences it and its crew stand out in the open.",
+};
+
+function renderVehicleInspector(s: Soldier): void {
+  const t = world.tanks.get(s.id);
+  const el = $("inspector");
+  if (!t) return;
+  const gun = t.kind === "field_gun";
+  const crew = t.crew.map((id) => world.soldier(id));
+  const alive = crew.filter((c) => c.status !== "dead").length;
+  const spec = s.weapon ? world.config.weapons[s.weapon] : null;
+  const pl = world.platoons[t.side];
+  const modeText = gun ? "dug in behind the hedge" : t.mode === "advance" ? "leading the attack" : t.mode === "fall_back" ? "falling back" : "dug in to fire";
+  const state: Record<string, string> = { ready: "In action", tracked: "Track broken: immobilised", burning: "On fire", abandoned: "Abandoned by its crew", wrecked: gun ? "Knocked out" : "Knocked out" };
+  let status = `${state[t.state] ?? t.state} · ${modeText}`;
+  if (t.state === "tracked" && t.repair) status = `Crew out mending the track (${Math.min(100, Math.round((t.repair.done / t.repair.need) * 100))}%)`;
+  if (t.state === "ready" && world.tick < t.stuckUntil) status = `Bogged down for another ${t.stuckUntil - world.tick} s`;
+  if (t.state === "burning") status = `On fire: ${Math.max(0, t.cookAt - world.tick)} s to the ammunition`;
+  const shellMax = gun ? world.config.armour.field.shells : world.config.armour.tank.shells;
+  const crewLine = crew.map((c) => {
+    const where = c.status === "aboard" ? "inside" : c.status === "dead" ? "dead" : c.status === "casualty" ? "wounded, out" : "outside";
+    return `<li>${personLink(c)} <small>${esc(roleName(c))} · ${where}</small></li>`;
+  }).join("");
+  el.innerHTML = `
+    <div class="pp-head"><canvas id="vface" class="face" width="48" height="48" style="background:#1c1d12"></canvas><div><b>${esc(t.name)}</b><small>${gun ? "Anti-tank gun" : "Tank"} · ${t.side === "us" ? "American" : "German"}, attached to ${esc(pl.name)}</small><small>${esc(world.squad(s.squadId).name)}</small><small>${esc(t.kind === "tank" ? `${alive} of ${crew.length} crew fit` : `${alive} of ${crew.length} gunners left`)}</small></div></div>
+    <div class="doing">${esc(status)}</div>
+    ${bar("Shells", Math.max(0, t.shells) / shellMax, "#e8c040", `${Math.max(0, t.shells)} left`)}
+    ${spec ? bar("Machine gun", (s.loaded + s.ammo) / (spec.capacity * 6), "#f0963a", `${s.loaded + s.ammo} rounds`) : ""}
+    ${bar("Crew", alive / Math.max(1, crew.length), alive === crew.length ? "#7ac860" : alive > 1 ? "#e0a03a" : "#e05a4a")}
+    <p class="desc">${esc(VEHICLE_BLURB[t.name] ?? "")}</p>
+    <h4>CREW</h4><ul class="plain">${crewLine}</ul>
+    <div class="traits">${s.shots} machine-gun rounds · ${s.kills} killed${t.stuckCount > 0 ? ` · bogged ${t.stuckCount} time${t.stuckCount > 1 ? "s" : ""}` : ""}</div>
+    <h4>RECENTLY</h4><ul class="plain">${s.recent.slice(-8).reverse().map((r) => `<li><time>${clock(world, r.tick)}</time> ${esc(r.text)}</li>`).join("")}</ul>
+    <button id="followbtn" style="margin-top:6px">${follow ? "◉ Following" : "○ Follow (F)"}</button>`;
+  // A little portrait of the machine, in the same pixels as on the map.
+  const c = document.getElementById("vface") as HTMLCanvasElement | null;
+  if (c) {
+    const g = c.getContext("2d")!;
+    const dead = t.state === "wrecked" || t.state === "abandoned";
+    const top = dead ? "#403d36" : t.side === "us" ? "#6a7b44" : "#8a8a7e";
+    const topL = dead ? "#4e4a42" : t.side === "us" ? "#8a9c5a" : "#aaaa9c";
+    const face = dead ? "#2a2822" : t.side === "us" ? "#46522c" : "#5e5e56";
+    const px = (x: number, y: number, w: number, h: number, col: string) => {
+      g.fillStyle = col;
+      g.fillRect(x, y, w, h);
+    };
+    g.clearRect(0, 0, 48, 48);
+    if (gun) {
+      px(10, 36, 28, 3, "rgba(0,0,0,0.35)");
+      px(14, 30, 6, 6, "#1e1e19");
+      px(26, 30, 6, 6, "#1e1e19");
+      px(6, 26, 30, 3, dead ? "#16150f" : "#25251f");
+      px(20, 14, 5, 16, face);
+      px(20, 14, 5, 13, top);
+      px(20, 14, 5, 2, topL);
+    } else {
+      px(4, 36, 40, 4, "rgba(0,0,0,0.35)");
+      px(6, 26, 36, 9, face);
+      px(6, 26, 36, 4, "#1e1e19");
+      for (let k = 8; k < 40; k += 4) px(k, 27, 2, 2, "#5a5a50");
+      px(7, 14, 34, 12, top);
+      px(7, 14, 34, 2, topL);
+      px(26, 14, 14, 12, topL);
+      px(30, 10, 14, 3, dead ? "#16150f" : "#25251f");
+      px(14, 8, 16, 7, face);
+      px(14, 5, 16, 9, top);
+      px(14, 5, 16, 2, topL);
+      px(20, 8, 4, 3, dead ? "#16150f" : "#2a2a24");
+      if (t.state === "burning") for (let k = 0; k < 8; k++) px(8 + k * 4, 6 + ((k * 5) % 10), 3, 3, k % 2 ? "#ff9a2a" : "#ffe070");
+    }
+  }
+  $("followbtn").addEventListener("click", () => {
+    follow = !follow;
+  });
+}
+
 function renderInspector(): void {
   const el = $("inspector");
   const s = world.maybe(selected);
   if (!s) {
     el.innerHTML = `<p class="hint">Click a soldier on the map or a name above. Squads show as coloured bars under their men; ${icon("pinned")} pinned, ! broken, ${icon("medic")} wounded, ${icon("flag")} surrendered.</p>`;
+    return;
+  }
+  if (s.role === "tank" || s.role === "field_gun") {
+    renderVehicleInspector(s);
     return;
   }
   const sq = world.squad(s.squadId);

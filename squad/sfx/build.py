@@ -400,7 +400,7 @@ def engine_rumble(secs=1.2):
     base = sg.sosfilt(sg.butter(2, 220, "lowpass", fs=SR, output="sos"), RNG.normal(0, 1, n))
     pulse = 0.65 + 0.35 * np.sin(2 * math.pi * 17 * t)
     drone = np.sin(2 * math.pi * 38 * t) * 0.5 + np.sin(2 * math.pi * 76 * t) * 0.25
-    tracks = clatter(n, int(secs * 14), 900, 3000) * 0.35
+    tracks = clatter(n, int(secs * 9), 700, 2200) * 0.12
     x = (norm(base) * 0.9 + drone) * pulse + tracks
     # Seamless: the ends fade into one another.
     k = int(SR * 0.12)
