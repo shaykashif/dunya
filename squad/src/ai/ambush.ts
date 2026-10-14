@@ -2,7 +2,8 @@
 // a wood, scrub or the bank of a hedge beside the way the enemy must come,
 // close enough to the route to catch a whole squad in the open. They go flat,
 // hold their fire, and spring it all at once (see ambushStep in command.ts).
-import { findPath } from "../world/map.ts";
+import { startClearance } from "../world/layout.ts";
+import { dist, findPath } from "../world/map.ts";
 import { enemyOf, type Point, type Side, type Soldier } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 
@@ -32,6 +33,8 @@ export function ambushSite(w: World, side: Side): { at: Point; look: Point } | n
   if (!route) return null;
   const toward = w.platoons[enemy].rearY > obj.y ? 1 : -1;
   const lineAt = w.layout.line.rowAt;
+  // Never so far forward that the enemy could see it from where he forms up (the squad spreads a few tiles round the spot).
+  const clear = startClearance(w.config) + 4;
   let best: { at: Point; look: Point } | null = null, bestScore = -Infinity;
   for (let k = 0; k < route.length; k += 3) {
     const p = w.map.pt(route[k]!);
@@ -49,6 +52,7 @@ export function ambushSite(w: World, side: Side): { at: Point; look: Point } | n
         let room = 0;
         for (let yy = y - 3; yy <= y + 3; yy++) for (let xx = x - 3; xx <= x + 3; xx++) if (w.map.inBounds(xx, yy) && hiding(w, xx, yy) > 0) room++;
         if (room < 10) continue;
+        if (attackers.some((a) => dist(a, { x, y }) < clear)) continue;
         const view = w.map.visibility(x, y, p.x, p.y);
         if (view < 0.25) continue;
         const score = h + Math.min(1, room / 25) + view - Math.abs(d - 6) * 0.08;

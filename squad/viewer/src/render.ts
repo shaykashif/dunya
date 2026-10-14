@@ -569,7 +569,7 @@ export class Renderer {
     }
 
     // Mist lies on the ground, round the men's legs; the houses stand up out of it.
-    this.drawGroundFog(w, cam, vw, vh, time);
+    this.drawGroundFog(w, time);
 
     // Roofs, unless looking inside; an upper floor cut away, with the men on it.
     for (const b of w.buildings) {
@@ -741,44 +741,60 @@ export class Renderer {
   /**
    * Fog lying on the ground: banks of it in chunky blocks on the world grid,
    * thicker in the low ground and thinning over the rises, drifting slowly
-   * east. Drawn over the field and the men, under the houses.
+   * east. Drawn over the field and the men, under the houses. The banks are
+   * worked out a few times a second into a small image, one pixel a block,
+   * which is then stretched over the whole map in a single draw.
    */
-  private drawGroundFog(w: World, cam: Camera, vw: number, vh: number, time: number): void {
+  private fog: { world: World; canvas: HTMLCanvasElement; img: ImageData; low: Float32Array; cols: number; stamp: number } | null = null;
+
+  private drawGroundFog(w: World, time: number): void {
     if (w.weather.kind !== "fog") return;
-    const g = this.g;
     const P = 12;
-    const drift = time * 1.5;
-    const x0 = Math.floor(cam.x / P) - 1, x1 = Math.ceil((cam.x + vw / cam.zoom) / P) + 1;
-    const y0 = Math.floor(cam.y / P) - 1, y1 = Math.ceil((cam.y + vh / cam.zoom) / P) + 1;
-    const W = w.map.width, H = w.map.height;
-    let lo = Infinity, hi = -Infinity;
-    for (let i = 0; i < W * H; i += 7) {
-      lo = Math.min(lo, w.map.elev[i]!);
-      hi = Math.max(hi, w.map.elev[i]!);
-    }
-    const levels = [0.22, 0.38, 0.55];
-    const lists: number[][] = [[], [], []];
-    for (let gy = y0; gy <= y1; gy++) {
-      for (let gx = x0; gx <= x1; gx++) {
-        const wx = (gx * P - drift) / 96, wy = (gy * P) / 72;
-        const fx0 = Math.floor(wx), fy0 = Math.floor(wy), fx = wx - fx0, fy = wy - fy0;
-        const a = hash2(fx0, fy0, 9), b = hash2(fx0 + 1, fy0, 9), c = hash2(fx0, fy0 + 1, 9), d = hash2(fx0 + 1, fy0 + 1, 9);
-        let v = a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + d * fx * fy;
-        // Fog pools in hollows.
-        const tx = Math.max(0, Math.min(W - 1, Math.floor((gx * P) / TILE))), ty = Math.max(0, Math.min(H - 1, Math.floor((gy * P) / TILE)));
-        const low = hi > lo ? 1 - (w.map.elev[ty * W + tx]! - lo) / (hi - lo) : 0.5;
-        v = v * 0.7 + low * 0.45 + (hash2(gx, gy, Math.floor(time * 0.5)) - 0.5) * 0.06;
-        const li = v > 0.78 ? 2 : v > 0.58 ? 1 : v > 0.4 ? 0 : -1;
-        if (li >= 0) lists[li]!.push(gx * P, gy * P);
+    if (!this.fog || this.fog.world !== w) {
+      const cols = Math.ceil((w.map.width * TILE) / P), rows = Math.ceil((w.map.height * TILE) / P);
+      const canvas = document.createElement("canvas");
+      canvas.width = cols;
+      canvas.height = rows;
+      // How low each block lies, 1 in the deepest hollow and 0 on the highest rise: fog pools there.
+      const W = w.map.width, H = w.map.height;
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < W * H; i++) {
+        lo = Math.min(lo, w.map.elev[i]!);
+        hi = Math.max(hi, w.map.elev[i]!);
       }
+      const low = new Float32Array(cols * rows);
+      for (let gy = 0; gy < rows; gy++) {
+        for (let gx = 0; gx < cols; gx++) {
+          const tx = Math.min(W - 1, Math.floor((gx * P) / TILE)), ty = Math.min(H - 1, Math.floor((gy * P) / TILE));
+          low[gy * cols + gx] = hi > lo ? 1 - (w.map.elev[ty * W + tx]! - lo) / (hi - lo) : 0.5;
+        }
+      }
+      this.fog = { world: w, canvas, img: new ImageData(cols, rows), low, cols, stamp: -1 };
     }
-    for (let li = 0; li < 3; li++) {
-      g.fillStyle = `rgba(222,226,228,${levels[li]})`;
-      g.beginPath();
-      const l = lists[li]!;
-      for (let k = 0; k < l.length; k += 2) g.rect(l[k]!, l[k + 1]!, P, P);
-      g.fill();
+    const fog = this.fog;
+    const stamp = Math.floor(time * 5);
+    if (stamp !== fog.stamp) {
+      fog.stamp = stamp;
+      const drift = time * 1.5, flicker = Math.floor(time * 0.5);
+      const d = fog.img.data, cols = fog.cols, rows = fog.canvas.height;
+      const alpha = [0, Math.round(0.22 * 255), Math.round(0.38 * 255), Math.round(0.55 * 255)];
+      for (let gy = 0; gy < rows; gy++) {
+        const wy = (gy * P) / 72, fy0 = Math.floor(wy), fy = wy - fy0;
+        for (let gx = 0; gx < cols; gx++) {
+          const wx = (gx * P - drift) / 96, fx0 = Math.floor(wx), fx = wx - fx0;
+          const a = hash2(fx0, fy0, 9), b = hash2(fx0 + 1, fy0, 9), c = hash2(fx0, fy0 + 1, 9), e = hash2(fx0 + 1, fy0 + 1, 9);
+          let v = a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + e * fx * fy;
+          v = v * 0.7 + fog.low[gy * cols + gx]! * 0.45 + (hash2(gx, gy, flicker) - 0.5) * 0.06;
+          const k = (gy * cols + gx) * 4;
+          d[k] = 222;
+          d[k + 1] = 226;
+          d[k + 2] = 228;
+          d[k + 3] = alpha[v > 0.78 ? 3 : v > 0.58 ? 2 : v > 0.4 ? 1 : 0]!;
+        }
+      }
+      fog.canvas.getContext("2d")!.putImageData(fog.img, 0, 0);
     }
+    this.g.drawImage(fog.canvas, 0, 0, fog.cols * P, fog.canvas.height * P);
   }
 
   private drawFlag(x: number, y: number, color: string): void {

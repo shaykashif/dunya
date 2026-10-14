@@ -84,10 +84,40 @@ export function shellDamage(w: World, o: Ordnance): boolean {
       fell.push(b);
     }
   }
-  if (changed.length > 0) map.finalize();
-  else if (roofs) map.version++;
+  if (changed.length > 0) {
+    map.finalize();
+    dropFromBreaches(w, changed);
+  } else if (roofs) map.version++;
   if (changed.length > 0) w.emit("destroyed", [], { by: o.kind, at: [o.x, o.y], tiles: changed.map(([x, y, t]) => [x, y, t]) });
   return changed.length > 0 || roofs || fell.length > 0;
+}
+
+/**
+ * A man upstairs over a stretch of wall that has just been blown out comes
+ * down with it, onto the rubble or beside it, and may be hurt by the fall.
+ */
+function dropFromBreaches(w: World, changed: [number, number, Terrain][]): void {
+  const map = w.map;
+  const rng = w.rng.get("ordnance");
+  for (const [x, y] of changed) {
+    for (const s of w.soldiers) {
+      if (s.x !== x || s.y !== y || s.z === 0 || s.carriedById !== null || map.passable(s.x, s.y, s.z)) continue;
+      const fall = s.z;
+      w.vacate(s);
+      s.z = 0;
+      const spot = map.passable(x, y, 0) && w.occupancy[map.cell(x, y, 0)] === 0 ? { x, y } : w.freeTileNear({ x, y }, 4, s.id) ?? { x, y };
+      w.place(s, spot.x, spot.y, 0);
+      if (s.status === "dead") continue;
+      s.posture = "prone";
+      s.act = null;
+      if (!rng.chance(0.6)) continue;
+      const part = rng.chance(0.6) ? (rng.chance(0.5) ? "left leg" : "right leg") : "torso";
+      const sev = 0.2 + rng.next() * 0.2 * fall;
+      injure(w, s, part, sev > 0.5 && part !== "torso" ? "fracture" : "bruise", sev, "a fall when the wall under him was blown out", null, impactHealth(w, part, sev) * 0.5);
+      note(w, s, "fell when the wall under him was blown out");
+      if (s.survival.health <= 0) kill(w, s, "killed", null);
+    }
+  }
 }
 
 /** Breached walls, or a roof full of holes. */

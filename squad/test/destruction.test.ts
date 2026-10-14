@@ -49,6 +49,27 @@ describe("shellfire knocks things down", () => {
     expect(() => checkInvariants(w)).not.toThrow();
   });
 
+  it("a man upstairs in a doorway that is blown out comes down with it", () => {
+    const w = createSimulation({ seed: 5, config: { map: { kind: "town" }, weather: { kind: "clear" } } }).world;
+    let spot: { x: number; y: number } | null = null;
+    for (const b of w.buildings) {
+      for (let y = b.y; y < b.y + b.h && !spot; y++) {
+        for (let x = b.x; x < b.x + b.w && !spot; x++) {
+          // An inner doorway: there on every floor, and knocked out by a bomb like any wall.
+          if (w.map.wallHp[w.map.idx(x, y)]! > 0 && w.map.passable(x, y, 1)) spot = { x, y };
+        }
+      }
+      if (spot) break;
+    }
+    expect(spot).not.toBeNull();
+    const man = w.soldiers.find((s) => s.side === "de" && s.role === "rifleman")!;
+    w.place(man, spot!.x, spot!.y, 1);
+    for (let k = 0; k < 6 && w.map.at(spot!.x, spot!.y) !== "rubble"; k++) shellDamage(w, shell(w, "mortar", spot!.x, spot!.y));
+    expect(w.map.at(spot!.x, spot!.y)).toBe("rubble");
+    expect(man.z).toBe(0);
+    expect(() => checkInvariants(w)).not.toThrow();
+  });
+
   it("shells smash trees to deadfall and blow hedges open", () => {
     const w = world(5);
     for (let y = 40; y <= 50; y++) for (let x = 40; x <= 50; x++) w.map.set(x, y, y === 45 ? "hedge" : "woods");

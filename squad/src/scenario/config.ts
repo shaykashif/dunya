@@ -71,14 +71,20 @@ export const DEFAULT_CONFIG = {
     secondsPerTick: 1,
     /** The battle starts at this time of day, in minutes after midnight. */
     startMinute: 6 * 60 + 40,
-    /** The engagement is called off after this many ticks. */
-    maxTicks: 60 * 60,
+    /** The engagement is called off after this many ticks: an hour of fighting, plus the march up out of sight. */
+    maxTicks: 70 * 60,
     date: "12 June 1944",
   },
   map: {
     width: 144,
-    /** Deep enough that the attackers form up out of sight and range of the defended hedge. */
-    height: 128,
+    /**
+     * Deep enough that the attackers form up out of sight and range of the
+     * defenders: the defended hedge is kept at least `startClearance` tiles
+     * from the line of departure, and that only fits with room to spare.
+     */
+    height: 216,
+    /** Tiles beyond the longest sight on the field (a sniper's scope in clear weather) that the two sides start apart. */
+    startMargin: 6,
     fieldWidth: [24, 40] as [number, number],
     fieldHeight: [13, 19] as [number, number],
     mergeChance: 0.14,

@@ -7,6 +7,7 @@ import { hitChance, sightRange } from "../src/combat/fire.ts";
 import { concealment } from "../src/combat/perception.ts";
 import { checkInvariants } from "../src/engine/invariants.ts";
 import { createSimulation } from "../src/sim.ts";
+import { startClearance } from "../src/world/layout.ts";
 import { findPath } from "../src/world/map.ts";
 import type { MapKind, Soldier } from "../src/world/types.ts";
 import type { World } from "../src/world/world.ts";
@@ -183,8 +184,22 @@ describe("weather and snipers", () => {
       const hide = chooseHide(w, sniper);
       expect(hide).not.toBeNull();
       const t = w.map.at(hide!.x, hide!.y);
-      const hidden = (hide!.z ?? 0) > 0 || t === "woods" || t === "brush" || t === "orchard" || w.map.besideCover(hide!.x, hide!.y) || w.map.indoors(hide!.x, hide!.y);
+      const hidden = (hide!.z ?? 0) > 0 || (w.config.terrain.concealment[t] ?? 1) <= 0.6 || w.map.besideCover(hide!.x, hide!.y) || w.map.indoors(hide!.x, hide!.y);
       expect(hidden, `${seed}: ${t}`).toBe(true);
+    }
+  });
+});
+
+describe("the start", () => {
+  it("the two sides always start beyond the longest sight on the field, ambushes included", () => {
+    for (let seed = 1; seed <= 24; seed++) {
+      const w = world(seed);
+      const att = w.side(w.attacker).filter((s) => w.onField(s));
+      const def = w.soldiers.filter((s) => s.side !== w.attacker && w.onField(s));
+      let closest = Infinity;
+      for (const a of att) for (const d of def) closest = Math.min(closest, Math.hypot(a.x - d.x, a.y - d.y));
+      expect(closest, `seed ${seed} (${w.layout.kind})`).toBeGreaterThan(w.config.perception.maxRange * w.config.perception.scope);
+      expect(closest).toBeGreaterThanOrEqual(startClearance(w.config) - w.config.map.startMargin);
     }
   });
 });
