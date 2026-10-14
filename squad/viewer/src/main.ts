@@ -135,7 +135,7 @@ function soundsFor(e: SimEvent): void {
     }
     case "grenade_thrown": {
       const [fx, fy] = d.from as [number, number];
-      sfx.play("throw", { x: fx, y: fy, gain: 0.2, reach: 1.2, close: true });
+      sfx.play("throw", { x: fx, y: fy, gain: 0.4, reach: 1.4 });
       break;
     }
     case "incoming": {
@@ -149,8 +149,8 @@ function soundsFor(e: SimEvent): void {
       const [x, y] = d.at as [number, number];
       const kind = d.kind === "artillery" ? "artillery" : d.kind === "mortar" ? "mortar" : "frag";
       sfx.noteGunfire();
-      const gain = kind === "artillery" ? 2.6 : kind === "mortar" ? 2.4 : 2.6;
-      sfx.play(`boom.${kind}`, { x, y, gain, reach: kind === "artillery" ? 7 : kind === "mortar" ? 5.5 : 4.5, anywhere: true, priority: true });
+      const gain = kind === "artillery" ? 2.6 : kind === "mortar" ? 4.2 : 4.6;
+      sfx.play(`boom.${kind}`, { x, y, gain, reach: kind === "artillery" ? 7 : kind === "mortar" ? 5.5 : 4.5, anywhere: true, carry: kind === "artillery" ? 2.5 : 3.5, priority: true });
       break;
     }
     case "smoke": {
@@ -171,12 +171,12 @@ function soundsFor(e: SimEvent): void {
     case "casualty":
     case "death": {
       const s = person(d.person ?? e.actors[0]);
-      if (s) sfx.playLimited(`p${s.id}`, 600, "voice.pain", { x: s.x, y: s.y, gain: e.type === "death" ? 0.2 : 0.25, reach: 1.7, close: true, rate: e.type === "death" ? 0.88 : 1 });
+      if (s) sfx.playLimited(`p${s.id}`, 600, "voice.pain", { x: s.x, y: s.y, gain: e.type === "death" ? 0.08 : 0.1, reach: 1.2, close: true, closeSpan: 12, rate: e.type === "death" ? 0.88 : 1 });
       break;
     }
     case "callout": {
       const s = person(d.by);
-      if (s) sfx.playLimited("callout", 250, "voice.shout", { x: s.x, y: s.y, gain: 0.18, reach: 1.5, close: true, rate: 0.9 });
+      if (s) sfx.playLimited("callout", 250, "voice.shout", { x: s.x, y: s.y, gain: 0.07, reach: 1.2, close: true, closeSpan: 12, rate: 0.9 });
       break;
     }
     case "stumble":
@@ -184,7 +184,7 @@ function soundsFor(e: SimEvent): void {
       const s = person(d.person ?? e.actors[0]);
       if (!s) break;
       sfx.playLimited(`d${s.id}`, 500, `land.${surfaceAt(s.x, s.y)}`, { x: s.x, y: s.y, gain: 0.2, reach: 1.3, close: true });
-      sfx.play("voice.effort", { x: s.x, y: s.y, gain: 0.12, reach: 1.1, close: true });
+      sfx.play("voice.effort", { x: s.x, y: s.y, gain: 0.05, reach: 1.1, close: true, closeSpan: 12 });
       break;
     }
     case "breach": {
@@ -1075,7 +1075,7 @@ canvas.addEventListener(
     const rect = canvas.getBoundingClientRect();
     const px = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? rect.height : 1);
     const from = zoomGoal?.zoom ?? cam.zoom;
-    zoomToward(from * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.004 * zoomRate(from)), ev.clientX - rect.left, ev.clientY - rect.top);
+    zoomToward(from * Math.exp(-Math.max(-250, Math.min(250, px)) * 0.008 * zoomRate(from)), ev.clientX - rect.left, ev.clientY - rect.top);
   },
   { passive: false },
 );
@@ -1108,7 +1108,7 @@ function easeZoom(dt: number): void {
   const { sx, sy } = zoomGoal;
   // The world point under the cursor stays put while the zoom eases in.
   const wx = sx / cam.zoom + cam.x, wy = sy / cam.zoom + cam.y;
-  cam.zoom += (zoomGoal.zoom - cam.zoom) * (1 - Math.exp(-dt * 22));
+  cam.zoom += (zoomGoal.zoom - cam.zoom) * (1 - Math.exp(-dt * 40));
   if (Math.abs(cam.zoom - zoomGoal.zoom) < 0.002) {
     cam.zoom = zoomGoal.zoom;
     zoomGoal = null;
@@ -1158,7 +1158,7 @@ function panCamera(dt: number): void {
   if (keys.has("d") || keys.has("arrowright")) { cam.x += v; moved = true; }
   if (keys.has("q") || keys.has("e")) {
     const rect = canvas.getBoundingClientRect();
-    const f = Math.exp((keys.has("e") ? 1 : -1) * dt * 3.5 * zoomRate(cam.zoom));
+    const f = Math.exp((keys.has("e") ? 1 : -1) * dt * 6 * zoomRate(cam.zoom));
     zoomToward(cam.zoom * f, rect.width / 2, rect.height / 2);
   }
   if (moved) {

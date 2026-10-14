@@ -26,6 +26,10 @@ export interface PlayOptions {
   offset?: number;
   /** Lets a sound through when voices are scarce. */
   priority?: boolean;
+  /** With `close`: how many tiles of view width it takes to fade out (default 28; smaller = needs more zoom). */
+  closeSpan?: number;
+  /** Louder at a distance: multiplies the faint far-off level, and flattens the fall-off with distance. */
+  carry?: number;
   /** Carries across the whole map: past its reach it is still heard, faint and distant. */
   anywhere?: boolean;
   /** Quiet, personal sounds (boots, voices, reloads): fade out as the view widens, gone unless zoomed in close. */
@@ -251,10 +255,10 @@ export class Sfx {
       if (r >= 1) {
         // Far-off fighting: the same distant crump at any zoom, a little fainter the further away.
         const tiles = Math.hypot(o.x - this.cx, o.y - this.cy);
-        gain *= Math.max(0.1, 0.34 / (1 + tiles / 70));
+        gain *= Math.max(0.1, 0.34 / (1 + tiles / 70)) * (o.carry ?? 1);
         r = 1;
-      } else gain *= (1 - r) ** 1.7;
-      if (o.close) gain *= Math.max(0, 1 - (this.half - 10) / 28);
+      } else gain *= (1 - r) ** (o.carry ? 1.7 / o.carry : 1.7);
+      if (o.close) gain *= Math.max(0, 1 - (this.half - 8) / (o.closeSpan ?? 28));
       else if (o.byDistance || (o.reach ?? 0) >= 3) gain *= 1 - 0.45 * this.wide;
       if (gain < 0.012) return false;
       pan = Math.max(-0.85, Math.min(0.85, (o.x - this.cx) / (this.half * 1.1)));
