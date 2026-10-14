@@ -176,11 +176,19 @@ class Bank:
 
     def save(self):
         os.makedirs(OUT, exist_ok=True)
+        import glob
+        import hashlib
+
         data = np.concatenate(self.pcm).tobytes()
-        with open(os.path.join(OUT, "bank.bin"), "wb") as f:
+        # The bank's file name carries a hash of its contents, so a cache can never pair a new index with an old bank.
+        h = hashlib.sha1(data).hexdigest()[:10]
+        name = f"bank.{h}.bin"
+        for old in glob.glob(os.path.join(OUT, "bank*.bin")):
+            os.remove(old)
+        with open(os.path.join(OUT, name), "wb") as f:
             f.write(data)
         with open(os.path.join(OUT, "bank.json"), "w") as f:
-            json.dump({"rate": SR, "samples": self.samples, "groups": self.groups}, f, separators=(",", ":"))
+            json.dump({"rate": SR, "bin": name, "bytes": len(data), "samples": self.samples, "groups": self.groups}, f, separators=(",", ":"))
         with open(os.path.join(OUT, "sources.json"), "w") as f:
             json.dump(self.sources, f, indent=1)
         print(f"bank: {len(self.samples)} sounds, {len(data) / 1e6:.2f} MB, {self.offset / SR:.0f} s")

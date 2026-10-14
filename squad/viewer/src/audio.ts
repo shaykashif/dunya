@@ -7,6 +7,9 @@ import type { Terrain } from "../../src/world/types.ts";
 
 interface Manifest {
   rate: number;
+  /** The bank's file, named by its contents, and how long it should be. */
+  bin?: string;
+  bytes?: number;
   samples: Record<string, [number, number]>;
   groups: Record<string, string[]>;
 }
@@ -153,10 +156,15 @@ export class Sfx {
 
   private async load(ctx: AudioContext): Promise<void> {
     const base = new URL("audio/", document.baseURI);
-    const [man, bin] = await Promise.all([
-      fetch(new URL("bank.json", base)).then((r) => r.json() as Promise<Manifest>),
-      fetch(new URL("bank.bin", base)).then((r) => r.arrayBuffer()),
-    ]);
+    const get = async (cacheBust: string): Promise<{ man: Manifest; bin: ArrayBuffer }> => {
+      const man = (await fetch(new URL(`bank.json${cacheBust}`, base), { cache: "no-cache" }).then((r) => r.json())) as Manifest;
+      const bin = await fetch(new URL(`${man.bin ?? "bank.bin"}${cacheBust}`, base)).then((r) => r.arrayBuffer());
+      return { man, bin };
+    };
+    let { man, bin } = await get("");
+    // An index and a bank that do not belong together (one of them stale in a cache) would play as noise: ask again past the caches.
+    if (man.bytes !== undefined && bin.byteLength !== man.bytes) ({ man, bin } = await get(`?cb=${Date.now()}`));
+    if (man.bytes !== undefined && bin.byteLength !== man.bytes) throw new Error("sound bank does not match its index");
     const pcm = new Int16Array(bin);
     for (const [name, [off, len]] of Object.entries(man.samples)) {
       const buf = ctx.createBuffer(1, len, man.rate);
