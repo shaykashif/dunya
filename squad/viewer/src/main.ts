@@ -669,8 +669,10 @@ function toast(kind: string, title: string, text: string, people: number[] = [],
   el.innerHTML = `<b>${esc(title)}</b>${linkNames(esc(text), people)}`;
   const box = $("toasts");
   box.prepend(el);
-  while (box.children.length > 5) box.lastElementChild?.remove();
-  setTimeout(() => el.remove(), 9000);
+  // On a phone the map is small: fewer alerts, and they go sooner.
+  const small = window.matchMedia("(max-width: 900px)").matches;
+  while (box.children.length > (small ? 2 : 5)) box.lastElementChild?.remove();
+  setTimeout(() => el.remove(), small ? 5000 : 9000);
 }
 
 /** What each change of squad state reads as in an alert: a title, and what the squad "is" doing. */
