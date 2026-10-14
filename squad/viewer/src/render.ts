@@ -603,7 +603,11 @@ export class Renderer {
     if (opts.orders) this.drawOrders(w, prev);
     if (sel && opts.sight) this.drawSight(w, sel, prev);
     if (opts.names) this.drawNames(w, cam, prev);
-    if (cam.zoom < SQUAD_BANNER_ZOOM) this.drawSquadBanners(w, cam, prev, time);
+    if (cam.zoom < SQUAD_BANNER_ZOOM + SQUAD_BANNER_FADE) {
+      g.globalAlpha = Math.min(1, (SQUAD_BANNER_ZOOM + SQUAD_BANNER_FADE - cam.zoom) / SQUAD_BANNER_FADE);
+      this.drawSquadBanners(w, cam, prev, time);
+      g.globalAlpha = 1;
+    }
 
     // Screen space from here: the weather over everything, and the floor buttons.
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1451,13 +1455,33 @@ export class Renderer {
       const pad = 4 * k, icon = spotted < 5 ? fs + pad : 0;
       const tw = Math.max(g.measureText(title).width, sub ? g.measureText(sub).width : 0);
       const rows = sub ? 2 : 1, h = fs * rows + pad * (rows + 1) * 0.6;
-      const wBox = tw + pad * 2 + icon;
+      const flagW = Math.round(fs * 1.5);
+      const wBox = tw + pad * 2 + icon + flagW + pad;
       const x = Math.round(cx - wBox / 2), y = Math.round(top - 10 * k - h);
       g.fillStyle = "rgba(20,18,14,0.85)";
       g.fillRect(x, y, wBox, h);
       g.fillStyle = sq.color;
       g.fillRect(x, y, pad * 0.7, h);
-      let tx = x + pad * 1.2;
+      // The side's flag, so the two armies can be told apart at a glance.
+      const fx = x + pad * 1.2, fy = y + pad * 0.6, fh = Math.round(fs * 0.95);
+      if (sq.side === "us") {
+        for (let r = 0; r < 5; r++) {
+          g.fillStyle = r % 2 === 0 ? "#c8302a" : "#f2f0e6";
+          g.fillRect(fx, fy + (fh * r) / 5, flagW, fh / 5 + 0.01);
+        }
+        g.fillStyle = "#2a3f8a";
+        g.fillRect(fx, fy, flagW * 0.45, fh * 0.6);
+      } else {
+        const cols = ["#16140f", "#f2f0e6", "#c8302a"];
+        for (let r = 0; r < 3; r++) {
+          g.fillStyle = cols[r]!;
+          g.fillRect(fx, fy + (fh * r) / 3, flagW, fh / 3 + 0.01);
+        }
+      }
+      g.strokeStyle = "rgba(0,0,0,0.7)";
+      g.lineWidth = Math.max(0.5, k * 0.8);
+      g.strokeRect(fx, fy, flagW, fh);
+      let tx = fx + flagW + pad;
       if (icon) {
         // A bold red warning block that blinks while the contact is fresh.
         const on = spotted > 2 || Math.floor(spotted * 6) % 2 === 0;
@@ -1495,6 +1519,8 @@ export class Renderer {
 
 /** Below this zoom, squads get an activity banner. */
 const SQUAD_BANNER_ZOOM = 0.6;
+/** Over this much more zoom the banners crossfade out instead of vanishing. */
+const SQUAD_BANNER_FADE = 0.25;
 
 const SQUAD_DOING: Record<string, string> = {
   deploy: "Deploying",

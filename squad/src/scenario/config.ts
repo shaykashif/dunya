@@ -290,8 +290,8 @@ export const DEFAULT_CONFIG = {
     /** Fire missions a platoon has, by what it is doing, not by who it is: the Americans defend sometimes. */
     missions: { attack: 5, defend: 3 },
     rounds: 6,
-    spotDelay: 35,
-    effectDelay: 22,
+    spotDelay: 20,
+    effectDelay: 12,
     /** Seconds a round is in the air after it is fired; men within earshot hear it coming for the last two. */
     flight: { mortar: 9, artillery: 12, smoke_shell: 9 },
     whistleRadius: 10,
