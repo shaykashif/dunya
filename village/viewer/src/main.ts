@@ -1337,4 +1337,31 @@ resize();
 newVillage(initialSeed);
 syncControls();
 setPower("inspect");
+let started = false;
+// Start gate: nothing runs, and no sound plays, until the visitor clicks in.
+{
+  const gate = document.createElement("div");
+  gate.setAttribute("role", "button");
+  gate.tabIndex = 0;
+  gate.style.cssText =
+    "position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(10,10,6,.82);color:var(--ink);cursor:pointer;text-align:center;padding:16px";
+  gate.innerHTML = `<div style="font:22px 'Silkscreen',monospace;letter-spacing:1px">Civilization Simulation</div><div style="font:20px 'VT323',monospace;color:var(--dim)">Click anywhere to start the simulation</div>`;
+  document.body.appendChild(gate);
+  const begin = (): void => {
+    gate.remove();
+    window.removeEventListener("keydown", onKey, true);
+    started = true;
+    paused = false;
+    syncControls();
+  };
+  const onKey = (ev: KeyboardEvent): void => {
+    ev.stopImmediatePropagation();
+    ev.preventDefault();
+    if (ev.key === "Enter" || ev.key === " ") begin();
+  };
+  gate.addEventListener("click", begin);
+  window.addEventListener("keydown", onKey, true);
+  paused = true;
+  syncControls();
+}
 requestAnimationFrame(frame);

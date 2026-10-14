@@ -1709,7 +1709,8 @@ function syncSound(): void {
   b.classList.toggle("on", sfx.enabled);
   $<HTMLInputElement>("vol").value = String(Math.round(sfx.volume * 100));
 }
-for (const ev of ["pointerdown", "keydown"] as const) window.addEventListener(ev, () => sfx.unlock(), { capture: true });
+let started = false;
+for (const ev of ["pointerdown", "keydown"] as const) window.addEventListener(ev, () => started && sfx.unlock(), { capture: true });
 // Any input of the player's own takes the camera back from a followed message.
 window.addEventListener("pointerdown", (ev) => {
   if (cine && !(ev.target as HTMLElement).closest(".bolt")) endCine(true);
@@ -1763,6 +1764,33 @@ const params = new URLSearchParams(location.search);
 const startSeed = Number(params.get("seed") ?? 42) || 42;
 $<HTMLInputElement>("seed").value = String(startSeed);
 newBattle(startSeed);
+// Start gate: nothing runs, and no sound plays, until the visitor clicks in.
+{
+  const gate = document.createElement("div");
+  gate.setAttribute("role", "button");
+  gate.tabIndex = 0;
+  gate.style.cssText =
+    "position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(10,10,6,.82);color:var(--ink);cursor:pointer;text-align:center;padding:16px";
+  gate.innerHTML = `<div style="font:22px 'Silkscreen',monospace;letter-spacing:1px">Bocage · Battle Simulation</div><div style="font:20px 'VT323',monospace;color:var(--dim)">Click anywhere to start the simulation</div>`;
+  document.body.appendChild(gate);
+  const begin = (): void => {
+    gate.remove();
+    window.removeEventListener("keydown", onKey, true);
+    started = true;
+    sfx.unlock();
+    paused = false;
+    syncControls();
+  };
+  const onKey = (ev: KeyboardEvent): void => {
+    ev.stopImmediatePropagation();
+    ev.preventDefault();
+    if (ev.key === "Enter" || ev.key === " ") begin();
+  };
+  gate.addEventListener("click", begin);
+  window.addEventListener("keydown", onKey, true);
+  paused = true;
+  syncControls();
+}
 requestAnimationFrame(frame);
 
 // For the console: squad.advance(60) runs a minute.
@@ -1781,6 +1809,8 @@ requestAnimationFrame(frame);
   select,
   sfx,
   chains,
+  /** Calls down the player's 105 mm barrage on a tile: squad.barrage(127, 90). */
+  barrage: (x: number, y: number) => engine.intervene({ kind: "artillery", x, y }),
   startCine: (id: number) => {
     const c = chains.get(id);
     if (c) startCine(c);
