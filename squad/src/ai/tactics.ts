@@ -77,6 +77,19 @@ function scoreSpot(w: World, s: Soldier, p: Point, threats: readonly Point[], fi
     const up = w.map.heightAt(p.x, p.y, p.z ?? 0) - w.map.heightAt(s.x, s.y, s.z);
     score += Math.max(-0.1, Math.min(0.1, up * 0.03));
   }
+  // Behind a friendly tank or gun, with it between him and the threat.
+  if (w.tanks.size > 0 && threats.length > 0) {
+    const th = threats[0]!;
+    for (const t of w.tanks.values()) {
+      if (t.side !== s.side || t.state === "abandoned") continue;
+      const v = w.soldier(t.id);
+      if (v.id === s.id || Math.max(Math.abs(p.x - v.x), Math.abs(p.y - v.y)) > 3) continue;
+      if (Math.hypot(v.x - th.x, v.y - th.y) < Math.hypot(p.x - th.x, p.y - th.y) - 1) {
+        score += 0.5;
+        break;
+      }
+    }
+  }
   // Not right on top of a friend: one burst would get both.
   const z = p.z ?? 0;
   for (let dy = -1; dy <= 1; dy++) {
@@ -183,8 +196,9 @@ export function flankPoint(w: World, side: Side, from: Point, focus: Point, rang
     const path = findPath(w.map, w.map.cell(from.x, from.y, from.z ?? 0), w.map.cell(spot.x, spot.y, spot.z ?? 0), { extra: (c) => ex[c % n]! * w.config.movement.exposureWeight, maxExpand: 25000 });
     if (!path) continue;
     let exposure = 0, cost = 0;
+    const painMap = w.pain[side];
     for (const c of path) {
-      exposure += ex[c % n]!;
+      exposure += ex[c % n]! + painMap[c % n]! * 0.7;
       cost += w.map.cellCost(c);
     }
     // Being able to fire on the position from there, from cover, is what makes a flank.
@@ -205,7 +219,9 @@ export function flankPoint(w: World, side: Side, from: Point, focus: Point, rang
 export function boundsTo(w: World, side: Side, from: Point, to: Point): Point[] {
   const ex = w.exposure[side];
   const n = w.map.tiles;
-  const path = findPath(w.map, w.map.cell(from.x, from.y, from.z ?? 0), w.map.cell(to.x, to.y, to.z ?? 0), { extra: (c) => ex[c % n]! * w.config.movement.exposureWeight + (w.map.terrain[c % n] === "hedge" ? 6 : 0), maxExpand: 40000 });
+  const pain = w.pain[side];
+  const pw = w.config.movement.painWeight;
+  const path = findPath(w.map, w.map.cell(from.x, from.y, from.z ?? 0), w.map.cell(to.x, to.y, to.z ?? 0), { extra: (c) => ex[c % n]! * w.config.movement.exposureWeight + pain[c % n]! * pw + (w.map.terrain[c % n] === "hedge" ? 6 : 0), maxExpand: 40000 });
   if (!path) return [to];
   const out: Point[] = [];
   let last = from;

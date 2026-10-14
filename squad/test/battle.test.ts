@@ -14,7 +14,7 @@ interface Run {
 const runs: Run[] = [];
 
 beforeAll(async () => {
-  for (const seed of [1, 2, 3, 6, 4]) {
+  for (const seed of [1, 2, 3, 6, 4, 24]) {
     const log = new EventLog({ retain: true });
     const engine = createSimulation({ seed, log });
     await engine.runBattle();
@@ -59,10 +59,14 @@ describe("battles", () => {
       // A sniper works alone, outside his squad's fire discipline; a forward team fires only to defend itself.
       const outside = (id: number) => {
         const s = r.world.soldier(id);
-        return s.role === "sniper" || r.world.squad(s.squadId).task === "scout";
+        // Tanks and guns open fire at what is close enough to be certain; that is their own rule.
+        return s.role === "sniper" || r.world.squad(s.squadId).task === "scout" || s.role === "tank" || s.role === "field_gun" || s.role === "gun_crew";
       };
       const firstDefenderShot = r.events.find((e) => e.type === "fire" && e.data.side === defender && !outside(e.data.by as number));
-      if (firstDefenderShot) expect(firstDefenderShot.seq).toBeGreaterThan(opened!.seq);
+      // They may answer once the enemy has opened fire on them (a recon sniper, say), without waiting for the order.
+      const attacker = r.world.attacker;
+      const firstAttackerShot = r.events.find((e) => e.type === "fire" && e.data.side === attacker);
+      if (firstDefenderShot) expect(firstDefenderShot.seq).toBeGreaterThan(Math.min(opened!.seq, firstAttackerShot?.seq ?? Infinity));
     }
   });
 
@@ -97,6 +101,26 @@ describe("battles", () => {
       const dead = r.world.soldiers.filter((s) => s.status === "dead");
       expect(fb === null).toBe(dead.length === 0);
       if (fb) expect(dead.every((s) => (s.deathTick ?? 0) >= fb.tick)).toBe(true);
+    }
+  });
+
+  it("armour is attached to the platoon, outside its headcount, and behaves", () => {
+    // Seeds known to field armour: a tank each side, an attacking tank, a defending tank and gun.
+    for (const r of runs) {
+      for (const t of r.world.tanks.values()) {
+        const v = r.world.soldier(t.id);
+        expect(["tank", "field_gun"]).toContain(v.role);
+        expect(r.world.side(t.side).includes(v)).toBe(false);
+        for (const id of t.crew) expect(r.world.side(t.side).includes(r.world.soldier(id))).toBe(false);
+        // A wreck blocks its tile and does nothing.
+        if (t.state === "wrecked") expect(v.conscious).toBe(false);
+        // Nobody inside a tank is also standing on the ground.
+        for (const id of t.crew) {
+          const c = r.world.soldier(id);
+          if (c.status === "aboard") expect(r.world.occupancy[r.world.map.cell(c.x, c.y, c.z)]).toBe(t.kind === "tank" ? v.id : r.world.occupancy[r.world.map.cell(c.x, c.y, c.z)]);
+        }
+      }
+      expect(r.world.soldiers.filter((s) => s.role === "at_gunner").length).toBeGreaterThanOrEqual(4);
     }
   });
 

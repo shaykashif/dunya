@@ -12,6 +12,7 @@ import type { WeaponSpec } from "../scenario/config.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { Point, Soldier } from "../world/types.ts";
 import type { World } from "../world/world.ts";
+import { smallArmsOnVehicle } from "./armour.ts";
 import { concealment, hearShot } from "./perception.ts";
 
 export function weaponOf(w: World, s: Soldier): WeaponSpec | null {
@@ -46,11 +47,32 @@ export function hitChance(w: World, shooter: Soldier, target: Soldier, spec: Wea
   p *= Math.pow(vis, 0.7) * cfg.posture.size[target.posture] * (1 - cover);
   if (movedThisTick(w, shooter)) p *= cfg.fire.movingShooter;
   if (movedThisTick(w, target)) p *= cfg.fire.movingTarget;
+  // A friendly tank or gun shield between him and the shooter takes most of it.
+  if (w.tanks.size > 0) {
+    const dx = target.x - shooter.x, dy = target.y - shooter.y;
+    const len2 = dx * dx + dy * dy || 1;
+    for (const t of w.tanks.values()) {
+      if (t.side !== target.side || t.id === target.id) continue;
+      const v = w.soldier(t.id);
+      const u = ((v.x - shooter.x) * dx + (v.y - shooter.y) * dy) / len2;
+      if (u < 0.5 || u >= 1) continue;
+      const off = Math.abs((v.x - shooter.x) * dy - (v.y - shooter.y) * dx) / Math.sqrt(len2);
+      if (off <= 1.3) {
+        p *= 0.3;
+        break;
+      }
+    }
+  }
   return clamp01(p);
 }
 
 /** What a bullet does to a man: a wound to some part, the health it costs, perhaps death. */
 export function bulletWound(w: World, rng: Rng, shooter: Soldier | null, target: Soldier, spec: WeaponSpec, range: number, cause: string): void {
+  // Small arms on armour: a ping off the plate.
+  if (target.role === "tank" || target.role === "field_gun") {
+    smallArmsOnVehicle(w, target, shooter);
+    return;
+  }
   const cover = shooter ? w.map.cover(target, shooter, target.posture) : 0;
   const part = pickPart(rng, hitWeights(target.posture, cover));
   const sev = Math.min(1, (spec.severity[0] + rng.next() * (spec.severity[1] - spec.severity[0])) * (1 - 0.3 * Math.min(1, range / spec.maxRange)));

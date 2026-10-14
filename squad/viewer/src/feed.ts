@@ -1,7 +1,7 @@
 // Turns engine events into lines of the battle log.
 import { describeInjury } from "../../src/entities/injuries.ts";
 import type { SimEvent } from "../../src/log/events.ts";
-import type { Injury, Role, Soldier } from "../../src/world/types.ts";
+import type { Injury, Role, Side, Soldier } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
 
 export type Category = "battle" | "us" | "de" | "death" | "wound" | "order" | "voice" | "medic" | "fire";
@@ -30,6 +30,14 @@ export const ROLE_NAMES: Record<Role, { us: string; de: string }> = {
   asst_gunner: { us: "assistant BAR man", de: "MG-Schütze 2" },
   ammo_bearer: { us: "ammunition bearer", de: "MG-Schütze 3" },
   sniper: { us: "sniper", de: "Scharfschütze" },
+  at_gunner: { us: "bazooka man", de: "Panzerschreck man" },
+  tank: { us: "tank", de: "Panzer" },
+  tank_commander: { us: "tank commander", de: "Panzerkommandant" },
+  tank_gunner: { us: "tank gunner", de: "Richtschütze" },
+  tank_driver: { us: "tank driver", de: "Fahrer" },
+  tank_loader: { us: "tank loader", de: "Ladeschütze" },
+  field_gun: { us: "anti-tank gun", de: "Pak" },
+  gun_crew: { us: "gun crewman", de: "Geschützbedienung" },
 };
 
 export function roleName(s: Soldier): string {
@@ -189,15 +197,53 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
       const p = s("by");
       return p ? line(`${label(p)} rallies ${d.men as number} men.`, p.side, [p.id]) : null;
     }
+    case "tank_fire": {
+      const t = w.maybe(d.by as number);
+      const target = w.maybe(d.target as number);
+      if (!t || !target) return null;
+      return line(`The ${d.name as string} fires at ${label(target)}${d.armoured ? " (a tank)" : ""}.`, d.side as Side, [target.id], d.armoured === true);
+    }
+    case "tank_hit": {
+      const res = d.result as string;
+      const nm = d.name as string;
+      if (res === "ping") return null;
+      if (res === "bounce") return line(`A round bounces off the ${nm}.`, d.side as Side, [], false);
+      if (res === "knocked_out") return line(`The ${nm} is knocked out.`, d.side as Side, [], true);
+      const bits = [res.includes("tracked") ? "its track is blown off" : "", res.includes("fire") ? "it catches fire" : "", (d.killed as number) > 0 ? `${d.killed as number} of the crew killed` : "", (d.wounded as number) > 0 ? `${d.wounded as number} wounded` : ""].filter(Boolean);
+      return line(`The ${nm} is hit: ${bits.join(", ") || "spalled inside"}.`, d.side as Side, [], true);
+    }
+    case "tank_bail":
+      return line(`The crew of the ${d.name as string} get out: ${d.why as string}.`, d.side as Side, (d.men as number[]).slice(0, 4), true);
+    case "tank_repair":
+      return line(d.stage === "start" ? `The crew of the ${d.name as string} climb out to put the track back on.` : `The ${d.name as string} is mobile again.`, d.side as Side, [], true);
+    case "tank_bogged":
+      return line(`The ${d.name as string} bogs down in the ${d.tile === "marsh" ? "mud" : (d.tile as string)}.`, d.side as Side, [], true);
+    case "tank_wrecked":
+      return line(`The ${d.name as string} is out of the fight: ${d.why as string}.`, d.side as Side, [], true);
+    case "tank_explodes":
+      return line(`The ${d.name as string} blows up.`, d.side as Side, [], true);
     case "radio": {
       const p = s("by");
       if (!p) return null;
       const sq = w.squads[d.squad as number]!;
-      const what = d.sniper ? "a sniper" : d.automatic ? "an automatic weapon" : "enemy movement";
-      return line(`${sq.name} radios platoon headquarters: ${what} spotted ahead of the line.`, sq.side, [p.id], false);
+      const what = d.armour ? "a TANK" : d.sniper ? "a sniper" : d.automatic ? "an automatic weapon" : "enemy movement";
+      return line(`${sq.name} radios platoon headquarters: ${what} spotted ahead of the line.`, sq.side, [p.id], d.armour === true);
     }
     case "mortar_fire":
       return null;
+    case "smoke_mission": {
+      const r = w.maybe(e.actors[0]);
+      return line(`Mortar smoke ${d.why as string}${r ? `, called by ${label(r)}` : ""}.`, d.side as Side, r ? [r.id] : [], false);
+    }
+    case "axis_shift": {
+      const sq = w.squads[d.base as number]!;
+      return line(`${w.platoons[d.side as Side].name}: the direct way has failed (${d.n as number === 1 ? "first" : `attempt ${d.n as number}`}); ${sq.name} holds the position while the other squads go round wide.`, d.side as Side, [], true);
+    }
+    case "coordinated_attack": {
+      const base = w.squads[d.base as number];
+      if (d.stage === "prep") return line(`${base ? base.name : "A squad"} pins the position; ${(d.squads as number[]).map((id) => w.squads[id]!.name).join(" and ")} work to the jump-off${d.mortars ? " while the mortars are called" : ""}.`, d.side as Side, [], true);
+      return line(`The attack goes in behind ${d.mortars ? "the mortars and " : ""}the smoke.`, d.side as Side, [], true);
+    }
     case "sniper_alert": {
       const p = s("by");
       const sq = w.squads[d.squad as number]!;

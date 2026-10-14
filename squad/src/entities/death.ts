@@ -21,6 +21,7 @@ export function kill(w: World, p: Soldier, cause: DeathCause, killerId: number |
   p.act = null;
   p.posture = "prone";
   w.vacate(p);
+  if (wasOnField && p.role !== "tank" && p.role !== "field_gun") w.addPain(p.side, p.x, p.y, 1.2);
   w.corpses.push({ id: p.id, x: p.x, y: p.y });
   const killer = w.maybe(killerId);
   if (killer && killer.side !== p.side) killer.kills++;

@@ -3,7 +3,8 @@
 import { canScramble, generateCandidates, grenadeToClear, orderFor, shootingBack } from "../ai/candidates.ts";
 import { commandStep } from "../ai/command.ts";
 import { fireTick, startReload, weaponStep } from "../combat/fire.ts";
-import { fireRifleGrenade, missionStep, ordnanceStep, throwGrenade } from "../combat/ordnance.ts";
+import { fireRifleGrenade, fireRocket, missionStep, ordnanceStep, throwGrenade } from "../combat/ordnance.ts";
+import { armourStep } from "../combat/armour.ts";
 import { perceptionStep, rebuildExposure, scoutStep } from "../combat/perception.ts";
 import { aftermath } from "../battle/aftermath.ts";
 import { fightingPain } from "../entities/body.ts";
@@ -254,6 +255,15 @@ export class Engine {
         }
         return;
       }
+      case "launch": {
+        restPosture(w, s, true);
+        if (act.ticks >= 2) {
+          if (s.rockets > 0) fireRocket(w, s, c.at!);
+          s.cooldowns["launch"] = w.tick + 10;
+          end();
+        }
+        return;
+      }
       case "rally": {
         s.posture = "crouch";
         if (act.ticks === 1) {
@@ -476,10 +486,13 @@ export class Engine {
     moraleStep(w);
     commandStep(w);
     this.interrupts();
+    armourStep(w);
+    if (w.tick % 10 === 0) w.fadePain();
     // 5. Decisions for everyone without something to do, in id order.
     for (const s of w.soldiers) {
       if (s.act || !s.conscious || s.carriedById !== null) continue;
       if (s.status !== "active" && s.status !== "casualty") continue;
+      if (s.role === "tank" || s.role === "field_gun") continue;
       const cands = generateCandidates(w, s);
       if (cands.length === 0) continue;
       this.start(s, await this.decideFor(s, cands));
@@ -623,6 +636,8 @@ export function checkBattleEnd(w: World): void {
   if (winner !== null) {
     for (const s of w.side(enemyOf(winner))) {
       if (s.status !== "casualty" && s.status !== "surrendered") continue;
+      // A knocked-out tank or gun is not a prisoner.
+      if (s.role === "tank" || s.role === "field_gun") continue;
       s.status = "captured";
       s.act = null;
       w.emit("captured", [s.id], { by: null, prisoner: s.id, wounded: true });

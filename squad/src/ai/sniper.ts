@@ -146,6 +146,9 @@ export function chooseHide(w: World, s: Soldier): Point | null {
  */
 export function sniperPriority(w: World, s: Soldier, e: Soldier): number {
   if (e.role === "sniper") return 1.3;
+  // A tank crew out on the ground, mending a track or running for it, and the man with the bazooka.
+  if (e.role.startsWith("tank_") || e.role === "gun_crew") return 1.25;
+  if (e.role === "at_gunner" && e.rockets > 0) return 1.15;
   if (e.weapon === "mg42" || e.weapon === "bar") return 1.2;
   const helping = e.act && (e.act.cand.kind === "aid" || e.act.cand.kind === "carry");
   if (e.role === "medic" || helping) return 1;

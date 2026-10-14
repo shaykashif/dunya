@@ -15,7 +15,7 @@ const OPEN_GROUND = new Set<Terrain>(["grass", "wheat", "orchard", "road", "brus
 
 /** A mortar bomb or shell has burst: knock down what it hits. Returns true if the map changed. */
 export function shellDamage(w: World, o: Ordnance): boolean {
-  if (o.kind !== "mortar" && o.kind !== "artillery") return false;
+  if (o.kind !== "mortar" && o.kind !== "artillery" && o.kind !== "tank_shell" && o.kind !== "gun_shell" && o.kind !== "at_rocket") return false;
   const cfg = w.config.destruction;
   const spec = cfg[o.kind];
   const rng = w.rng.get("ordnance");

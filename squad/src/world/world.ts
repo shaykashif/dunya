@@ -4,7 +4,7 @@ import type { EventLog, SimEvent } from "../log/events.ts";
 import type { SimConfig } from "../scenario/config.ts";
 import type { Building, Layout } from "./layout.ts";
 import { type GameMap, cheb, findPath } from "./map.ts";
-import { MAX_FLOORS, type Weather, type BattlePhase, type BattleResult, type Corpse, type Impact, type Ordnance, type Platoon, type Point, type Side, type SmokeCloud, type Soldier, type Squad } from "./types.ts";
+import { MAX_FLOORS, isArmourRole, type Tank, type Weather, type BattlePhase, type BattleResult, type Corpse, type Impact, type Ordnance, type Platoon, type Point, type Side, type SmokeCloud, type Soldier, type Squad } from "./types.ts";
 
 export class World {
   readonly config: SimConfig;
@@ -21,6 +21,8 @@ export class World {
   ordnance: Ordnance[] = [];
   clouds: SmokeCloud[] = [];
   corpses: Corpse[] = [];
+  /** Tanks and field guns, by the id of the vehicle's own soldier. */
+  tanks = new Map<number, Tank>();
   /** Visibility left on each tile after smoke, in [0, 1]. */
   smoke: Float32Array;
   /** Soldier id standing in each cell (a tile on a floor), 0 if none. Ids start at 1. */
@@ -31,6 +33,8 @@ export class World {
   impacts: Impact[] = [];
   /** How exposed each tile is to the enemies each side knows of, in [0, 1+]. */
   exposure: Record<Side, Float32Array>;
+  /** Where each side has been hurt: casualties leave a mark that fades, and routes avoid it. */
+  pain: Record<Side, Float32Array>;
   phase: BattlePhase = "battle";
   result: BattleResult | null = null;
   /** Tiles walked this tick, per soldier (for stumbles and the viewer). */
@@ -57,8 +61,33 @@ export class World {
     this.smoke = new Float32Array(n).fill(1);
     this.occupancy = new Int32Array(n * MAX_FLOORS);
     this.exposure = { us: new Float32Array(n), de: new Float32Array(n) };
+    this.pain = { us: new Float32Array(n), de: new Float32Array(n) };
     this.platoons = {} as Record<Side, Platoon>;
     this.weather = config.weather.kinds.clear;
+  }
+
+  /** Marks a place where a man was hit. */
+  addPain(side: Side, x: number, y: number, amount: number, radius = 7): void {
+    const arr = this.pain[side];
+    const W = this.map.width;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const xx = Math.round(x) + dx, yy = Math.round(y) + dy;
+        if (!this.map.inBounds(xx, yy)) continue;
+        const d = Math.hypot(dx, dy);
+        if (d > radius) continue;
+        const i = yy * W + xx;
+        arr[i] = Math.min(8, arr[i]! + amount * (1 - d / (radius + 1)));
+      }
+    }
+  }
+
+  /** The marks fade, slowly. */
+  fadePain(): void {
+    for (const side of ["us", "de"] as const) {
+      const arr = this.pain[side];
+      for (let i = 0; i < arr.length; i++) if (arr[i]! > 0) arr[i] = arr[i]! * 0.985 < 0.02 ? 0 : arr[i]! * 0.985;
+    }
   }
 
   nextId(kind: string): number {
@@ -100,13 +129,18 @@ export class World {
     return s.status === "active" && s.conscious && s.carriedById === null;
   }
 
+  /** A side's own men: not the tanks and guns attached to it, nor their crews. */
   side(side: Side): Soldier[] {
-    return this.soldiers.filter((s) => s.side === side);
+    return this.soldiers.filter((s) => s.side === side && !isArmourRole(s.role));
+  }
+  /** Tanks, guns and crew of a side. */
+  armour(side: Side): Soldier[] {
+    return this.soldiers.filter((s) => s.side === side && isArmourRole(s.role));
   }
 
   /** Share of a side still able to fight. */
   strength(side: Side): number {
-    const all = this.soldiers.filter((s) => s.side === side);
+    const all = this.side(side);
     if (all.length === 0) return 0;
     return all.filter((s) => this.able(s)).length / all.length;
   }

@@ -127,12 +127,31 @@ export type Role =
   | "machine_gunner"
   | "asst_gunner"
   | "ammo_bearer"
-  | "sniper";
+  | "sniper"
+  /** Carries a bazooka or a Panzerschreck as well as his rifle. */
+  | "at_gunner"
+  /** The vehicle itself, and the men who work it. They are attached to the platoon, not part of its strength. */
+  | "tank"
+  | "tank_commander"
+  | "tank_gunner"
+  | "tank_driver"
+  | "tank_loader"
+  /** A towed anti-tank gun and the men who serve it. */
+  | "field_gun"
+  | "gun_crew";
+
+const ARMOUR_ROLES: ReadonlySet<Role> = new Set<Role>(["tank", "tank_commander", "tank_gunner", "tank_driver", "tank_loader", "field_gun", "gun_crew"]);
+
+/** True for tanks, field guns and their crews: separate from the platoon's own men and its cap. */
+export function isArmourRole(role: Role): boolean {
+  return ARMOUR_ROLES.has(role);
+}
 
 export type Posture = "stand" | "crouch" | "prone";
 
 /** "casualty" is alive but out of the fight: unconscious, unable to walk, or too hurt to hold a weapon. */
-export type Status = "active" | "casualty" | "dead" | "surrendered" | "captured" | "routed";
+/** "aboard" is a crewman inside his tank: out of the field of play until he bails out. */
+export type Status = "active" | "casualty" | "dead" | "surrendered" | "captured" | "routed" | "aboard";
 
 export type Experience = "green" | "regular" | "veteran";
 
@@ -148,7 +167,7 @@ export interface Traits {
   leadership: number;
 }
 
-export type WeaponId = "m1_garand" | "m1_carbine" | "thompson" | "bar" | "kar98k" | "kar98k_scoped" | "m1903_scoped" | "mp40" | "mg42" | "pistol";
+export type WeaponId = "m1_garand" | "m1_carbine" | "thompson" | "bar" | "kar98k" | "kar98k_scoped" | "m1903_scoped" | "mp40" | "mg42" | "pistol" | "tank_mg";
 
 export type Pace = "walk" | "crouch" | "rush" | "crawl";
 
@@ -193,7 +212,8 @@ export type ActKind =
   | "take_weapon"
   | "capture"
   | "barrel"
-  | "crawl_to_cover";
+  | "crawl_to_cover"
+  | "launch";
 
 /**
  * One option offered to a soldier's decision source. The engine fills in what
@@ -267,6 +287,10 @@ export interface Soldier {
   ammo: number;
   /** Rounds carried for the squad's machine gun or BAR (assistants and ammo bearers). */
   teamAmmo: number;
+  /** Anti-tank rockets carried (bazooka, Panzerschreck). */
+  rockets: number;
+  /** The tank or gun this man belongs to, if he is crew. */
+  tankId: number | null;
   grenades: number;
   smokes: number;
   rifleGrenades: number;
@@ -332,6 +356,8 @@ export interface Contact {
   sniper: boolean;
   /** Believed out of the fight (seen to fall). */
   down: boolean;
+  /** A tank or an anti-tank gun, heard or seen. */
+  armour?: boolean;
 }
 
 export type SquadState =
@@ -352,7 +378,9 @@ export type SquadState =
   /** Lying in wait, hidden and holding fire until the enemy walks into it. */
   | "ambush"
   /** Moving up to bolster another squad that called for help. */
-  | "reinforce";
+  | "reinforce"
+  /** Waiting at the jump-off line for the mortars and the smoke, then going in. */
+  | "stage";
 
 export type FirePolicy = "hold" | "return" | "free";
 
@@ -432,6 +460,23 @@ export interface FireMission {
   fired: number;
   calledBy: number;
   kind: "mortar" | "artillery";
+  /** The radio message that started it, if a forward team reported the target. */
+  msg: number | null;
+}
+
+/** A set-piece attack on a hard position: some squads keep it pinned, others wait at the jump-off for the mortars to land. */
+export interface AssaultPlan {
+  target: Point;
+  start: number;
+  stage: "prep" | "go";
+  base: number[];
+  assault: number[];
+  jump: Record<number, Point>;
+  /** The mortar mission timed to it, if there is one. */
+  mission: number | null;
+  goTick: number;
+  /** Tick the screening smoke shells were called, or -1. */
+  smokeTick: number;
 }
 
 export interface Platoon {
@@ -449,6 +494,17 @@ export interface Platoon {
   missions: FireMission[];
   /** Forward observation teams (an NCO, a sniper and a radioman) who report what they see back to headquarters. */
   scoutIds: number[];
+  /** The set-piece attack under way, and when the last one ended. */
+  plan: AssaultPlan | null;
+  planTick: number;
+  /** When the platoon last had smoke put down by its mortars. */
+  smokeAt: number;
+  /** What forward teams have reported and headquarters has not yet acted on. */
+  reports: { msg: number; at: Point; tick: number; kind: string }[];
+  /** Places already shelled on a report, so the same gun is not hit twice. */
+  shelled: { at: Point; tick: number }[];
+  /** How far the lead squad has got, since when, and how often the axis of attack has been changed. */
+  stall: { best: number; tick: number; shifts: number } | null;
   /** Where the platoon's mortar stands: a pit near its headquarters. */
   mortarPit: Point | null;
   /** Where a squad that called for help, and got no squad sent, wants the mortars. */
@@ -461,7 +517,57 @@ export interface Platoon {
 
 // ---------- Ordnance and smoke ----------
 
-export type OrdnanceKind = "frag" | "stick" | "rifle_grenade" | "mortar" | "artillery" | "smoke_grenade" | "smoke_shell";
+export type OrdnanceKind = "frag" | "stick" | "rifle_grenade" | "mortar" | "artillery" | "smoke_grenade" | "smoke_shell" | "tank_shell" | "gun_shell" | "at_rocket";
+
+/** What is wrong with a tank. */
+export type TankState = "ready" | "tracked" | "burning" | "abandoned" | "wrecked";
+
+/**
+ * A tank or an anti-tank gun. The vehicle itself is a soldier (role "tank" or
+ * "field_gun") so it takes a tile, is seen and shot at like anything else; this
+ * is what is special about it. Its crew are soldiers too, aboard or out.
+ */
+export interface Tank {
+  /** The vehicle's own soldier id. */
+  id: number;
+  kind: "tank" | "field_gun";
+  side: Side;
+  name: string;
+  crew: number[];
+  state: TankState;
+  /** advance: leading the attack; emplaced: dug in to shoot; fall_back: going to the rear. */
+  mode: "advance" | "emplaced" | "fall_back";
+  shells: number;
+  reloadLeft: number;
+  /** Direction the hull and the turret face, as a unit vector. */
+  hull: Point;
+  turret: Point;
+  goal: Point | null;
+  path: Point[];
+  pathIdx: number;
+  moveAcc: number;
+  replanTick: number;
+  /** Bogged down until this tick. */
+  stuckUntil: number;
+  stuckCount: number;
+  /** Tick the tank started burning, or -1. */
+  burnTick: number;
+  /** Tick it was tracked, or -1. */
+  trackedTick: number;
+  /** Crew are out working on the track: progress and what is needed, in crew-ticks. */
+  repair: { done: number; need: number; started: number } | null;
+  /** Tick the tank last came under fire from something that could hurt it. */
+  threatTick: number;
+  /** Last tick it moved. */
+  movedTick: number;
+  /** Tick a burning crew gets out, and tick the fire reaches the ammunition. */
+  bailAt: number;
+  cookAt: number;
+  /** Where an emplaced vehicle sits. */
+  post: Point | null;
+  /** The last thing its main gun fired at, so the turret stays on it. */
+  lastTarget: Point | null;
+}
 
 export interface Ordnance {
   id: number;
@@ -476,6 +582,8 @@ export interface Ordnance {
   /** Tick it bursts. */
   burstTick: number;
   thrownTick: number;
+  /** The radio message behind this round. */
+  msg?: number | null;
   /** The first, ranging round of a fire mission: the warning that more is coming. */
   spotting: boolean;
 }

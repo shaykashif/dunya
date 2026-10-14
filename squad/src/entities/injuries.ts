@@ -62,6 +62,7 @@ export function injure(w: World, p: Soldier, part: BodyPart, kind: InjuryKind, s
     p.survival.health = clamp01(p.survival.health - health);
     p.lossCause.wounds += health;
   }
+  if (severity >= 0.25 && w.onField(p)) w.addPain(p.side, p.x, p.y, severity * 0.8);
   w.emit("injured", [p.id], { person: p.id, injury: inj.id, part, kind, severity, cause, by: byId, canWalk: !cannotWalk(p), health: r3(p.survival.health) });
   note(w, p, `${describeInjury(inj)} (${cause})`);
   if (kind === "lost") injure(w, p, "face", "gash", severity * 0.6, cause, byId);
@@ -250,7 +251,7 @@ export function updateInjuries(w: World): void {
   const cfg = w.config.injuries;
   const perTick = 1 / w.ticksPerMinute();
   for (const p of w.soldiers) {
-    if (p.status === "dead" || p.status === "routed") continue;
+    if (p.status === "dead" || p.status === "routed" || p.status === "aboard" || p.role === "tank" || p.role === "field_gun") continue;
     if (p.injuries.length === 0 && p.conscious) continue;
     const moving = p.act !== null && (p.act.cand.kind === "move" || p.act.cand.kind === "flee" || p.act.cand.kind === "carry" || p.act.cand.kind === "take_cover");
     for (const inj of p.injuries) {

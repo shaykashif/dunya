@@ -173,6 +173,50 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
     }
   }
 
+  // ---- Armour: anti-tank men go for tanks; men in houses get out when one shows up ----
+  const enemyVehicles = [...w.tanks.values()].filter((t) => t.side !== s.side && (t.state === "ready" || t.state === "tracked") && w.soldier(t.id).conscious);
+  const atMan = s.role === "at_gunner" && s.rockets > 0 && !(s.cooldowns["launch"] && w.tick < s.cooldowns["launch"]!);
+  let tankInView = false;
+  if (enemyVehicles.length > 0) {
+    const range = cfg.armour.launcherRange[s.side];
+    for (const t of enemyVehicles) {
+      const ts = w.soldier(t.id);
+      const d = dist(s, ts);
+      const seen = s.sees.includes(ts.id);
+      const known = seen || sq.contacts[ts.id] !== undefined;
+      if (known && d <= 90) tankInView = true;
+      if (atMan) {
+        if (seen && d <= range && canFireOn(w, s, ts)) {
+          out.push(cand("launch", `launch:${ts.id}`, `fire a rocket at the ${t.name}`, { targetId: ts.id, at: { x: ts.x, y: ts.y }, duration: 2, value: 2 + Math.max(0, 1 - d / range) * 0.3, ordered: false, danger: 0.3, offense: 1 }));
+        } else if (known && d <= 90 && d > range * 0.8) {
+          // Work forward to a spot from which there is a shot.
+          const want = Math.max(10, range * 0.7);
+          const ux = (s.x - ts.x) / (d || 1), uy = (s.y - ts.y) / (d || 1);
+          const spot = w.freeTileNear({ x: Math.round(ts.x + ux * want), y: Math.round(ts.y + uy * want) }, 6, s.id);
+          if (spot && cheb(spot, s) > 2) out.push(cand("move", `stalk:${spot.x},${spot.y}`, `work forward to get a shot at the ${t.name}`, { dest: spot, pace: "crouch", value: 1.15, ordered: false, danger: 0.4, offense: 0.8 }));
+        }
+      }
+      // Men in a house get out of it: a tank will bring it down on their heads.
+      if (!atMan && seen && d <= 55 && w.map.indoors(s.x, s.y, s.z)) {
+        const away = findCover(w, s, [{ x: ts.x, y: ts.y }], 9, null) ?? w.freeTileNear({ x: s.x + Math.sign(s.x - ts.x) * 8, y: s.y + Math.sign(s.y - ts.y) * 8 }, 5, s.id);
+        if (away && cheb(away, s) > 2) out.push(cand("flee", `tank:${away.x},${away.y}`, "get out of the house before the tank brings it down", { dest: away, pace: "rush", value: 1.3, safety: 1, danger: 0.25 }));
+      }
+    }
+  }
+  // With no tank to be had, a rocket will do for a house with men in it.
+  if (atMan && !tankInView && !s.pinned) {
+    const range = cfg.armour.launcherRange[s.side];
+    for (const c of contacts.slice(0, 6)) {
+      const d = dist(s, c);
+      if (d < 7 || d > range || w.tick - c.tick > 15) continue;
+      const tile = w.map.at(c.x, c.y);
+      if (!(c.z > 0 || tile === "building" || tile === "window" || tile === "door")) continue;
+      if (w.friendsNear({ x: c.x, y: c.y, side: s.side, id: s.id }, 6).some((f) => w.onField(f))) continue;
+      out.push(cand("launch", `launch:${c.x},${c.y}`, "put a rocket into the house", { at: c.z > 0 ? { x: c.x, y: c.y, z: c.z } : { x: c.x, y: c.y }, duration: 2, value: 0.65 + (c.automatic ? 0.25 : 0), ordered: false, danger: 0.3, offense: 0.8 }));
+      break;
+    }
+  }
+
   // ---- Fire at men he can see ----
   if (spec && !reloading && s.loaded > 0) {
     const scored = enemiesSeen
@@ -182,12 +226,12 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
         const p = d <= spec.maxRange ? hitChance(w, s, e, spec, vis) * Math.max(1, spec.rate) : 0;
         const firing = w.tick - e.lastFiredTick <= 3;
         const atMe = e.id === s.underFire?.by && underFire;
-        let threat = (e.weapon === "mg42" || e.weapon === "bar" ? 0.4 : 0) + (e.role === "sniper" ? 0.5 : 0) + (firing ? 0.2 : 0) + (atMe ? 0.25 : 0) + 0.3 * Math.max(0, 1 - d / 60) + (isLeader(e) ? 0.08 : 0);
+        let threat = (e.weapon === "mg42" || e.weapon === "bar" ? 0.4 : 0) + (e.role === "sniper" ? 0.5 : 0) + (e.role === "at_gunner" && e.rockets > 0 ? 0.55 : 0) + (e.role.startsWith("tank_") || e.role === "gun_crew" ? 0.35 : 0) + (firing ? 0.2 : 0) + (atMe ? 0.25 : 0) + 0.3 * Math.max(0, 1 - d / 60) + (isLeader(e) ? 0.08 : 0);
         // A medic with a red cross is spared by most men who see it.
         if (e.role === "medic") threat -= 0.6;
         return { e, d, p, threat, firing };
       })
-      .filter((x) => x.p > 0.003)
+      .filter((x) => x.p > 0.003 && x.e.role !== "tank" && x.e.role !== "field_gun")
       .sort((a, b) => b.threat + b.p * 3 - (a.threat + a.p * 3) || a.e.id - b.e.id)
       .slice(0, 3);
     for (const t of scored) {
@@ -385,7 +429,10 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
     const moving = sq.state === "fall_back" || sq.state === "flank";
     const exposedMen = mates.filter((m) => exposureAt(w, m, m) > 0.6);
     const squadSmoke = w.clouds.some((c) => c.until > w.tick && dist(c, s) < 14);
-    const want = !squadSmoke && (pinnedDown || assaulting || (moving && exposedMen.length >= 2) || exposedMen.some((m) => m.status === "casualty"));
+    // A set-piece attack: smoke goes down as the mortars land and the assault steps off.
+    const plan = w.platoons[s.side].plan;
+    const coordinated = plan !== null && plan.stage === "go" && w.tick - plan.goTick < 25 && dist(s, plan.target) < 45 && (plan.base.includes(sq.id) || plan.assault.includes(sq.id));
+    const want = !squadSmoke && (pinnedDown || assaulting || coordinated || (moving && exposedMen.length >= 2) || exposedMen.some((m) => m.status === "casualty"));
     // Between the man and the enemy, never farther than he can throw and never right on his own men.
     const d = dist(s, t);
     const reach = Math.min(cfg.explosives.throwRange.frag, Math.max(5, d * 0.5));

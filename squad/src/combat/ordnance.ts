@@ -8,6 +8,7 @@ import { label, note, shout } from "../entities/soldier.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { FireMission, Ordnance, OrdnanceKind, Point, Side, Soldier } from "../world/types.ts";
 import type { World } from "../world/world.ts";
+import { armourBlast } from "./armour.ts";
 import { shellDamage } from "./destruction.ts";
 import { hearShot } from "./perception.ts";
 
@@ -19,6 +20,9 @@ const NAMES: Record<OrdnanceKind, string> = {
   artillery: "a shell",
   smoke_grenade: "a smoke grenade",
   smoke_shell: "a smoke shell",
+  tank_shell: "a tank shell",
+  gun_shell: "an anti-tank gun shell",
+  at_rocket: "a rocket",
 };
 
 function clampToMap(w: World, p: Point): Point {
@@ -80,13 +84,32 @@ export function fireRifleGrenade(w: World, s: Soldier, aim: Point): void {
   note(w, s, "fired a rifle grenade");
 }
 
+/** A bazooka or Panzerschreck round: quick, fairly flat, and accurate to a few paces at the range it is meant for. */
+export function fireRocket(w: World, s: Soldier, aim: Point): void {
+  s.rockets--;
+  const d = dist(s, aim);
+  const at = landing(w, s, aim, 0.022 * (1.5 - 0.5 * s.traits.marksmanship));
+  const o: Ordnance = { id: w.nextId("ordnance"), kind: "at_rocket", side: s.side, byId: s.id, from: { x: s.x, y: s.y }, x: at.x, y: at.y, z: burstFloor(w, at, aim.z ?? 0, false), burstTick: w.tick + 1 + Math.floor(d / 16), thrownTick: w.tick, spotting: false };
+  w.ordnance.push(o);
+  s.dir = aim.x < s.x ? -1 : aim.x > s.x ? 1 : s.dir;
+  s.lastFiredTick = w.tick;
+  s.posture = "crouch";
+  w.emit("grenade_thrown", [s.id], { by: s.id, kind: "at_rocket", from: [s.x, s.y], at: [at.x, at.y], aim: [aim.x, aim.y], burst: o.burstTick });
+  shout(w, s, s.side === "us" ? "Rocket away!" : "Schuss!", "shout-rocket", 10);
+  hearShot(w, s, { ...w.config.weapons.mg42, noise: 190 });
+  note(w, s, "fired an anti-tank rocket");
+}
+
 /** A round from off the map: mortars, or the player's artillery. */
-export function incoming(w: World, kind: "mortar" | "artillery" | "smoke_shell", side: Side | null, aim: Point, scatter: number, byId: number | null, spotting = false): Ordnance {
+export function incoming(w: World, kind: "mortar" | "artillery" | "smoke_shell", side: Side | null, aim: Point, scatter: number, byId: number | null, spotting = false, msg: number | null = null): Ordnance {
   const rng = w.rng.get("ordnance");
   const at = clampToMap(w, { x: aim.x + (rng.next() * 2 - 1) * scatter, y: aim.y + (rng.next() * 2 - 1) * scatter });
-  const o: Ordnance = { id: w.nextId("ordnance"), kind, side, byId, from: { x: at.x, y: side === "de" ? -20 : side === "us" ? w.map.height + 20 : at.y - 30 }, x: at.x, y: at.y, z: kind === "smoke_shell" ? 0 : burstFloor(w, at, 0, true), burstTick: w.tick + w.config.mortars.flight[kind], thrownTick: w.tick, spotting };
+  // From the platoon's own mortar, where it has one; otherwise from off the map.
+  const pit = side !== null && kind !== "artillery" ? w.platoons[side]?.mortarPit ?? null : null;
+  const from = pit ?? { x: at.x, y: side === "de" ? -20 : side === "us" ? w.map.height + 20 : at.y - 30 };
+  const o: Ordnance = { id: w.nextId("ordnance"), kind, side, byId, from: { x: from.x, y: from.y }, x: at.x, y: at.y, z: kind === "smoke_shell" ? 0 : burstFloor(w, at, 0, true), burstTick: w.tick + w.config.mortars.flight[kind], thrownTick: w.tick, spotting, msg };
   w.ordnance.push(o);
-  w.emit("incoming", [], { kind, at: [at.x, at.y], side, burst: o.burstTick });
+  w.emit("incoming", [], { kind, at: [at.x, at.y], side, burst: o.burstTick, from: [from.x, from.y], msg });
   return o;
 }
 
@@ -111,7 +134,7 @@ function explode(w: World, o: Ordnance): void {
     w.emit("smoke", [], { at: [o.x, o.y], by: o.byId, kind: o.kind });
     return;
   }
-  const spec = w.config.explosives[o.kind as "frag" | "stick" | "rifle_grenade" | "mortar" | "artillery"];
+  const spec = w.config.explosives[o.kind as "frag" | "stick" | "rifle_grenade" | "mortar" | "artillery" | "tank_shell" | "gun_shell" | "at_rocket"];
   const rng = w.rng.get("ordnance");
   const thrower = w.maybe(o.byId);
   const hurt: number[] = [];
@@ -122,6 +145,7 @@ function explode(w: World, o: Ordnance): void {
   if (indirect) w.impacts.push({ x: o.x, y: o.y, tick: w.tick, kind: o.kind, side: o.side, spotting: o.spotting });
   for (const s of w.soldiers) {
     if (!(w.onField(s) || s.status === "surrendered" || s.status === "captured") || s.carriedById !== null) continue;
+    if (s.role === "tank" || s.role === "field_gun") continue;
     const d = dist(s, o);
     if (d > spec.radius) continue;
     // Floors and ceilings take most of a burst on another floor of the same house.
@@ -175,6 +199,7 @@ function explode(w: World, o: Ordnance): void {
   // Shells leave holes, knock walls down, bring houses in and smash trees.
   shellDamage(w, o);
   blastScars(w, o);
+  if (!(o.kind === "at_rocket" && o.spotting)) armourBlast(w, o);
   w.emit("explosion", hurt, { kind: o.kind, at: [o.x, o.y], z: o.z, by: o.byId, hurt });
 }
 
@@ -306,8 +331,8 @@ export function missionStep(w: World): void {
           w.emit("check_fire", [], { side, mission: m.id, at: [m.target.x, m.target.y] });
           continue;
         }
-        incoming(w, m.kind, side, m.target, cfg.spotScatter, m.calledBy, true);
-        if (pl.mortarPit && m.kind === "mortar") w.emit("mortar_fire", [], { side, at: [pl.mortarPit.x, pl.mortarPit.y], target: [m.target.x, m.target.y] });
+        incoming(w, m.kind, side, m.target, cfg.spotScatter, m.calledBy, true, m.msg);
+        if (pl.mortarPit && m.kind === "mortar") w.emit("mortar_fire", [], { side, at: [pl.mortarPit.x, pl.mortarPit.y], target: [m.target.x, m.target.y], msg: m.msg, round: 0 });
         m.fired = 1;
       } else if (w.tick >= m.effectTick && (w.tick - m.effectTick) % cfg.roundInterval === 0 && m.fired >= 1) {
         if (dangerClose(w, side, m)) {
@@ -315,8 +340,8 @@ export function missionStep(w: World): void {
           w.emit("check_fire", [], { side, mission: m.id, at: [m.target.x, m.target.y] });
           continue;
         }
-        incoming(w, m.kind, side, m.target, cfg.effectScatter, m.calledBy);
-        if (pl.mortarPit && m.kind === "mortar") w.emit("mortar_fire", [], { side, at: [pl.mortarPit.x, pl.mortarPit.y], target: [m.target.x, m.target.y] });
+        incoming(w, m.kind, side, m.target, cfg.effectScatter, m.calledBy, false, m.msg);
+        if (pl.mortarPit && m.kind === "mortar") w.emit("mortar_fire", [], { side, at: [pl.mortarPit.x, pl.mortarPit.y], target: [m.target.x, m.target.y], msg: m.msg, round: m.fired });
         m.fired++;
       }
     }

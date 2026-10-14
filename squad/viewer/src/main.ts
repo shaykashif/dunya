@@ -59,10 +59,268 @@ const cam: Camera = { x: 0, y: 0, zoom: 1.6 };
 const now = () => performance.now() / 1000;
 const tickSeconds = () => 1 / SPEEDS[speed]!.tps;
 
+
+// ---------- Radio chains: a report, the order it provokes, and the round that comes of it ----------
+
+interface Chain {
+  id: number;
+  side: Side;
+  kind: string;
+  label: string;
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  target: { x: number; y: number };
+  tick: number;
+  hq: { x: number; y: number } | null;
+  ordered: boolean;
+  pit: { x: number; y: number } | null;
+  rounds: { from: { x: number; y: number }; at: { x: number; y: number }; thrown: number; burst: number }[];
+  popup: HTMLButtonElement | null;
+  born: number;
+}
+const chains = new Map<number, Chain>();
+const boltsEl = document.createElement("div");
+boltsEl.id = "bolts";
+$("stage").appendChild(boltsEl);
+const cineEl = document.createElement("div");
+cineEl.id = "cine";
+$("stage").appendChild(cineEl);
+
+const KIND_WORDS: Record<string, string> = { machine_gun: "MACHINE GUN", tank: "TANK", sniper: "SNIPER" };
+
+function chainFor(e: SimEvent): void {
+  const d = e.data;
+  if (e.type === "radio" && typeof d.msg === "number" && d.kind !== "contact") {
+    const sq = world.squads[d.squad as number];
+    const c: Chain = {
+      id: d.msg,
+      side: sq?.side ?? "us",
+      kind: d.kind as string,
+      label: `${sq?.name ?? "Forward team"} radios: ${KIND_WORDS[d.kind as string] ?? "enemy"}`,
+      from: { x: (d.from as number[])[0]!, y: (d.from as number[])[1]! },
+      to: { x: (d.to as number[])[0]!, y: (d.to as number[])[1]! },
+      target: { x: (d.at as number[])[0]!, y: (d.at as number[])[1]! },
+      tick: e.tick,
+      hq: null,
+      ordered: false,
+      pit: null,
+      rounds: [],
+      popup: null,
+      born: now(),
+    };
+    chains.set(c.id, c);
+    const b = document.createElement("button");
+    b.className = "bolt";
+    b.title = `${c.label}: click to follow the message to command and the mortars`;
+    b.innerHTML = icon("bolt");
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      startCine(c);
+    });
+    boltsEl.appendChild(b);
+    c.popup = b;
+    // Only the last few stay.
+    const open = [...chains.values()].filter((x) => x.popup);
+    for (const old of open.slice(0, Math.max(0, open.length - 6))) {
+      old.popup?.remove();
+      old.popup = null;
+    }
+    return;
+  }
+  const id = typeof d.msg === "number" ? d.msg : null;
+  const c = id !== null ? chains.get(id) : undefined;
+  if (!c) return;
+  if (e.type === "fire_mission") {
+    c.ordered = true;
+    c.hq = { x: (d.from as number[])[0]!, y: (d.from as number[])[1]! };
+  } else if (e.type === "mortar_fire") {
+    const at = d.at as number[];
+    c.pit = { x: at[0]!, y: at[1]! };
+  } else if (e.type === "incoming") {
+    const f = d.from as number[], at = d.at as number[];
+    c.rounds.push({ from: { x: f[0]!, y: f[1]! }, at: { x: at[0]!, y: at[1]! }, thrown: e.tick, burst: d.burst as number });
+  }
+}
+
+/** Keeps each popup on its sender, or on the edge of the screen pointing the way when the sender is off it. */
+function placeBolts(): void {
+  const rect = canvas.getBoundingClientRect();
+  const t = now();
+  for (const c of chains.values()) {
+    if (!c.popup) continue;
+    const age = t - c.born;
+    c.popup.classList.toggle("old", age > 45);
+    if (age > 240) {
+      c.popup.remove();
+      c.popup = null;
+      continue;
+    }
+    const sx = (c.from.x * TILE + 8 - cam.x) * cam.zoom, sy = (c.from.y * TILE + 8 - cam.y) * cam.zoom - 22;
+    const m = 20;
+    const x = Math.max(m, Math.min(rect.width - m, sx)), y = Math.max(m + 40, Math.min(rect.height - m, sy));
+    c.popup.classList.toggle("edge", x !== sx || y !== sy);
+    c.popup.style.left = `${Math.round(x)}px`;
+    c.popup.style.top = `${Math.round(y)}px`;
+  }
+}
+
+interface Cine {
+  chain: Chain;
+  stage: number;
+  t0: number;
+  startedAt: number;
+  saved: { x: number; y: number; zoom: number; paused: boolean; follow: boolean };
+  hold: number;
+}
+let cine: Cine | null = null;
+
+function startCine(c: Chain): void {
+  if (cine) endCine(false);
+  cine = { chain: c, stage: 0, t0: now(), startedAt: now(), saved: { x: cam.x, y: cam.y, zoom: cam.zoom, paused, follow }, hold: 0 };
+  follow = false;
+  userCamera = true;
+  zoomGoal = null;
+  cineEl.style.display = "block";
+  cineEl.innerHTML = `${esc(c.label)}<small>following the message</small>`;
+}
+
+function endCine(restore: boolean): void {
+  if (!cine) return;
+  if (restore) {
+    cam.x = cine.saved.x;
+    cam.y = cine.saved.y;
+    cam.zoom = cine.saved.zoom;
+  }
+  cine = null;
+  cineEl.style.display = "none";
+}
+
+/** Drives the camera and the effects of a followed message, a stage at a time. */
+function cineFrame(dt: number): void {
+  const c = cine!;
+  const ch = c.chain;
+  const rect = canvas.getBoundingClientRect();
+  const t = now();
+  const el = t - c.t0;
+  const look = (p: { x: number; y: number }, zoom: number, rate = 7) => {
+    const a = 1 - Math.exp(-dt * rate);
+    cam.zoom += (zoom - cam.zoom) * a;
+    const tx = p.x * TILE + 8 - rect.width / cam.zoom / 2, ty = p.y * TILE + 8 - rect.height / cam.zoom / 2;
+    cam.x += (tx - cam.x) * a;
+    cam.y += (ty - cam.y) * a;
+  };
+  const lerp = (a: { x: number; y: number }, b: { x: number; y: number }, u: number) => ({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u });
+  const caption = (title: string, sub: string) => {
+    cineEl.innerHTML = `${esc(title)}<small>${esc(sub)}</small>`;
+  };
+  const hq = ch.hq ?? ch.to;
+  const pit = ch.pit ?? world.platoons[ch.side]?.mortarPit ?? null;
+  const signal = (a: { x: number; y: number }, b: { x: number; y: number }, dur: number) =>
+    renderer.addEffect({ kind: "signal", x0: a.x * TILE + 8, y0: a.y * TILE + 6, x1: b.x * TILE + 8, y1: b.y * TILE + 6, born: t, dur, delay: 0, color: "#ffe070" });
+  switch (c.stage) {
+    case 0: {
+      look(ch.from, 3.4);
+      caption(ch.label, "the report is keyed in");
+      if (el > 1.1) {
+        signal(ch.from, ch.to, 1.7);
+        c.stage = 1;
+        c.t0 = t;
+      }
+      return;
+    }
+    case 1: {
+      const u = Math.min(1, el / 1.7);
+      look(lerp(ch.from, ch.to, u), 2.6, 9);
+      caption("Message to platoon command", "on its way");
+      if (u >= 1) {
+        c.stage = 2;
+        c.t0 = t;
+      }
+      return;
+    }
+    case 2: {
+      look(hq, 3.4);
+      if (ch.ordered) {
+        caption("Platoon command", "the radioman puts the mortars on it");
+        if (el > 1.1 && pit) {
+          signal(hq, pit, 1.5);
+          c.stage = 3;
+          c.t0 = t;
+        } else if (el > 1.1 && !pit) {
+          c.stage = 6;
+          c.t0 = t;
+        }
+      } else {
+        caption("Platoon command", el > 7 ? "no fire mission is called on this one" : "weighing it up");
+        if (el > 8 || paused) {
+          c.stage = 6;
+          c.t0 = t;
+        }
+      }
+      return;
+    }
+    case 3: {
+      const u = Math.min(1, el / 1.5);
+      look(lerp(hq, pit ?? hq, u), 2.6, 9);
+      caption("Fire order to the mortar", "on its way");
+      if (u >= 1) {
+        c.stage = 4;
+        c.t0 = t;
+      }
+      return;
+    }
+    case 4: {
+      if (pit) look(pit, 3.6);
+      const r = ch.rounds[0];
+      caption("The mortar", r ? "firing" : "laying the tube");
+      if (r && pit) {
+        const flight = Math.max(1.8, Math.min(4.5, (r.burst - r.thrown) * 0.3));
+        renderer.addEffect({ kind: "round", x0: r.from.x * TILE + 8, y0: r.from.y * TILE + 4, x1: r.at.x * TILE + 8, y1: r.at.y * TILE + 8, born: t, dur: flight, delay: 0.25 });
+        c.stage = 5;
+        c.t0 = t + 0.25;
+        c.hold = flight;
+      } else if (el > 45 || paused) {
+        c.stage = 6;
+        c.t0 = t;
+      }
+      return;
+    }
+    case 5: {
+      const r = ch.rounds[0]!;
+      const u = Math.max(0, Math.min(1, (t - c.t0) / c.hold));
+      const p = lerp({ x: r.from.x, y: r.from.y }, r.at, u);
+      look(p, 2.2 + 0.8 * Math.abs(u - 0.5), 8);
+      caption("Mortar round in the air", u >= 1 ? "impact" : "falling");
+      if (u >= 1) {
+        c.stage = 6;
+        c.t0 = t;
+      }
+      return;
+    }
+    case 6: {
+      const r = ch.rounds[0];
+      if (r) look(r.at, 2.6);
+      if (el > 1.4) {
+        c.stage = 7;
+        c.t0 = t;
+      }
+      return;
+    }
+    default: {
+      const a = 1 - Math.exp(-dt * 6);
+      cam.x += (c.saved.x - cam.x) * a;
+      cam.y += (c.saved.y - cam.y) * a;
+      cam.zoom += (c.saved.zoom - cam.zoom) * a;
+      if (el > 1.1) endCine(true);
+    }
+  }
+}
+
 // ---------- Events from the engine ----------
 
 function onEvent(e: SimEvent): void {
   if (!world) return;
+  chainFor(e);
   effectsFor(e);
   soundsFor(e);
   const line = describe(e, world);
@@ -135,6 +393,25 @@ function soundsFor(e: SimEvent): void {
       if (s) sfx.play("clank", { x: s.x, y: s.y, gain: 0.22, reach: 1, close: true });
       break;
     }
+    case "tank_fire": {
+      const [x, y] = d.from as [number, number];
+      sfx.noteGunfire();
+      sfx.play("tank.fire", { x, y, gain: 3.4, reach: 5, anywhere: true, carry: 2.5, priority: true });
+      break;
+    }
+    case "tank_hit": {
+      const [x, y] = d.at as [number, number];
+      const r = d.result as string;
+      if (r === "ping") sfx.playLimited("ping", 150, "tank.hit", { x, y, gain: 0.35, reach: 0.9, close: true, closeSpan: 16 });
+      else sfx.play("tank.hit", { x, y, gain: r === "bounce" ? 1.4 : 2.4, reach: 2.5, priority: true });
+      break;
+    }
+    case "tank_explodes": {
+      const [x, y] = d.at as [number, number];
+      sfx.noteGunfire();
+      sfx.play("boom.artillery", { x, y, gain: 2.6, reach: 6, anywhere: true, carry: 2.5, priority: true });
+      break;
+    }
     case "mortar_fire": {
       const [x, y] = d.at as [number, number];
       sfx.noteGunfire();
@@ -143,6 +420,11 @@ function soundsFor(e: SimEvent): void {
     }
     case "grenade_thrown": {
       const [fx, fy] = d.from as [number, number];
+      if (d.kind === "at_rocket") {
+        sfx.noteGunfire();
+        sfx.play("at.launch", { x: fx, y: fy, gain: 2.4, reach: 3.5, anywhere: true, carry: 2, priority: true });
+        break;
+      }
       sfx.play("throw", { x: fx, y: fy, gain: 0.4, reach: 1.4 });
       break;
     }
@@ -201,6 +483,26 @@ function soundsFor(e: SimEvent): void {
       if (s) sfx.play("door", { x: s.x, y: s.y, gain: 0.7, reach: 1.8 });
       break;
     }
+  }
+}
+
+const engineClock = new Map<number, number>();
+
+/** Tanks rumble: loud and clanking when they move, an idle mutter when they sit. */
+function engines(dt: number): void {
+  if (!sfx.ready || paused || world.tanks.size === 0) return;
+  for (const t of world.tanks.values()) {
+    if (t.kind !== "tank" || (t.state !== "ready" && t.state !== "tracked")) continue;
+    const s = world.soldier(t.id);
+    const moving = world.tick - t.movedTick <= 2 && world.tick >= t.movedTick;
+    const left = (engineClock.get(t.id) ?? 0) - dt;
+    if (left > 0) {
+      engineClock.set(t.id, left);
+      continue;
+    }
+    engineClock.set(t.id, 0.85);
+    if (!sfx.audible(s.x, s.y, 4)) continue;
+    sfx.play("tank.engine", { x: s.x, y: s.y, gain: moving ? 1.5 : 0.35, reach: moving ? 4 : 1.6, rate: moving ? 1 : 0.8 });
   }
 }
 
@@ -272,6 +574,12 @@ function effectsFor(e: SimEvent): void {
     case "grenade_thrown": {
       const [fx, fy] = d.from as [number, number];
       const [ax, ay] = d.at as [number, number];
+      if (d.kind === "at_rocket") {
+        const flight = Math.max(0.15, ((d.burst as number) - world.tick) * tickSeconds() * 0.9);
+        renderer.addEffect({ kind: "tracer", x0: fx * TILE + 8, y0: fy * TILE + 6, x1: ax * TILE + 8, y1: ay * TILE + 8, color: "#fff2c0", born: t, dur: Math.min(0.5, flight), delay: 0 });
+        renderer.addEffect({ kind: "puff", x: fx * TILE + 8 - Math.sign(ax - fx) * 6, y: fy * TILE + 8, color: "rgba(220,210,190,A)", born: t, dur: 0.7, delay: 0 });
+        break;
+      }
       const flight = Math.max(1, (d.burst as number) - world.tick) * tickSeconds();
       renderer.addEffect({ kind: "arc", x0: fx * TILE + 8, y0: fy * TILE + 4, x1: ax * TILE + 8, y1: ay * TILE + 8, born: t, dur: Math.min(1.2, flight * (d.kind === "rifle_grenade" ? 0.9 : 0.35)), delay: 0, smoke: d.kind === "smoke_grenade" });
       break;
@@ -305,6 +613,23 @@ function effectsFor(e: SimEvent): void {
     case "smoke": {
       const [x, y] = d.at as [number, number];
       renderer.addEffect({ kind: "pop", x: x * TILE + 8, y: y * TILE + 8, seed: e.seq, born: t, dur: 1.2, delay: 0 });
+      break;
+    }
+    case "tank_fire": {
+      const [fx, fy] = d.from as [number, number];
+      const [ax, ay] = d.at as [number, number];
+      const dx = Math.sign(ax - fx), dy = Math.sign(ay - fy);
+      const mx = fx * TILE + 8 + dx * 12, my = fy * TILE + 6 + dy * 6;
+      renderer.addEffect({ kind: "flash", x: mx, y: my, r: 6, born: t, dur: 0.14, delay: 0 });
+      renderer.addEffect({ kind: "puff", x: mx, y: my, color: "rgba(210,200,170,A)", born: t, dur: 0.8, delay: 0.04 });
+      renderer.addEffect({ kind: "tracer", x0: mx, y0: my, x1: ax * TILE + 8, y1: ay * TILE + 8, color: "#ffe9a0", born: t, dur: 0.16, delay: 0 });
+      break;
+    }
+    case "tank_hit": {
+      if (d.result === "ping") break;
+      const [x, y] = d.at as [number, number];
+      renderer.addEffect({ kind: "flash", x: x * TILE + 8, y: y * TILE + 6, r: d.result === "bounce" ? 3 : 6, born: t, dur: 0.12, delay: 0 });
+      renderer.addEffect({ kind: "puff", x: x * TILE + 8, y: y * TILE + 4, color: d.result === "bounce" ? "rgba(255,230,150,A)" : "rgba(60,56,50,A)", born: t, dur: 0.7, delay: 0.05 });
       break;
     }
     case "mortar_fire": {
@@ -452,6 +777,9 @@ function toastFor(e: SimEvent): void {
 
 function newBattle(seed: number): void {
   const log = new EventLog({ hash: false });
+  chains.clear();
+  boltsEl.innerHTML = "";
+  endCine(false);
   feed = [];
   reportShown = false;
   renderer.reset();
@@ -547,14 +875,19 @@ function frame(t: number): void {
     cam.x += (p.x - rect.width / cam.zoom / 2 - cam.x) * 0.15;
     cam.y += (p.y - rect.height / cam.zoom / 2 - cam.y) * 0.15;
   }
-  panCamera(dt);
-  easeZoom(dt);
+  if (cine) cineFrame(dt);
+  else {
+    panCamera(dt);
+    easeZoom(dt);
+  }
+  placeBolts();
   renderer.hovered = hover ? pickAt(hover.sx, hover.sy) : null;
   renderer.draw(world, cam, opts, prev, alpha, selected, t / 1000);
   const halfW = rect.width / cam.zoom / 2;
   sfx.setListener((cam.x + halfW) / TILE, (cam.y + rect.height / cam.zoom / 2) / TILE, halfW / TILE);
   sfx.ambience(dt, world.weather.kind);
   footsteps(alpha);
+  engines(dt);
   drawMinimap(minimap, world, cam, rect.width, rect.height, miniBase);
   updateGridRef();
   updateHud();
@@ -952,10 +1285,18 @@ function openReport(): void {
   for (const m of world.soldiers.filter((s) => s.role === "medic")) deeds.push(`${personLink(m)}, ${esc(roleName(m))}, treated ${m.treated} men${m.status === "dead" ? " before he was killed" : ""}.`);
   const gun = world.soldiers.filter((s) => s.weapon === "mg42" || s.role === "machine_gunner").sort((a, b) => b.shots - a.shots)[0];
   if (gun && gun.shots > 0) deeds.push(`${personLink(gun)} fired ${gun.shots} rounds from the MG 42.`);
+  const stateText: Record<string, string> = { ready: "still in action", tracked: "immobilised by a broken track", burning: "burning", abandoned: "abandoned by its crew", wrecked: "knocked out" };
+  const armour = [...world.tanks.values()].map((t) => {
+    const crew = t.crew.map((id) => world.soldier(id));
+    const dead = crew.filter((c) => c.status === "dead").length;
+    const hurt = crew.filter((c) => c.status !== "dead" && c.injuries.some((i) => i.severity >= 0.1)).length;
+    return `<li><span style="color:${SIDE_COLORS[t.side].name}">${esc(t.side === "us" ? "American" : "German")} ${esc(t.name)}</span>: ${stateText[t.state] ?? t.state}; ${t.kind === "tank" ? `${t.shells} shells left; ` : ""}crew of ${crew.length}: ${dead} killed, ${hurt} wounded${t.stuckCount > 0 ? `; bogged down ${t.stuckCount} time${t.stuckCount > 1 ? "s" : ""}` : ""}.</li>`;
+  });
   const after = world.aftermath ?? {};
   const html = `${head}
     <table class="aar"><tr><th></th><th>men</th><th>killed</th><th>wounded</th><th>prisoners</th><th>left field</th><th>rounds / hits</th></tr>${rows.join("")}</table>
     ${firstFall}
+    ${armour.length ? `<h3>Armour</h3><ul class="plain">${armour.join("")}</ul>` : ""}
     ${deeds.length ? `<h3>Notable</h3><p>${deeds.join("<br>")}</p>` : ""}
     <h3>The fallen</h3>
     <ul class="plain">${fallen.map((s) => `<li class="l-death"><time>${clock(world, s.deathTick ?? 0)}</time> ${personLink(s)}, ${esc(roleName(s))} of ${esc(world.squad(s.squadId).name)}, ${s.age}, ${esc(s.hometown)} — ${s.causeOfDeath === "wounds" ? "died of wounds" : "killed"}${worstWound(s) || s.injuries.length ? `: ${esc(describeInjury(s.injuries.slice().sort((a, b) => b.severity - a.severity)[0]!))}` : ""}</li>`).join("") || "<li>None.</li>"}</ul>
@@ -1149,7 +1490,7 @@ window.addEventListener("keydown", (ev) => {
   else if (k === "m") {
     sfx.setEnabled(!sfx.enabled);
     syncSound();
-  }
+  } else if (k === "h") setSide(!document.body.classList.contains("side-hidden"));
   else if (k === "x") setPower(power === "artillery" ? "inspect" : "artillery");
   else if (k === "z") setPower(power === "smoke" ? "inspect" : "smoke");
   else if (k === "k") setPower(power === "sniper" ? "inspect" : "sniper");
@@ -1256,6 +1597,24 @@ document.addEventListener("click", (ev) => {
   }
 });
 
+const SIDE_KEY = "squad.side";
+function setSide(hidden: boolean): void {
+  document.body.classList.toggle("side-hidden", hidden);
+  try {
+    localStorage.setItem(SIDE_KEY, hidden ? "0" : "1");
+  } catch {
+    // Not important.
+  }
+  // The battlefield is wider now, or narrower.
+  window.dispatchEvent(new Event("resize"));
+}
+try {
+  if (localStorage.getItem(SIDE_KEY) === "0") document.body.classList.add("side-hidden");
+} catch {
+  // Not important.
+}
+$("sidetoggle").addEventListener("click", () => setSide(!document.body.classList.contains("side-hidden")));
+
 function syncSound(): void {
   const b = $("sound");
   b.innerHTML = icon(!sfx.enabled || sfx.volume === 0 ? "mute" : "sound");
@@ -1263,6 +1622,16 @@ function syncSound(): void {
   $<HTMLInputElement>("vol").value = String(Math.round(sfx.volume * 100));
 }
 for (const ev of ["pointerdown", "keydown"] as const) window.addEventListener(ev, () => sfx.unlock(), { capture: true });
+// Any input of the player's own takes the camera back from a followed message.
+window.addEventListener("pointerdown", (ev) => {
+  if (cine && !(ev.target as HTMLElement).closest(".bolt")) endCine(true);
+}, { capture: true });
+window.addEventListener("wheel", () => {
+  if (cine) endCine(true);
+}, { capture: true, passive: true });
+window.addEventListener("keydown", (ev) => {
+  if (cine && ev.key.toLowerCase() !== "m") endCine(true);
+}, { capture: true });
 $("sound").addEventListener("click", () => {
   sfx.unlock();
   sfx.setEnabled(!sfx.enabled);
@@ -1323,4 +1692,9 @@ requestAnimationFrame(frame);
   },
   select,
   sfx,
+  chains,
+  startCine: (id: number) => {
+    const c = chains.get(id);
+    if (c) startCine(c);
+  },
 };

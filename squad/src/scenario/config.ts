@@ -39,6 +39,7 @@ const weapons: Record<WeaponId, WeaponSpec> = {
   mp40: { name: "MP 40", capacity: 32, reload: 4, rate: 3, accuracy: 0.26, rangeScale: 12, maxRange: 40, severity: [0.3, 0.75], suppression: 0.035, noise: 110, automatic: true, heat: 0 },
   mg42: { name: "MG 42", capacity: 50, reload: 6, rate: 8, accuracy: 0.17, rangeScale: 45, maxRange: 150, severity: [0.45, 1], suppression: 0.07, noise: 200, automatic: true, heat: 0.0045 },
   pistol: { name: "pistol", capacity: 8, reload: 3, rate: 0.6, accuracy: 0.35, rangeScale: 6, maxRange: 15, severity: [0.3, 0.7], suppression: 0.02, noise: 80, automatic: false, heat: 0 },
+  tank_mg: { name: "coaxial machine gun", capacity: 150, reload: 7, rate: 5, accuracy: 0.2, rangeScale: 40, maxRange: 120, severity: [0.45, 1], suppression: 0.06, noise: 180, automatic: true, heat: 0.0012 },
 };
 
 const moveCost: Record<Terrain, number> = {
@@ -165,6 +166,9 @@ export const DEFAULT_CONFIG = {
     /** Damage to walls at the burst and around it, and how far it reaches, in tiles. */
     mortar: { center: 2, ring: 1, reach: 1.5 },
     artillery: { center: 4, ring: 2, reach: 2.5 },
+    tank_shell: { center: 4, ring: 2, reach: 2 },
+    gun_shell: { center: 3, ring: 1, reach: 1.6 },
+    at_rocket: { center: 4, ring: 1, reach: 1.2 },
     /** A house falls in when this share of its walls are breached, or its roof has taken this many hits per ten tiles of floor. */
     collapseWalls: 0.3,
     collapseRoof: 0.8,
@@ -217,6 +221,8 @@ export const DEFAULT_CONFIG = {
   },
   weapons,
   movement: {
+    /** How much the places where men were hit count against a route: the platoon learns where it hurts. */
+    painWeight: 2.5,
     /** Tiles per tick at each pace. */
     speed: { walk: 0.55, crouch: 0.38, rush: 1.6, crawl: 0.14 },
     /** A rush is a few seconds up, then down again: "I'm up, he sees me, I'm down". */
@@ -265,6 +271,10 @@ export const DEFAULT_CONFIG = {
     rifle_grenade: { fragments: 5, falloff: 1.5, radius: 6, severity: [0.25, 0.7] as [number, number], blast: 0.15 },
     mortar: { fragments: 5, falloff: 2, radius: 9, severity: [0.25, 0.8] as [number, number], blast: 0.3 },
     artillery: { fragments: 9, falloff: 3, radius: 14, severity: [0.35, 0.95] as [number, number], blast: 0.5 },
+    /** A tank's high-explosive shell, an anti-tank gun's, and a bazooka or Panzerschreck rocket. */
+    tank_shell: { fragments: 6, falloff: 2.5, radius: 8, severity: [0.3, 0.9] as [number, number], blast: 0.4 },
+    gun_shell: { fragments: 5, falloff: 2.2, radius: 7, severity: [0.3, 0.85] as [number, number], blast: 0.35 },
+    at_rocket: { fragments: 3, falloff: 1.2, radius: 4, severity: [0.3, 0.8] as [number, number], blast: 0.4 },
     /** Throwing ranges in tiles. */
     throwRange: { frag: 12, stick: 13 },
     rifleGrenadeRange: [15, 65] as [number, number],
@@ -277,7 +287,8 @@ export const DEFAULT_CONFIG = {
   },
   smoke: { grenadeRadius: 4, shellRadius: 6, grenadeTicks: 75, shellTicks: 100, /** Visibility left per smoky tile crossed. */ seeThrough: 0.45 },
   mortars: {
-    missions: { us: 3, de: 2 },
+    /** Fire missions a platoon has, by what it is doing, not by who it is: the Americans defend sometimes. */
+    missions: { attack: 5, defend: 3 },
     rounds: 6,
     spotDelay: 35,
     effectDelay: 22,
@@ -384,11 +395,56 @@ export const DEFAULT_CONFIG = {
     /** Rifle squads in the platoon: about fifty men a side with headquarters and, for the defenders, the forward teams. */
     usSquads: [4, 4] as [number, number],
     deSquads: [4, 4] as [number, number],
+    /** Extra rifle squads for the side that attacks. */
+    attackerBonusSquads: 1,
+    /** Tiles between the attacking squads at the start line, and between their lanes of advance. */
+    startSpacing: 44,
+    laneSpacing: 38,
+    /** Reconnaissance teams the attackers send ahead of the platoon, to find the defence before it is walked into. */
+    reconTeams: 2,
     /** Chance the Germans attack and the Americans defend. */
     germanAttackChance: 0.25,
     sniperChance: 0.45,
     /** Chance the American platoon headquarters has a sniper with it. */
     usSniperChance: 0.5,
+  },
+  /** Armour: tanks, anti-tank launchers and guns. Their crews are outside the platoon's headcount. */
+  armour: {
+    /** Each side's chance of having a tank, independently. */
+    tankChance: 0.1,
+    /** The defenders' chance of an anti-tank gun with a crew of three. */
+    fieldGunChance: 0.35,
+    /** Bazooka and Panzerschreck men in a platoon, and rockets each. */
+    atMen: [2, 3] as [number, number],
+    rockets: 3,
+    launcherRange: { us: 36, de: 46 },
+    tank: {
+      shells: 26,
+      reload: 7,
+      range: 80,
+      minRange: 5,
+      /** Ticks to cross a tile on road, open ground and rough ground. */
+      step: { road: 1, open: 1.8, rough: 3.2 },
+      /** A man spots a tank, and hears one, from this far. */
+      heardRange: 95,
+    },
+    field: { shells: 22, reload: 6, range: 85, minRange: 6 },
+    /** Chance a tank bogs down on a tile each time it enters it, before the weather's mud. */
+    bog: { marsh: 0.11, ditch: 0.05, crater: 0.04, brush: 0.02, grass: 0.004, wheat: 0.006, orchard: 0.01, rubble: 0.03 } as Partial<Record<Terrain, number>>,
+    bogTicks: [35, 80] as [number, number],
+    /** Armour-piercing round (tank or gun) against a tank: chance to hit at close range, then what a hit does. */
+    ap: { hit: 0.62, falloff: 0.012, front: { bounce: 0.38, track: 0.2, crew: 0.3, fire: 0.12 }, side: { bounce: 0.1, track: 0.22, crew: 0.35, fire: 0.33 } },
+    /** A rocket that reaches a tank. */
+    rocket: { hit: 0.7, falloff: 0.02, front: { bounce: 0.3, track: 0.22, crew: 0.28, fire: 0.2 }, side: { bounce: 0.05, track: 0.2, crew: 0.35, fire: 0.4 } },
+    /** Chance each crewman is hurt or killed by a penetrating hit, and by a track-breaking one. */
+    crewKill: 0.28,
+    crewWound: 0.35,
+    /** Ticks after a hit before a burning crew is out, and before a burning tank cooks off. */
+    bailTicks: [2, 4] as [number, number],
+    cookOff: [45, 90] as [number, number],
+    /** Crew-ticks of work to put a broken track back on, and how long they wait for quiet first. */
+    repairTicks: 70,
+    repairWait: 35,
   },
   /** Run invariant checks every tick. */
   checkInvariants: true,

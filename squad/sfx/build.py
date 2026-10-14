@@ -376,6 +376,39 @@ def mortar_fire(secs=0.7):
     return fade_out(norm(out), 200)
 
 
+def clang(secs=0.45):
+    """A round glancing off armour: a bright ring of metal and a spark of noise."""
+    n = int(SR * secs)
+    t = t_axis(n)
+    f = RNG.uniform(650, 900)
+    ring = np.sin(2 * math.pi * f * t) * np.exp(-t / 0.09) + 0.6 * np.sin(2 * math.pi * f * 2.76 * t) * np.exp(-t / 0.05) + 0.4 * np.sin(2 * math.pi * f * 5.4 * t) * np.exp(-t / 0.03)
+    return fade_out(norm(ring + 1.2 * snap(n, 1800, 0.004)), 120)
+
+
+def engine_rumble(secs=1.2):
+    """A diesel or petrol engine at work: a low rumble pulsing at the firing rate, with the clank of tracks over it."""
+    n = int(SR * secs)
+    t = t_axis(n)
+    base = sg.sosfilt(sg.butter(2, 220, "lowpass", fs=SR, output="sos"), RNG.normal(0, 1, n))
+    pulse = 0.65 + 0.35 * np.sin(2 * math.pi * 17 * t)
+    drone = np.sin(2 * math.pi * 38 * t) * 0.5 + np.sin(2 * math.pi * 76 * t) * 0.25
+    tracks = clatter(n, int(secs * 14), 900, 3000) * 0.35
+    x = (norm(base) * 0.9 + drone) * pulse + tracks
+    # Seamless: the ends fade into one another.
+    k = int(SR * 0.12)
+    x[:k] = x[:k] * np.linspace(0, 1, k) + x[-k:] * np.linspace(1, 0, k)
+    return norm(x[:-k] if False else x)
+
+
+def rocket_launch(secs=0.9):
+    """A rocket leaving the tube: a hiss of propellant that climbs, with a thump at the shoulder."""
+    n = int(SR * secs)
+    t = t_axis(n)
+    hiss = noise_env(n, 600, 4200, 0.35) * np.minimum(1, t / 0.03)
+    thump = sub_thump(n, 85, 0.07)
+    return fade_out(norm(0.9 * hiss + 1.1 * thump + 0.5 * snap(n, 1400, 0.01)), 250)
+
+
 # ---------- the build ----------
 
 def main():
@@ -497,6 +530,21 @@ def main():
         for i in range(4):
             bank.add(f"impact.{name}.{i}", lofi(squash(fn(), 2.5), bits=bits, lp=lp + 1500, hp=50, drive=2.4), "synth")
             bank.group(f"impact.{name}", [f"impact.{name}.{i}"])
+
+    # armour: the main gun, a round glancing off, a rocket going
+    big_body = trim_shot(load(gun("Mosin Nagant", "M_19")), 1.0)
+    for i in range(3):
+        x = blast(body=big_body, secs=1.5 + 0.1 * i, pitch=0.36, sub_hz=75, crack=1.0, rumble=0.8, taps=[(0.12, 0.28), (0.3, 0.12)])
+        x = squash(punch(x, 1.5), 4.0)
+        bank.add(f"tank.fire.{i}", lofi(norm(x), bits=8, lp=5600, hp=35, drive=2.6, hold=2), "synth on Mosin Nagant/M_19")
+        bank.group("tank.fire", [f"tank.fire.{i}"])
+        bank.add(f"tank.hit.{i}", lofi(clang(0.4 + 0.06 * i), bits=9, lp=6500, hp=200, drive=1.8), "synth")
+        bank.group("tank.hit", [f"tank.hit.{i}"])
+        bank.add(f"tank.engine.{i}", lofi(engine_rumble(1.1 + 0.1 * i), bits=9, lp=2400, hp=35, drive=1.6), "synth")
+        bank.group("tank.engine", [f"tank.engine.{i}"])
+        x = squash(punch(rocket_launch(0.8 + 0.05 * i), 0.8), 3.0)
+        bank.add(f"at.launch.{i}", lofi(norm(x), bits=9, lp=5200, hp=40, drive=2.0), "synth")
+        bank.group("at.launch", [f"at.launch.{i}"])
 
     # footsteps: surface x pace, a handful of takes each
     foot = os.path.join(ess, "Footsteps_Essentials_NOX_SOUND")

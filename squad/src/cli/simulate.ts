@@ -46,6 +46,10 @@ console.log(`  ordnance  ${summary.grenades} grenades thrown, ${summary.mortarRo
 console.log(`  medics    ${summary.medicTreatments} treatments; a month on, ${summary.diedLater} more dead of wounds, ${summary.crippled} never to fight again`);
 const v = verdict(w);
 console.log(`  verdict   ${v.label}${v.winner === null ? "" : ` (${v.score}/100)`}: ${v.summary}`);
+for (const t of w.tanks.values()) {
+  const crew = t.crew.map((id) => w.soldier(id));
+  console.log(`  armour    ${t.side} ${t.name}: ${t.state}; crew ${crew.length}, ${crew.filter((c) => c.status === "dead").length} killed${t.stuckCount > 0 ? `; bogged ${t.stuckCount}x` : ""}`);
+}
 const fb = firstBlood(w);
 if (fb) console.log(`  first     ${fb.text}`);
 console.log(`  events    ${summary.events}`);

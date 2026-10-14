@@ -33,6 +33,8 @@ export type Effect =
   | { kind: "shell"; x: number; y: number; born: number; dur: number; delay: number }
   | { kind: "debris"; x: number; y: number; born: number; dur: number; delay: number; seed: number; stuff: number }
   | { kind: "collapse"; x: number; y: number; w: number; h: number; born: number; dur: number; delay: number; seed: number }
+  | { kind: "signal"; x0: number; y0: number; x1: number; y1: number; born: number; dur: number; delay: number; color: string }
+  | { kind: "round"; x0: number; y0: number; x1: number; y1: number; born: number; dur: number; delay: number }
   | { kind: "text"; x: number; y: number; text: string; color: string; born: number; dur: number; delay: number; follow: number | null };
 
 const BASE: Record<Terrain, string> = {
@@ -462,6 +464,10 @@ function weaponShape(s: Soldier, sx: number, sy: number, iw: number, prone: bool
   return { x, y, w: len, h: big ? 2 : 1, muzzle: { x: left ? x - 1 : x + len, y: y + (big ? 1 : 0.5) }, bipod: null };
 }
 
+const STAR_BADGE = ["...x...", "...x...", "xxxxxxx", ".xxxxx.", "..xxx..", ".xx.xx.", ".x...x."];
+const CROSSHAIR_BADGE = ["...xxx...", "..x.x.x..", ".x..x..x.", "xxxxxxxxx", ".x..x..x.", "..x.x.x..", "...xxx..."];
+const GUN_BADGE = ["...xxx.....", "xxxxxxxxxxx", "xxxxx......", "xx....x.x..", "......x..x."];
+
 const FLAG_MARK = ["x....", "xxxx.", "xxxxx", "xxxx.", "x....", "x...."];
 const PIN_MARK = ["xxxxx", ".xxx.", "..x.."];
 
@@ -555,7 +561,7 @@ export class Renderer {
       const b = w.map.building[w.map.idx(s.x, s.y)]!;
       return b >= 0 && w.map.indoors(s.x, s.y, s.z) ? b : -1;
     };
-    const order = w.soldiers.filter((s) => s.status !== "routed" && s.carriedById === null).sort((a, b) => (a.status === "dead" ? 0 : 1) - (b.status === "dead" ? 0 : 1) || a.y - b.y || a.id - b.id);
+    const order = w.soldiers.filter((s) => s.status !== "routed" && s.status !== "aboard" && s.carriedById === null).sort((a, b) => (a.status === "dead" ? 0 : 1) - (b.status === "dead" ? 0 : 1) || a.y - b.y || a.id - b.id);
     const upstairs = new Map<number, Soldier[]>();
     for (const s of order) {
       const p = this.worldPos(s, prev, alpha);
@@ -592,6 +598,7 @@ export class Renderer {
     }
 
     this.drawSmoke(w, time);
+    this.drawBadges(w, prev);
     this.drawEffects(time, w, cam, prev);
     if (opts.orders) this.drawOrders(w, prev);
     if (sel && opts.sight) this.drawSight(w, sel, prev);
@@ -642,6 +649,7 @@ export class Renderer {
 
   private drawCorpseStain(s: Soldier, p: { x: number; y: number }): void {
     if (s.status !== "dead" && s.status !== "casualty") return;
+    if (s.role === "tank" || s.role === "field_gun") return;
     const g = this.g;
     // A pool of square blocks on the world's 2-pixel grid: ragged at the edge, darker in the middle.
     const B = 2;
@@ -853,6 +861,10 @@ export class Renderer {
   }
 
   private drawSoldier(w: World, s: Soldier, p: { x: number; y: number }, prev: Map<number, { x: number; y: number }>, time: number, selected: boolean): void {
+    if (s.role === "tank" || s.role === "field_gun") {
+      this.drawVehicle(w, s, p, selected, time);
+      return;
+    }
     const g = this.g;
     const last = prev.get(s.id);
     const walking = !!last && (last.x !== s.x || last.y !== s.y) && s.status === "active";
@@ -1026,6 +1038,155 @@ export class Renderer {
     }
   }
 
+  /**
+   * A tank or an anti-tank gun at three-quarter view, like the houses: a lit
+   * top, a darker south face under it, a raised turret, the barrel laid on what
+   * it last fired at. Square pixels throughout.
+   */
+  private drawVehicle(w: World, s: Soldier, p: { x: number; y: number }, selected: boolean, time: number): void {
+    const t = w.tanks.get(s.id);
+    if (!t) return;
+    const g = this.g;
+    const cx = Math.round(p.x), cy = Math.round(p.y);
+    const dead = t.state === "wrecked" || t.state === "abandoned";
+    const us = t.side === "us";
+    const top = dead ? "#403d36" : us ? "#6a7b44" : "#8a8a7e";
+    const topL = dead ? "#4e4a42" : us ? "#8a9c5a" : "#aaaa9c";
+    const face = dead ? "#2a2822" : us ? "#46522c" : "#5e5e56";
+    const faceD = dead ? "#1c1b18" : us ? "#323c1e" : "#44443e";
+    const trk = dead ? "#16150f" : "#1e1e19";
+    const px = (x: number, y: number, w2: number, h2: number, c: string) => {
+      g.fillStyle = c;
+      g.fillRect(x, y, w2, h2);
+    };
+    const th = t.turret;
+    const tx = Math.abs(th.x) >= Math.abs(th.y);
+    if (t.kind === "tank") {
+      const hx = Math.abs(t.hull.x) >= Math.abs(t.hull.y);
+      const faceH = t.hull.x < 0 ? -1 : 1;
+      const W = hx ? 30 : 20, L = hx ? 14 : 26;
+      const x0 = cx - W / 2, base = cy + 6;
+      const D = 6;
+      // Ground shadow.
+      px(x0 - 1, base - 2, W + 3, 5, "rgba(0,0,0,0.3)");
+      // Lower hull and tracks: the south face, with its road wheels.
+      px(x0, base - D, W, D, face);
+      px(x0, base - 1, W, 1, faceD);
+      px(x0 - 1, base - D - 1, 3, D + 2, trk);
+      px(x0 + W - 2, base - D - 1, 3, D + 2, trk);
+      if (hx) {
+        px(x0, base - D, W, 3, trk);
+        for (let k = 2; k < W - 2; k += 3) px(x0 + k, base - D + 1, 2, 2, "#5a5a50");
+        if (t.state === "tracked") {
+          px(x0 + 1, base - D, 10, 3, "#7a4a2a");
+          px(x0 + 11, base - 1, 5, 2, trk);
+        }
+      }
+      // Upper hull: the lit top, a glacis at the front.
+      const topY = base - D - L;
+      px(x0 + 1, topY, W - 2, L, top);
+      px(x0 + 1, topY, W - 2, 2, topL);
+      if (hx) {
+        px(faceH > 0 ? x0 + W - 8 : x0 + 1, topY, 7, L, topL);
+        px(faceH > 0 ? x0 + 3 : x0 + W - 12, topY + 3, 8, L - 6, face);
+      } else {
+        px(x0 + 1, t.hull.y > 0 ? topY + L - 7 : topY, W - 2, 7, topL);
+        px(x0 + 4, t.hull.y > 0 ? topY + 3 : topY + L - 10, W - 8, 7, face);
+      }
+      // The turret, standing up off the hull: lit top, shadowed front.
+      const off = dead ? 3 : 0;
+      const tcx = cx + off, tcy = topY + L / 2 + off;
+      const bar = dead ? "#16150f" : "#25251f";
+      if (tx) {
+        const dir = th.x < 0 ? -1 : 1;
+        px(tcx + (dir > 0 ? 3 : -17), tcy - 4, 14, 2, bar);
+        px(tcx + (dir > 0 ? 16 : -19), tcy - 5, 3, 4, bar);
+      } else {
+        const dir = th.y < 0 ? -1 : 1;
+        px(tcx - 1, tcy + (dir > 0 ? 0 : -16), 2, 16, bar);
+        px(tcx - 2, tcy + (dir > 0 ? 15 : -18), 4, 3, bar);
+      }
+      px(tcx - 7, tcy - 3, 14, 4, faceD);
+      px(tcx - 6, tcy - 9, 12, 8, face);
+      px(tcx - 6, tcy - 9, 12, 7, top);
+      px(tcx - 6, tcy - 9, 12, 2, topL);
+      px(tcx - 2, tcy - 7, 4, 3, dead ? "#16150f" : "#2a2a24");
+      if (!dead) {
+        px(tcx + 2, tcy - 8, 3, 1, "#f4f0e8");
+        if (!us) px(tcx + 3, tcy - 9, 1, 3, "#f4f0e8");
+      }
+      // Mud on the tracks, when bogged down.
+      if (w.tick < t.stuckUntil) for (let k = 0; k < 7; k++) px(x0 + 1 + k * 4, base - 2 + (k % 2), 3, 2, "#5a4630");
+    } else {
+      // The gun behind its shield on two wheels, with its trails.
+      const dir = th.x < 0 ? -1 : 1;
+      const base = cy + 6;
+      px(cx - 10, base - 2, 22, 4, "rgba(0,0,0,0.3)");
+      px(cx - 6, base - 4, 4, 4, trk);
+      px(cx + 2, base - 4, 4, 4, trk);
+      px(cx - 9, base - 1, 7, 1, faceD);
+      px(cx + 3, base - 1, 7, 1, faceD);
+      px(dir > 0 ? cx - 1 : cx - 11, base - 9, 12, 2, dead ? "#16150f" : "#25251f");
+      px(dir > 0 ? cx - 3 : cx + 1, base - 13, 3, 10, face);
+      px(dir > 0 ? cx - 3 : cx + 1, base - 13, 3, 8, top);
+      px(dir > 0 ? cx - 3 : cx + 1, base - 13, 3, 1, topL);
+    }
+    // Fire on a burning one, and on a wreck still burning out.
+    if (t.state === "burning" || (t.state === "wrecked" && t.burnTick >= 0 && w.tick - t.burnTick < 140)) {
+      const f = Math.floor(time * 9);
+      for (let k = 0; k < 10; k++) {
+        const ox = ((k * 7 + f * 3) % 22) - 11, oy = -((k * 5 + f * 2) % 16) - 4;
+        px(cx + ox, cy + oy, 2, 2, k % 3 === 0 ? "#ffe070" : k % 3 === 1 ? "#ff9a2a" : "#e04a1a");
+      }
+    }
+    if (selected || s.id === this.hovered) {
+      g.fillStyle = selected ? "#ffe14a" : "#ffffff";
+      pxEllipse(g, cx, cy + 4, 18, 8);
+    }
+  }
+
+  /** Small badges over buildings with a sniper or a machine gun in them, and a star over each platoon leader. */
+  private drawBadges(w: World, prev: Map<number, { x: number; y: number }>): void {
+    const g = this.g;
+    const blit = (rows: string[], x0: number, y0: number, color: string) => {
+      g.fillStyle = "#000000";
+      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+        for (let r = 0; r < rows.length; r++) for (let c = 0; c < rows[r]!.length; c++) if (rows[r]![c] === "x") g.fillRect(x0 + c + dx, y0 + r + dy, 1, 1);
+      }
+      g.fillStyle = color;
+      for (let r = 0; r < rows.length; r++) for (let c = 0; c < rows[r]!.length; c++) if (rows[r]![c] === "x") g.fillRect(x0 + c, y0 + r, 1, 1);
+    };
+    const inHouse = new Map<number, { sniper: Soldier | null; gun: Soldier | null }>();
+    for (const s of w.soldiers) {
+      if (s.status !== "active" && s.status !== "casualty") continue;
+      if (s.role === "platoon_leader" && s.status === "active") {
+        const p = this.worldPos(s, prev, this.alpha);
+        const house = w.map.building[w.map.idx(s.x, s.y)]!;
+        // A leader inside a house is shown on its roof with the other badges.
+        if (house < 0 || !w.map.indoors(s.x, s.y, s.z)) blit(STAR_BADGE, Math.round(p.x) - 3, Math.round(p.y) - 18, s.side === "us" ? "#ffd84a" : "#ff6a5a");
+      }
+      const b = w.map.building[w.map.idx(s.x, s.y)]!;
+      if (b < 0 || !w.map.indoors(s.x, s.y, s.z) || w.buildings[b]!.destroyed) continue;
+      const rec = inHouse.get(b) ?? { sniper: null, gun: null };
+      if (s.role === "sniper" && s.status === "active") rec.sniper = s;
+      else if (s.status === "active" && (s.role === "machine_gunner" || s.role === "auto_rifleman" || s.weapon === "mg42")) rec.gun = s;
+      else if (s.role === "platoon_leader" && s.status === "active") rec.gun = rec.gun ?? null;
+      inHouse.set(b, rec);
+    }
+    for (const [id, rec] of inHouse) {
+      const B = buildingBounds(w.buildings[id]!);
+      const cx = Math.round(B.x + B.w / 2), y = Math.round(B.y) - 14;
+      const items: { rows: string[]; color: string; wd: number }[] = [];
+      if (rec.sniper) items.push({ rows: CROSSHAIR_BADGE, color: rec.sniper.side === "us" ? "#ffd84a" : "#ff6a5a", wd: 9 });
+      if (rec.gun) items.push({ rows: GUN_BADGE, color: rec.gun.side === "us" ? "#ffd84a" : "#ff6a5a", wd: 11 });
+      let x = cx - Math.round((items.reduce((a, i) => a + i.wd + 3, -3)) / 2);
+      for (const it of items) {
+        blit(it.rows, x, y - it.rows.length, it.color);
+        x += it.wd + 3;
+      }
+    }
+  }
+
   /** A building at three-quarter view: its south wall and its roof. */
   private drawBuilding(w: World, b: Building): void {
     let c = this.houses.get(b.id);
@@ -1100,6 +1261,50 @@ export class Renderer {
         case "puff":
           dustSpurt(g, e.x, e.y, Math.floor(e.born * 1000 + e.x), t);
           break;
+        case "signal": {
+          // A packet of light running down the line, with a jagged trail behind it.
+          const px = e.x0 + (e.x1 - e.x0) * t, py = e.y0 + (e.y1 - e.y0) * t;
+          const len = Math.hypot(e.x1 - e.x0, e.y1 - e.y0) || 1;
+          const ux = (e.x1 - e.x0) / len, uy = (e.y1 - e.y0) / len;
+          g.fillStyle = "rgba(255,240,160,0.35)";
+          pxLine(g, e.x0, e.y0, e.x1, e.y1, 3);
+          for (let k = 0; k < 14; k++) {
+            const back = k * 3.2;
+            const jx = Math.round(Math.sin(k * 2.3 + t * 40) * 2.2), jy = Math.round(Math.cos(k * 1.7 + t * 33) * 2.2);
+            g.fillStyle = k < 3 ? "#ffffff" : k < 8 ? e.color : "rgba(255,200,60,0.55)";
+            g.fillRect(Math.round(px - ux * back + -uy * jx), Math.round(py - uy * back + ux * jx + jy * 0), 2, 2);
+          }
+          g.fillStyle = "#ffffff";
+          g.fillRect(Math.round(px) - 2, Math.round(py) - 2, 5, 5);
+          g.fillStyle = e.color;
+          g.fillRect(Math.round(px) - 1, Math.round(py) - 1, 3, 3);
+          // A bolt at each end as it leaves and arrives.
+          if (t < 0.12 || t > 0.88) {
+            g.fillStyle = "rgba(255,255,255,0.8)";
+            pxEllipse(g, Math.round(t < 0.5 ? e.x0 : e.x1), Math.round(t < 0.5 ? e.y0 : e.y1), 5 + Math.round(Math.sin(t * 90) * 2), 5);
+          }
+          break;
+        }
+        case "round": {
+          // A mortar round going up and coming down.
+          const x = e.x0 + (e.x1 - e.x0) * t, ground = e.y0 + (e.y1 - e.y0) * t;
+          const span = Math.hypot(e.x1 - e.x0, e.y1 - e.y0);
+          const lift = Math.sin(Math.PI * t) * Math.min(90, 14 + span * 0.45);
+          const y = ground - lift;
+          g.fillStyle = "rgba(0,0,0,0.35)";
+          g.fillRect(Math.round(x) - 1, Math.round(ground), 3, 1);
+          for (let k = 1; k <= 7; k++) {
+            const tt = Math.max(0, t - k * 0.012);
+            const lx = e.x0 + (e.x1 - e.x0) * tt, ly = e.y0 + (e.y1 - e.y0) * tt - Math.sin(Math.PI * tt) * Math.min(90, 14 + span * 0.45);
+            g.fillStyle = k < 3 ? "rgba(255,200,120,0.85)" : "rgba(210,210,200," + (0.6 - k * 0.07) + ")";
+            g.fillRect(Math.round(lx), Math.round(ly), 2, 2);
+          }
+          g.fillStyle = "#1a1a12";
+          g.fillRect(Math.round(x) - 2, Math.round(y) - 2, 4, 5);
+          g.fillStyle = "#b8b8a8";
+          g.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 2);
+          break;
+        }
         case "boom":
           drawBlast(g, e, t * e.dur);
           break;
@@ -1303,7 +1508,17 @@ export function drawMinimap(canvas: HTMLCanvasElement, w: World, cam: Camera, vi
   }
   g.putImageData(base.img, 0, 0);
   for (const s of w.soldiers) {
-    if (s.status === "routed" || s.carriedById !== null) continue;
+    if (s.status === "routed" || s.status === "aboard" || s.carriedById !== null) continue;
+    if (s.role === "tank" || s.role === "field_gun") {
+      // Armour: a bigger block with a dark ring, grey when knocked out.
+      const t = w.tanks.get(s.id);
+      const live = t !== undefined && (t.state === "ready" || t.state === "tracked");
+      g.fillStyle = "#000000";
+      g.fillRect(s.x - 2, s.y - 2, 5, 5);
+      g.fillStyle = live ? (s.side === "us" ? "#ffd84a" : "#ff5a5a") : "#808078";
+      g.fillRect(s.x - 1, s.y - 1, 3, 3);
+      continue;
+    }
     g.fillStyle = s.status === "dead" ? "#000" : s.status === "active" ? (s.side === "us" ? "#ffd84a" : "#ff5a5a") : "#f4f0e8";
     g.fillRect(s.x, s.y, s.status === "active" ? 2 : 1, s.status === "active" ? 2 : 1);
   }

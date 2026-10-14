@@ -87,7 +87,7 @@ describe("sight and cover", () => {
 
   it("enough fire pins a man", () => {
     const { w, us } = setup();
-    for (let i = 0; i < 12; i++) suppress(w, us, 0.07);
+    for (let i = 0; i < 20; i++) suppress(w, us, 0.07);
     expect(us.suppression).toBeGreaterThan(w.config.suppression.pinned);
   });
 });

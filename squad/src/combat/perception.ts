@@ -14,11 +14,15 @@ import type { World } from "../world/world.ts";
  */
 export function concealment(w: World, s: Soldier, from: Soldier | null = null): number {
   const cfg = w.config.perception;
+  // A tank is a tank: nobody hides one in a hedge.
+  if (s.role === "tank" || s.role === "field_gun") return s.role === "field_gun" && w.map.besideCover(s.x, s.y) ? 0.55 : 1;
   const t = w.map.at(s.x, s.y);
   let c = s.z > 0 ? 0.3 : w.config.terrain.concealment[t] ?? 1;
   if (s.z === 0 && w.map.besideCover(s.x, s.y)) c *= 0.4;
   if (s.posture === "prone") c *= t === "wheat" ? 0.4 : t === "woods" || t === "brush" ? 0.6 : 0.8;
   if (from && w.map.indoors(s.x, s.y, s.z) && !w.map.indoors(from.x, from.y, from.z) && dist(s, from) > cfg.darkRoomRange) c *= cfg.darkRoom;
+  // A machine-gun post gives itself away to a patient glass: the gun, the belt boxes, the spoil from the pit.
+  if ((s.weapon === "mg42" || s.weapon === "bar") && !(from && from.role !== "sniper" && dist(s, from) > 40)) c = Math.max(c, 0.5);
   return c;
 }
 
@@ -53,9 +57,10 @@ export function updateContact(w: World, squad: Squad, enemy: Soldier, at: Point,
       c.sniper = enemy.role === "sniper";
       c.down = enemy.status !== "active";
     }
+    if (enemy.role === "tank" || enemy.role === "field_gun") c.armour = true;
     return;
   }
-  squad.contacts[enemy.id] = { id: enemy.id, x: at.x, y: at.y, z, tick: w.tick, visible, identified: visible, automatic: visible ? isAutomatic(enemy) : enemy.weapon === "mg42", sniper: visible && enemy.role === "sniper", down: visible ? enemy.status !== "active" : false };
+  squad.contacts[enemy.id] = { id: enemy.id, x: at.x, y: at.y, z, tick: w.tick, visible, identified: visible, automatic: visible ? isAutomatic(enemy) : enemy.weapon === "mg42", sniper: visible && enemy.role === "sniper", down: visible ? enemy.status !== "active" : false, armour: enemy.role === "tank" || enemy.role === "field_gun" };
   if (Object.keys(squad.contacts).length === 1 || squad.firstContactTick === null) {
     squad.firstContactTick ??= w.tick;
     w.emit("contact", [], { squad: squad.id, side: squad.side, enemy: enemy.id, at: [at.x, at.y], visible, automatic: squad.contacts[enemy.id]!.automatic });
@@ -95,7 +100,9 @@ export function perceptionStep(w: World): void {
         const firing = w.tick - e.lastFiredTick <= 1 ? firingReveal(w, e, hidden) : 1;
         const moving = moved.has(e.id) ? cfg.movingFactor : 1;
         const fall = Math.pow(1 - d / range, 2);
-        const looking = hunt && cheb(e, hunt) <= 12 ? 2.5 : 1;
+        // A forward observer lying still with his glasses and scope on the hedge picks out what a marching man would miss.
+        const watching = squad.task === "scout" && !moved.has(s.id) ? (s.role === "sniper" ? 3 : 1.8) : 1;
+        const looking = (hunt && cheb(e, hunt) <= 12 ? 2.5 : 1) * watching;
         p = cfg.spotBase * w.weather.spot * vis * w.config.posture.size[e.posture] * hidden * firing * moving * fall * alert * looking;
         if (d <= 6) p = Math.max(p, 0.8 * vis * Math.min(1, hidden * 2));
       }
@@ -164,7 +171,8 @@ export function scoutStep(w: World): void {
         if (w.tick - c.tick > 1) continue;
         const e = w.soldier(c.id);
         if (e.status !== "active") continue;
-        seen = c;
+        // A tank is the first thing to report.
+        if (!seen || (c.armour && !seen.armour)) seen = c;
         for (const l of listeners) {
           const known = l.contacts[c.id];
           if (known && w.tick - known.tick <= 2) continue;
@@ -181,7 +189,16 @@ export function scoutStep(w: World): void {
       }
       if (seen && passed > 0 && w.tick >= (radio.cooldowns["radio"] ?? 0)) {
         radio.cooldowns["radio"] = w.tick + 12;
-        w.emit("radio", [radio.id], { by: radio.id, squad: sq.id, at: [seen.x, seen.y], enemy: seen.id, automatic: seen.automatic, sniper: seen.sniper });
+        const msg = w.nextId("msg");
+        const kind = seen.armour ? "tank" : seen.automatic ? "machine_gun" : seen.sniper ? "sniper" : "contact";
+        const hq = w.squad(pl.hqSquadId);
+        const rx = hq.members.map((id) => w.soldier(id)).find((m) => m.role === "radioman" && w.onField(m)) ?? w.maybe(hq.leaderId);
+        w.emit("radio", [radio.id], { msg, by: radio.id, squad: sq.id, at: [seen.x, seen.y], from: [radio.x, radio.y], to: rx ? [rx.x, rx.y] : [radio.x, radio.y], enemy: seen.id, kind, automatic: seen.automatic, sniper: seen.sniper, armour: seen.armour === true });
+        // A machine gun, a sniper or a tank found by a forward team is a target before anybody has been hit by it.
+        if (kind !== "contact" && seen.identified) {
+          const dup = pl.shelled.some((s) => cheb(s.at, seen!) <= 9 && w.tick - s.tick < 400) || pl.reports.some((r) => cheb(r.at, seen!) <= 9);
+          if (!dup) pl.reports.push({ msg, at: { x: seen.x, y: seen.y }, tick: w.tick, kind });
+        }
       }
     }
   }
@@ -207,8 +224,8 @@ export function sideContacts(w: World, side: Side, maxAge = 45): Contact[] {
 }
 
 /** Groups contacts that lie close together into positions, strongest first. */
-export function clusters(contacts: readonly Contact[], radius = 5): { at: Point; n: number; automatic: boolean; sniper: boolean; identified: boolean; ids: number[] }[] {
-  const out: { at: Point; n: number; automatic: boolean; sniper: boolean; identified: boolean; ids: number[]; sx: number; sy: number }[] = [];
+export function clusters(contacts: readonly Contact[], radius = 5): { at: Point; n: number; automatic: boolean; sniper: boolean; identified: boolean; ids: number[]; tank: boolean }[] {
+  const out: { at: Point; n: number; automatic: boolean; sniper: boolean; identified: boolean; ids: number[]; tank: boolean; sx: number; sy: number }[] = [];
   for (const c of contacts) {
     const g = out.find((o) => cheb(o.at, c) <= radius);
     if (g) {
@@ -219,12 +236,13 @@ export function clusters(contacts: readonly Contact[], radius = 5): { at: Point;
       g.automatic = g.automatic || c.automatic;
       g.sniper = g.sniper || c.sniper;
       g.identified = g.identified || c.identified;
+      g.tank = g.tank || c.armour === true;
       g.ids.push(c.id);
-    } else out.push({ at: c.z > 0 ? { x: c.x, y: c.y, z: c.z } : { x: c.x, y: c.y }, n: 1, automatic: c.automatic, sniper: c.sniper, identified: c.identified, ids: [c.id], sx: c.x, sy: c.y });
+    } else out.push({ at: c.z > 0 ? { x: c.x, y: c.y, z: c.z } : { x: c.x, y: c.y }, n: 1, automatic: c.automatic, sniper: c.sniper, identified: c.identified, ids: [c.id], tank: c.armour === true, sx: c.x, sy: c.y });
   }
   return out
-    .map(({ at, n, automatic, sniper, identified, ids }) => ({ at, n, automatic, sniper, identified, ids }))
-    .sort((a, b) => (b.automatic || b.sniper ? 1 : 0) - (a.automatic || a.sniper ? 1 : 0) || b.n - a.n || a.at.y - b.at.y || a.at.x - b.at.x);
+    .map(({ at, n, automatic, sniper, identified, ids, tank }) => ({ at, n, automatic, sniper, identified, ids, tank }))
+    .sort((a, b) => (b.tank ? 1 : 0) - (a.tank ? 1 : 0) || (b.automatic || b.sniper ? 1 : 0) - (a.automatic || a.sniper ? 1 : 0) || b.n - a.n || a.at.y - b.at.y || a.at.x - b.at.x);
 }
 
 /**

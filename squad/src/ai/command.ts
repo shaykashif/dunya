@@ -5,9 +5,10 @@
 // the open, and fall back by bounds when flanked or badly hurt.
 import { clusters, liveContacts, sideContacts, updateContact } from "../combat/perception.ts";
 import { isLeader, label, note, shout, spotOf } from "../entities/soldier.ts";
+import { incoming } from "../combat/ordnance.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { Building } from "../world/layout.ts";
-import { enemyOf, type ElementOrder, type FirePolicy, type Pace, type Platoon, type Point, type Side, type Soldier, type Squad, type SquadState } from "../world/types.ts";
+import { enemyOf, type Contact, type ElementOrder, type FirePolicy, type Pace, type Platoon, type Point, type Side, type Soldier, type Squad, type SquadState } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { boundsTo, canFireOn, centroid, facingFrom, flankPoint, pickPositions } from "./tactics.ts";
 
@@ -99,8 +100,12 @@ function rearDir(w: World, side: Side): Point {
 function objectiveFor(w: World, sq: Squad, pl: Platoon): Point {
   const idx = pl.squadIds.indexOf(sq.id);
   const n = pl.squadIds.length;
-  const offset = n <= 1 ? 0 : sq.task === "reserve" ? 0 : (idx - (n - 1) / 2) * 12;
-  return w.freeTileNear({ x: Math.round(pl.objective.x + offset), y: pl.objective.y }, 6) ?? pl.objective;
+  // Each line squad has its own lane across the whole front, thirty-odd tiles from its neighbour's: they converge on the objective, not on one another.
+  const lines = pl.squadIds.filter((id) => w.squad(id).task !== "reserve");
+  const j = Math.max(0, lines.indexOf(sq.id));
+  const offset = n <= 1 ? 0 : sq.task === "reserve" ? 0 : (j - (lines.length - 1) / 2) * w.config.forces.laneSpacing;
+  const x = Math.max(8, Math.min(w.map.width - 9, Math.round(pl.objective.x + offset)));
+  return w.freeTileNear({ x, y: pl.objective.y }, 8) ?? pl.objective;
 }
 
 /** Whether a point is near enough the defended hedge to be seen from it: from there on a squad moves by bounds. */
@@ -123,7 +128,7 @@ function approachPoint(w: World, pos: Point): Point | null {
 }
 
 /** The enemy position a squad is fighting: its strongest known cluster, nearest first among equals. */
-function pickFocus(w: World, sq: Squad, at: Point): { at: Point; n: number; automatic: boolean } | null {
+function pickFocus(w: World, sq: Squad, at: Point): { at: Point; n: number; automatic: boolean; tank: boolean } | null {
   const live = liveContacts(w, sq, 40);
   if (live.length === 0) return null;
   const cs = clusters(live, 6).sort((a, b) => (b.automatic || b.sniper ? 1 : 0) - (a.automatic || a.sniper ? 1 : 0) || b.n - a.n || dist(a.at, at) - dist(b.at, at));
@@ -245,13 +250,14 @@ function platoonAlarm(w: World, pl: Platoon): void {
   const side = (n: number) => (n % 2 === 0 ? -1 : 1) * Math.ceil((n + 1) / 2);
   let k = 0;
   for (const o of squads) {
-    if (o === lead || (o.state !== "advance" && o.state !== "deploy" && o.state !== "support")) continue;
+    if (o === lead || (o.state !== "advance" && o.state !== "deploy" && o.state !== "support") || w.tick - o.stateTick < 30) continue;
     const men = elements(w, o);
     const all = [...men.A, ...men.B];
     if (all.length === 0 || dist(centroid(all), center) > 110) continue;
     // What the squad in contact knows, the others now know.
+    let told = 0;
     for (const c of Object.values(lead.contacts)) {
-      if (w.tick - c.tick > 4) continue;
+      if (w.tick - c.tick > 12) continue;
       const e = w.maybe(c.id);
       if (!e || e.status !== "active") continue;
       updateContact(w, o, e, { x: c.x, y: c.y }, false);
@@ -260,14 +266,17 @@ function platoonAlarm(w: World, pl: Platoon): void {
         nc.identified = c.identified;
         nc.automatic = c.automatic;
         nc.sniper = c.sniper;
+        nc.armour = c.armour;
       }
+      told++;
     }
+    if (told === 0) continue;
     const leader = w.maybe(o.leaderId);
     o.focus = target;
     const slot = side(k++);
     // A little way back from the squad in contact, then spread along the line.
     const back = facingFrom(center, target);
-    const slotCenter = { x: Math.round(center.x - back.x * 4 + -back.y * slot * 15), y: Math.round(center.y - back.y * 4 + back.x * slot * 15) };
+    const slotCenter = { x: Math.round(center.x - back.x * 4 + -back.y * slot * 26), y: Math.round(center.y - back.y * 4 + back.x * slot * 26) };
     const at = w.freeTileNear(slotCenter, 5) ?? slotCenter;
     deployLine(w, o, men, target, at);
     setState(w, o, "react", `${lead.name} is in contact: spreading out on the line and returning fire`);
@@ -276,6 +285,14 @@ function platoonAlarm(w: World, pl: Platoon): void {
 }
 
 // ---------- Attackers ----------
+
+/** Squads holding for the others to come up on line, and since when. */
+const waitingByWorld = new WeakMap<World, Map<number, number>>();
+function waitingSinceOf(w: World): Map<number, number> {
+  let m = waitingByWorld.get(w);
+  if (!m) waitingByWorld.set(w, (m = new Map()));
+  return m;
+}
 
 function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
   const men = elements(w, sq);
@@ -318,6 +335,23 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
         // The drill: get down, spread out into a line, get into spots you can shoot from, return fire.
         deployLine(w, sq, men, focus.at, pos);
         return;
+      }
+      // Line abreast: a squad that has got well ahead of the others waits for them, rather than going on alone to be shot up.
+      const peers = pl.squadIds.map((id) => w.squad(id)).filter((o) => o !== sq && ableMen(w, o).length >= 4 && (o.state === "advance" || o.state === "react" || o.state === "fix" || o.state === "flank" || o.state === "stage"));
+      if (peers.length >= 1 && sq.task !== "reserve") {
+        const forward = pl.rearY > pos.y ? -1 : 1;
+        const theirs = peers.map((o) => forward * centroid(ableMen(w, o)).y).sort((a, b) => a - b);
+        const median = theirs[Math.floor(theirs.length / 2)]!;
+        if (forward * pos.y - median > 26) {
+          const waiting = waitingSinceOf(w);
+          const since = waiting.get(sq.id) ?? w.tick;
+          waiting.set(sq.id, since);
+          if (w.tick - since < 180) {
+            holdHere(w, sq, men, "return", null);
+            sq.intent = "holding to let the other squads come up on line";
+            return;
+          }
+        } else waitingSinceOf(w).delete(sq.id);
       }
       advanceByBounds(w, sq, men, objective, toEnemy);
       return;
@@ -383,12 +417,14 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
       }
       holdHere(w, sq, men, "free", sq.focus);
       const enemyQuiet = !all.some((m) => m.underFire && w.tick - m.underFire.tick < 15);
-      if (w.tick - sq.stateTick > 60 && (enemyQuiet || dist(pos, sq.focus) < 14) && strength(w, sq) > 0.4) {
+      const hardFix = (focus.automatic || focus.n >= 3) && pl.squadIds.some((id) => id !== sq.id && ableMen(w, w.squad(id)).length >= 4) && w.tick - sq.stateTick < 160;
+      const tankFocus = (focus.tank && w.tick - sq.stateTick < 240) || (pl.plan !== null && pl.plan.base.includes(sq.id)) || hardFix;
+      if (w.tick - sq.stateTick > 60 && (enemyQuiet || dist(pos, sq.focus) < 14) && strength(w, sq) > 0.4 && !tankFocus) {
         setState(w, sq, "assault", "their fire has slackened: up and at them");
         shout(w, leader, leader.side === "us" ? "Move! Move!" : "Vorwärts!", null);
       } else if (strength(w, sq) < 0.45 || avgMorale(all) < 0.28) {
         fallBack(w, sq, pos, leader);
-      } else if (w.tick - sq.stateTick > 120 && men.B.length >= 3) {
+      } else if (w.tick - sq.stateTick > 120 && men.B.length >= 3 && !tankFocus) {
         sq.flankPoint = null;
         setState(w, sq, "flank", "trying the other flank");
       }
@@ -439,6 +475,25 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
       }
       return;
     }
+    case "stage": {
+      // Waiting at the jump-off line; the platoon sends them in when the mortars are down.
+      const j = pl.plan?.jump[sq.id];
+      if (!pl.plan || !j) {
+        setState(w, sq, "advance", "the attack was called off; pressing on");
+        sq.route = boundsTo(w, sq.side, pos, objective);
+        sq.routeIdx = 0;
+        sq.boundWp = -1;
+        return;
+      }
+      for (const el of ["A", "B"] as const) {
+        if (sq.orders[el].kind === "move" && arrived(w, men[el], sq.orders[el], 3)) {
+          const keep: Record<number, Point> = {};
+          for (const m of men[el]) keep[m.id] = { x: m.x, y: m.y };
+          setOrder(w, sq, el, order("suppress", keep, "crouch", "free", pl.plan.target));
+        }
+      }
+      return;
+    }
     case "consolidate": {
       const away = { x: -rearDir(w, sq.side).x, y: -rearDir(w, sq.side).y };
       const center = objective;
@@ -465,11 +520,25 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
   }
 }
 
-function decideOnContact(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, focus: { at: Point; n: number; automatic: boolean }, pos: Point, leader: Soldier): void {
+function decideOnContact(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, focus: { at: Point; n: number; automatic: boolean; tank?: boolean }, pos: Point, leader: Soldier): void {
   const all = [...men.A, ...men.B];
   const d = dist(pos, focus.at);
+  // A tank is not something riflemen assault: go to ground, and let the bazookas and the mortars deal with it.
+  if (focus.tank && strength(w, sq) >= 0.45) {
+    setState(w, sq, "fix", "a tank! going to ground; bazooka men forward and the mortars called");
+    shout(w, leader, leader.side === "us" ? "Tank! Bazooka team up! Everyone down!" : "Panzer! Panzerschreck vor! Deckung!", "tank-warning", 60);
+    return;
+  }
   if (strength(w, sq) < 0.45 || avgMorale(all) < 0.3) {
     fallBack(w, sq, pos, leader);
+    return;
+  }
+  const pl = w.platoons[sq.side];
+  const others = pl.squadIds.map((id) => w.squad(id)).filter((o) => o !== sq && ableMen(w, o).length >= 4 && o.state !== "fall_back" && o.state !== "broken" && o.state !== "withdraw" && o.state !== "displace");
+  const hardPos = focus.automatic || focus.n >= 3 || focus.tank === true;
+  // A strong position is the whole platoon's job: pin it and let the platoon organise both flanks together.
+  if (hardPos && others.length > 0 && d > 10 && (pl.stall === null || pl.stall.shifts < 4)) {
+    setState(w, sq, "fix", `pinning ${focus.automatic ? "the machine gun" : "a strong position"}; the platoon will go round both flanks together`);
     return;
   }
   if ((d <= 28 && focus.n <= 2 && !focus.automatic) || d <= 10) {
@@ -962,6 +1031,252 @@ function hqStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
 
 // ---------- Platoon ----------
 
+/**
+ * A platoon that has made no ground for a long while, under fire, has been
+ * trying the wrong way. Mark the road it has been using as dear, keep one
+ * squad on the position as a base of fire and send the others the long way
+ * round, either side, wider each time it fails.
+ */
+function stallCheck(w: World, pl: Platoon, leader: Soldier | undefined): void {
+  const squads = pl.squadIds.map((id) => w.squad(id)).filter((s) => ableMen(w, s).length >= 3 && s.state !== "withdraw" && s.state !== "broken");
+  if (squads.length < 2) return;
+  const cents = squads.map((s) => centroid(ableMen(w, s)));
+  const lead = Math.min(...cents.map((c) => dist(c, pl.objective)));
+  const st = (pl.stall ??= { best: lead, tick: w.tick, shifts: 0 });
+  if (lead < st.best - 10) {
+    st.best = lead;
+    st.tick = w.tick;
+    return;
+  }
+  const inContact = squads.some((s) => s.firstContactTick !== null && (s.state === "react" || s.state === "fix" || s.state === "advance" || s.state === "flank"));
+  if (w.tick - st.tick < 240 || w.tick < 360 || !inContact || pl.plan) return;
+  st.tick = w.tick;
+  st.shifts++;
+  const from = centroid(cents);
+  const focused = squads.filter((s) => s.focus);
+  const F = focused.length > 0 ? centroid(focused.map((s) => s.focus!)) : pl.objective;
+  const dir = facingFrom(from, F);
+  const perp = { x: -dir.y, y: dir.x };
+  // The road that has been costing men is dear now.
+  for (let k = 0; k <= 6; k++) w.addPain(pl.side, from.x + ((F.x - from.x) * k) / 6, from.y + ((F.y - from.y) * k) / 6, 2.5, 10);
+  const order = squads.map((s, i) => ({ s, c: cents[i]! })).sort((a, b) => dist(a.c, F) - dist(b.c, F));
+  const base = order[0]!.s;
+  base.focus = F;
+  if (base.state !== "fix") setState(w, base, "fix", "keeping the position pinned while the others go round");
+  const named: string[] = [];
+  order.slice(1).forEach(({ s, c }, i) => {
+    let side = (i + st.shifts) % 2 === 0 ? -1 : 1;
+    const reach = 46 + 14 * Math.floor(i / 2) + 12 * (st.shifts - 1);
+    let spot: Point | null = null;
+    for (const sd of [side, -side]) {
+      const want = { x: Math.round(F.x + perp.x * sd * reach - dir.x * 8), y: Math.round(F.y + perp.y * sd * reach - dir.y * 8) };
+      const p = w.freeTileNear({ x: Math.max(2, Math.min(w.map.width - 3, want.x)), y: Math.max(2, Math.min(w.map.height - 3, want.y)) }, 10);
+      if (p && w.map.reachable(c, p)) {
+        spot = p;
+        side = sd;
+        break;
+      }
+    }
+    if (!spot) return;
+    s.route = [...boundsTo(w, s.side, c, spot), ...boundsTo(w, s.side, spot, pl.objective)];
+    s.routeIdx = 0;
+    s.boundWp = -1;
+    s.bounding = "A";
+    s.flankPoint = null;
+    s.focus = null;
+    for (const key of Object.keys(s.contacts)) if (cheb(s.contacts[Number(key)]!, F) <= 12) delete s.contacts[Number(key)];
+    setState(w, s, "advance", `the direct way has failed: swinging wide ${side < 0 ? "left" : "right"} of ${base.name}`);
+    named.push(s.name);
+  });
+  w.emit("axis_shift", leader ? [leader.id] : [], { side: pl.side, at: [F.x, F.y], base: base.id, squads: order.slice(1).map((o) => o.s.id), n: st.shifts });
+  if (leader && named.length > 0) shout(w, leader, leader.side === "us" ? `${named.join(" and ")}, go round wide! ${base.name}, keep their heads down!` : `${named.join(" und ")}, weit umfassen! ${base.name}, Feuerschutz!`, null);
+}
+
+/**
+ * Set-piece attack on a position that has held: the squads in contact keep it
+ * pinned with every automatic weapon, the rest go round both flanks, wide, to
+ * jump-off lines either side, the radioman puts mortars on it, and when the
+ * bombs are falling both flanks go in together behind the smoke and the
+ * shifted fire. One flank never goes in alone.
+ */
+function coordinate(w: World, pl: Platoon, leader: Soldier | undefined): void {
+  const cfg = w.config;
+  const plan = pl.plan;
+  const squads = pl.squadIds.map((id) => w.squad(id));
+  const hq = w.squad(pl.hqSquadId);
+  if (plan) {
+    const assaulters = plan.assault.map((id) => w.squad(id));
+    const live = assaulters.filter((s) => ableMen(w, s).length >= 3 && s.state !== "fall_back" && s.state !== "broken" && s.state !== "withdraw");
+    const quiet = !sideContacts(w, pl.side, 40).some((c) => cheb(c, plan.target) <= 10);
+    if (live.length === 0 || w.tick - plan.start > 320 || (quiet && w.tick - plan.start > 30)) {
+      for (const s of assaulters) if (s.state === "stage") setState(w, s, "advance", "the attack is over; pressing on");
+      pl.plan = null;
+      pl.planTick = w.tick;
+      return;
+    }
+    // Every squad in contact within reach of it keeps the position under fire.
+    for (const b of squads) {
+      if (plan.assault.includes(b.id) || b.state === "fall_back" || b.state === "broken" || b.state === "withdraw") continue;
+      const bm = ableMen(w, b);
+      if (bm.length === 0) continue;
+      const near = dist(centroid(bm), plan.target) <= 95;
+      if (plan.base.includes(b.id) || (near && (b.state === "fix" || b.state === "react"))) {
+        if (!plan.base.includes(b.id)) plan.base.push(b.id);
+        b.focus = plan.target;
+        if (w.tick % 10 === 0) holdHere(w, b, elements(w, b), "free", plan.target);
+        if (b.state !== "fix" && b.state !== "react" && b.state !== "assault" && b.state !== "flank") setState(w, b, "fix", "keeping the position pinned for the attack");
+      }
+    }
+    if (plan.stage === "prep") {
+      const m = pl.missions.find((x) => x.id === plan.mission);
+      const placed = live.every((s) => {
+        const men = elements(w, s);
+        const j = plan.jump[s.id]!;
+        return dist(centroid([...men.A, ...men.B]), j) <= 10;
+      });
+      const bombsFalling = !m || w.tick >= m.effectTick - 3;
+      // Both flanks together: wait for the slowest, up to a point.
+      if ((placed || w.tick - plan.start > 170) && bombsFalling) {
+        // Smoke shells go down between each assault and the position, landing just as they step off.
+        if (plan.smokeTick < 0) {
+          plan.smokeTick = w.tick;
+          const aims = live.slice(0, 2).map((s) => {
+            const c = centroid(ableMen(w, s));
+            return { x: Math.round(c.x + (plan.target.x - c.x) * 0.45), y: Math.round(c.y + (plan.target.y - c.y) * 0.45) };
+          });
+          pl.smokeAt = -1000;
+          if (smokeMission(w, pl, aims, "between the assault and the position")) return;
+        }
+        if (w.tick - plan.smokeTick < 6) return;
+        plan.stage = "go";
+        plan.goTick = w.tick;
+        for (const s of live) {
+          s.focus = plan.target;
+          setState(w, s, "assault", "up and in together with the other flank, behind the mortars and the smoke");
+        }
+        const l = w.maybe(w.squad(live[0]!.id).leaderId);
+        if (l) shout(w, l, l.side === "us" ? "Mortars are on them! Smoke out, then GO! Both flanks, GO!" : "Granaten liegen! Nebel, dann Marsch, marsch! Beide Flügel!", null);
+        w.emit("coordinated_attack", leader ? [leader.id] : [], { side: pl.side, at: [plan.target.x, plan.target.y], stage: "go", squads: live.map((s) => s.id), mortars: m !== undefined });
+      }
+    } else if (plan.stage === "go" && w.tick - plan.goTick > 12 && !live.some((s) => s.state === "assault" || s.state === "flank")) {
+      pl.plan = null;
+      pl.planTick = w.tick;
+    }
+    return;
+  }
+  if (w.tick - pl.planTick < 120 || w.tick < 200 || !leader || !w.able(leader)) return;
+  const fixing = squads.filter((s) => s.state === "fix" && s.focus && w.tick - s.stateTick >= 12).sort((a, b) => a.stateTick - b.stateTick)[0];
+  if (!fixing || !fixing.focus) return;
+  const F = fixing.focus;
+  const near = sideContacts(w, pl.side, 40).filter((c) => cheb(c, F) <= 8);
+  const painHere = w.pain[pl.side][w.map.idx(Math.max(0, Math.min(w.map.width - 1, F.x)), Math.max(0, Math.min(w.map.height - 1, F.y)))] ?? 0;
+  const hard = near.some((c) => c.automatic || c.sniper || c.armour) || near.length >= 2 || w.tick - fixing.stateTick >= 40 || (pl.stall?.shifts ?? 0) >= 1 || painHere > 0.5;
+  if (!hard) return;
+  const free = squads
+    .filter((s) => s !== fixing && ableMen(w, s).length >= 4 && ["advance", "react", "fix", "flank", "deploy", "support"].includes(s.state) && s.task !== "helping")
+    .sort((a, b) => dist(centroid(ableMen(w, a)), F) - dist(centroid(ableMen(w, b)), F))
+    .slice(0, 3);
+  if (free.length === 0) return;
+  // Jump-off lines either side of the position, wide of it and short of it, alternating left and right.
+  const from = centroid(ableMen(w, fixing));
+  const dir = facingFrom(from, F);
+  const perp = { x: -dir.y, y: dir.x };
+  const jump: Record<number, Point> = {};
+  free.forEach((s, i) => {
+    const c = centroid(ableMen(w, s));
+    const reach = 34 + 12 * Math.floor(i / 2);
+    let side = i % 2 === 0 ? -1 : 1;
+    // Start with the side the squad is already on.
+    const lat = (c.x - F.x) * perp.x + (c.y - F.y) * perp.y;
+    if (free.length === 1 || Math.abs(lat) > 12) side = lat < 0 ? -1 : 1;
+    let spot: Point | null = null;
+    for (const sd of [side, -side]) {
+      const want = { x: Math.round(F.x + perp.x * sd * reach - dir.x * 18), y: Math.round(F.y + perp.y * sd * reach - dir.y * 18) };
+      const p = w.freeTileNear({ x: Math.max(2, Math.min(w.map.width - 3, want.x)), y: Math.max(2, Math.min(w.map.height - 3, want.y)) }, 8);
+      if (p && w.map.reachable(c, p)) {
+        spot = p;
+        break;
+      }
+    }
+    jump[s.id] = spot ?? flankPoint(w, s.side, c, F, 16 + i * 6) ?? w.freeTileNear({ x: Math.round(F.x + (c.x - F.x) * 0.5), y: Math.round(F.y + (c.y - F.y) * 0.5) }, 6) ?? c;
+  });
+  // The radioman calls the mortars on it, timed to the attack.
+  let mission: number | null = null;
+  const radio = hq.members.map((id) => w.soldier(id)).find((m) => m.role === "radioman" && w.able(m));
+  if (pl.fireMissionsLeft > 0 && pl.missions.every((m) => m.fired >= m.rounds + 1) && radio && cheb(radio, leader) <= cfg.mortars.radioReach + 3 && !w.soldiers.some((s) => s.side === pl.side && w.onField(s) && cheb(s, F) < cfg.mortars.dangerClose + 4)) {
+    pl.fireMissionsLeft--;
+    const spot = w.tick + cfg.mortars.spotDelay;
+    const id = w.nextId("mission");
+    pl.missions.push({ id, side: pl.side, target: F, spotTick: spot, effectTick: spot + cfg.mortars.effectDelay, rounds: cfg.mortars.rounds, fired: 0, calledBy: radio.id, kind: "mortar", msg: null });
+    mission = id;
+    w.emit("fire_mission", [radio.id, leader.id], { side: pl.side, at: [F.x, F.y], by: radio.id, leader: leader.id, left: pl.fireMissionsLeft });
+    shout(w, radio, pl.side === "us" ? "Fire mission! Enemy position, mortars to cover our assault, over!" : "Feuerauftrag! Granatwerfer auf die Stellung, wir greifen an!", null);
+    note(w, radio, "called in mortar fire for the attack");
+  }
+  pl.plan = { target: F, start: w.tick, stage: "prep", base: [fixing.id], assault: free.map((s) => s.id), jump, mission, goTick: -1, smokeTick: -1 };
+  for (const s of free) {
+    const men = elements(w, s);
+    const j = jump[s.id]!;
+    const face = facingFrom(j, F);
+    setState(w, s, "stage", `working round to the jump-off line while ${fixing.name} keeps them pinned${mission !== null ? " and the mortars come down" : ""}`);
+    s.focus = F;
+    for (const el of ["A", "B"] as const) setOrder(w, s, el, order("move", pickPositions(w, men[el], j, face, 3, 7, F), "crouch", "return"));
+  }
+  w.emit("coordinated_attack", [leader.id], { side: pl.side, at: [F.x, F.y], stage: "prep", base: fixing.id, squads: free.map((s) => s.id), mortars: mission !== null });
+  shout(w, leader, pl.side === "us" ? `${fixing.name}, keep them pinned. ${free.map((s) => s.name).join(" and ")}, get to the jump-off; we go in on the mortars.` : `${fixing.name}, Feuer halten. ${free.map((s) => s.name).join(" und ")}, Bereitstellung; wir greifen nach den Granaten an.`, null);
+}
+
+/**
+ * A smoke mission: the radioman has the mortars put two or three smoke bombs
+ * on the aim points. It costs one of the platoon's missions. Returns whether
+ * it was called.
+ */
+function smokeMission(w: World, pl: Platoon, aims: readonly Point[], why: string): boolean {
+  if (pl.fireMissionsLeft <= 0 || aims.length === 0 || w.tick - pl.smokeAt < 90) return false;
+  const hq = w.squad(pl.hqSquadId);
+  const leader = w.maybe(hq.leaderId);
+  const radio = hq.members.map((id) => w.soldier(id)).find((m) => m.role === "radioman" && w.able(m));
+  if (!radio || !leader || !w.able(leader) || cheb(radio, leader) > w.config.mortars.radioReach + 3) return false;
+  pl.fireMissionsLeft--;
+  pl.smokeAt = w.tick;
+  for (const a of aims.slice(0, 3)) incoming(w, "smoke_shell", pl.side, a, 3, radio.id);
+  shout(w, radio, pl.side === "us" ? `Smoke mission, ${why}! Shot, over!` : "Nebel! Rauch auf die Linie!", null);
+  note(w, radio, `called smoke ${why}`);
+  w.emit("smoke_mission", [radio.id], { side: pl.side, at: aims.slice(0, 3).map((a) => [a.x, a.y]), why });
+  return true;
+}
+
+/**
+ * Both sides use the mortars to blind the enemy: a squad falling back is
+ * covered by smoke between it and its pursuers, and squads pinned in the open
+ * get a screen between them and the guns that have them.
+ */
+function screenStep(w: World, pl: Platoon): void {
+  if (pl.fireMissionsLeft <= 0 || w.tick - pl.smokeAt < 150 || w.tick % 5 !== 0) return;
+  const squads = pl.squadIds.map((id) => w.squad(id));
+  const known = sideContacts(w, pl.side, 15).filter((c) => c.identified);
+  if (known.length === 0) return;
+  const nearestEnemy = (p: Point) => known.reduce<Contact | null>((best, c) => (best === null || dist(c, p) < dist(best, p) ? c : best), null);
+  for (const s of squads) {
+    const men = ableMen(w, s);
+    if (men.length < 3) continue;
+    const c = centroid(men);
+    const e = nearestEnemy(c);
+    if (!e) continue;
+    const d = dist(c, e);
+    if (d > 70 || d < 10) continue;
+    const pinned = men.filter((m) => m.pinned || m.suppression > 0.5).length;
+    const falling = s.state === "fall_back" || s.state === "displace";
+    const stuck = (s.state === "fix" || s.state === "react") && pinned >= Math.max(3, Math.ceil(men.length * 0.4));
+    if (!falling && !stuck) continue;
+    // Between the men and what is shooting at them: nearer the enemy, where the smoke will cut the line.
+    const t = falling ? 0.4 : 0.3;
+    const mid = { x: Math.round(e.x + (c.x - e.x) * t), y: Math.round(e.y + (c.y - e.y) * t) };
+    const side = { x: Math.round(-(e.y - c.y) / (d || 1) * 7), y: Math.round((e.x - c.x) / (d || 1) * 7) };
+    if (smokeMission(w, pl, [mid, { x: mid.x + side.x, y: mid.y + side.y }, { x: mid.x - side.x, y: mid.y - side.y }], falling ? "to cover the withdrawal" : "to break up their aim")) return;
+  }
+}
+
 function platoonStep(w: World, pl: Platoon): void {
   const side = pl.side;
   const strengthNow = w.strength(side);
@@ -978,7 +1293,12 @@ function platoonStep(w: World, pl: Platoon): void {
   const hq = w.squad(pl.hqSquadId);
   const pltLeader = w.maybe(hq.leaderId);
   if (!pl.withdrawing) answerCalls(w, pl);
-  if (pl.role === "attack" && !pl.withdrawing) platoonAlarm(w, pl);
+  if (!pl.withdrawing || pl.role === "defend") screenStep(w, pl);
+  if (pl.role === "attack" && !pl.withdrawing) {
+    platoonAlarm(w, pl);
+    stallCheck(w, pl, pltLeader ?? undefined);
+    coordinate(w, pl, pltLeader ?? undefined);
+  }
   // Support: an idle squad goes round to help one that is stuck.
   if (pl.role === "attack" && !pl.withdrawing) {
     const stuck = pl.squadIds.map((id) => w.squad(id)).find((s) => (s.state === "fix" || (s.state === "flank" && w.tick - s.stateTick > 90)) && s.focus && w.tick - s.stateTick > 40);
@@ -1004,6 +1324,24 @@ function platoonStep(w: World, pl: Platoon): void {
   } else if (pl.role === "defend" && !pl.withdrawing) {
     pl.phase = pl.squadIds.some((id) => w.squad(id).state === "fall_back") ? "falling back" : pl.squadIds.some((id) => w.squad(id).orders.A.fire === "free") ? "engaged" : "waiting";
   }
+  // What a forward team has found goes straight to the mortars, before the platoon is in contact.
+  if (pl.reports.length > 0) {
+    pl.reports = pl.reports.filter((r) => w.tick - r.tick < 240);
+    const radio = hq.members.map((id) => w.soldier(id)).find((s) => s.role === "radioman" && w.able(s));
+    if (!pl.withdrawing && pl.fireMissionsLeft > 0 && pl.missions.every((m) => m.fired >= m.rounds + 1) && radio && pltLeader && w.able(pltLeader) && cheb(radio, pltLeader) <= cfg.mortars.radioReach + 3) {
+      const r = pl.reports.find((x) => !w.soldiers.some((s) => s.side === side && w.onField(s) && cheb(s, x.at) < cfg.mortars.dangerClose + 4));
+      if (r) {
+        pl.reports = pl.reports.filter((x) => x !== r);
+        pl.fireMissionsLeft--;
+        pl.shelled.push({ at: r.at, tick: w.tick });
+        const spot = w.tick + cfg.mortars.spotDelay;
+        pl.missions.push({ id: w.nextId("mission"), side, target: r.at, spotTick: spot, effectTick: spot + cfg.mortars.effectDelay, rounds: cfg.mortars.rounds, fired: 0, calledBy: radio.id, kind: "mortar", msg: r.msg });
+        w.emit("fire_mission", [radio.id, pltLeader.id], { side, at: [r.at.x, r.at.y], by: radio.id, leader: pltLeader.id, left: pl.fireMissionsLeft, msg: r.msg, from: [radio.x, radio.y], reported: r.kind });
+        shout(w, radio, side === "us" ? `Fire mission! Recon reports ${r.kind === "machine_gun" ? "a machine gun" : r.kind === "tank" ? "a tank" : "a sniper"}, mortars on it, over!` : "Feuerauftrag! Aufklärer melden Feind, Granatwerfer!", null);
+        note(w, radio, "called in mortar fire on a forward team's report");
+      }
+    }
+  }
   // Fire support: the radioman calls the mortars on the strongest known position.
   if (!pl.withdrawing && pl.fireMissionsLeft > 0 && pl.missions.every((m) => m.fired >= m.rounds + 1) && pltLeader && w.able(pltLeader)) {
     const radio = hq.members.map((id) => w.soldier(id)).find((s) => s.role === "radioman" && w.able(s));
@@ -1013,13 +1351,13 @@ function platoonStep(w: World, pl: Platoon): void {
       // A squad that called for help and got nobody sent has its trouble seen to first.
       const prio = pl.priority;
       const groups = clusters(known, 6).sort((a, b) => (prio ? dist(a.at, prio) - dist(b.at, prio) : 0));
-      const target = groups.find((g) => (g.automatic || g.sniper || g.n >= 3 || (prio !== null && dist(g.at, prio) < 10)) && !w.soldiers.some((s) => s.side === side && w.onField(s) && cheb(s, g.at) < cfg.mortars.dangerClose + 4));
+      const target = groups.find((g) => (g.tank || g.automatic || g.sniper || g.n >= 3 || (prio !== null && dist(g.at, prio) < 10)) && !w.soldiers.some((s) => s.side === side && w.onField(s) && cheb(s, g.at) < cfg.mortars.dangerClose + 4));
       const sinceContact = Math.min(...pl.squadIds.map((id) => w.squad(id).firstContactTick ?? Infinity));
       if (target && w.tick - sinceContact >= 20) {
         pl.fireMissionsLeft--;
         pl.priority = null;
         const spot = w.tick + cfg.mortars.spotDelay;
-        pl.missions.push({ id: w.nextId("mission"), side, target: target.at, spotTick: spot, effectTick: spot + cfg.mortars.effectDelay, rounds: cfg.mortars.rounds, fired: 0, calledBy: radio.id, kind: "mortar" });
+        pl.missions.push({ id: w.nextId("mission"), side, target: target.at, spotTick: spot, effectTick: spot + cfg.mortars.effectDelay, rounds: cfg.mortars.rounds, fired: 0, calledBy: radio.id, kind: "mortar", msg: null });
         w.emit("fire_mission", [radio.id, pltLeader.id], { side, at: [target.at.x, target.at.y], by: radio.id, leader: pltLeader.id, left: pl.fireMissionsLeft });
         shout(w, radio, side === "us" ? `Fire mission! Enemy ${target.automatic ? "machine gun" : target.sniper ? "sniper position" : "infantry"} in the open, adjust fire, over!` : "Feuerauftrag! Granatwerfer, Feindstellung!", null);
         note(w, radio, "called in mortar fire");

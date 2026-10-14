@@ -108,7 +108,8 @@ export type StreamName =
   | "injuries"
   | "command"
   | "decision"
-  | "aftermath";
+  | "aftermath"
+  | "armour";
 
 export class RngStreams {
   readonly seed: number;

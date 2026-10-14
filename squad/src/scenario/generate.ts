@@ -6,11 +6,12 @@
 import { emptyOrder } from "../ai/command.ts";
 import { ambushSite, ambushSpots } from "../ai/ambush.ts";
 import { vantage } from "../ai/tactics.ts";
+import { tankCanStand } from "../combat/armour.ts";
 import { Rng } from "../engine/rng.ts";
 import type { EventLog } from "../log/events.ts";
 import { generateLayout, type Layout } from "../world/layout.ts";
 import { cheb } from "../world/map.ts";
-import { enemyOf, type Experience, type Point, type Role, type Side, type Soldier, type Squad, type Traits, type WeaponId } from "../world/types.ts";
+import { enemyOf, type Experience, type Point, type Role, type Side, type Soldier, type Squad, type Tank, type Traits, type WeaponId } from "../world/types.ts";
 import { World } from "../world/world.ts";
 import type { SimConfig } from "./config.ts";
 
@@ -53,6 +54,29 @@ const DE_RANKS: Record<string, [string, string]> = {
   osch: ["Oberschütze", "Osch."],
   sch: ["Schütze", "Sch."],
 };
+
+/** A tank and its four men. The first slot is the vehicle itself. */
+function tankSlots(side: Side): Slot[] {
+  const r = side === "us" ? US_RANKS : DE_RANKS;
+  const rank = (k: string): [string, string] => r[k]!;
+  const crew = side === "us" ? [rank("sgt"), rank("cpl"), rank("t5"), rank("pvt")] : [rank("uffz"), rank("ogefr"), rank("gefr"), rank("sch")];
+  const roles: Role[] = ["tank_commander", "tank_gunner", "tank_driver", "tank_loader"];
+  return [
+    { role: "tank", element: "A", rank: ["Tank", "Tank"], weapon: "tank_mg", ammo: 750, grenades: 0 },
+    ...roles.map((role, i): Slot => ({ role, element: "A", rank: crew[i]!, weapon: null, ammo: 0, grenades: 0 })),
+  ];
+}
+
+/** A towed anti-tank gun and the three men who serve it. */
+function gunSlots(side: Side): Slot[] {
+  const r = side === "us" ? US_RANKS : DE_RANKS;
+  const crew = side === "us" ? [r.cpl!, r.pfc!, r.pvt!] : [r.ogefr!, r.gefr!, r.sch!];
+  const w = side === "us" ? "m1_garand" : "kar98k";
+  return [
+    { role: "field_gun", element: "A", rank: ["Gun", "Gun"], weapon: null, ammo: 0, grenades: 0 },
+    ...crew.map((rank): Slot => ({ role: "gun_crew", element: "A", rank, weapon: w as WeaponId, ammo: 50, grenades: 1 })),
+  ];
+}
 
 function usSquad(rng: Rng): Slot[] {
   const r = US_RANKS;
@@ -131,9 +155,9 @@ function scoutSlots(side: Side): Slot[] {
   ];
 }
 
-const SQUAD_COLORS: Record<Side, string[]> = { us: ["#e8c84a", "#5ab0e8", "#e8844a", "#9ae85a"], de: ["#e05a5a", "#b08ae8", "#e878a8", "#e8e05a"] };
-const US_SQUAD_NAMES = ["1st Squad", "2nd Squad", "3rd Squad", "4th Squad"];
-const DE_SQUAD_NAMES = ["1. Gruppe", "2. Gruppe", "3. Gruppe", "4. Gruppe"];
+const SQUAD_COLORS: Record<Side, string[]> = { us: ["#e8c84a", "#5ab0e8", "#e8844a", "#9ae85a", "#e87ae0"], de: ["#e05a5a", "#b08ae8", "#e878a8", "#e8e05a", "#7ae8d0"] };
+const US_SQUAD_NAMES = ["1st Squad", "2nd Squad", "3rd Squad", "4th Squad", "5th Squad"];
+const DE_SQUAD_NAMES = ["1. Gruppe", "2. Gruppe", "3. Gruppe", "4. Gruppe", "5. Gruppe"];
 
 function gauss(rng: Rng): number {
   return (rng.next() + rng.next() + rng.next() - 1.5) / 0.5;
@@ -221,6 +245,8 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       loaded: spec ? spec.capacity : 0,
       ammo: slot.ammo,
       teamAmmo: slot.team ?? 0,
+      rockets: 0,
+      tankId: null,
       grenades: slot.grenades,
       smokes: slot.smokes ?? 0,
       rifleGrenades: slot.rifleGrenades ?? 0,
@@ -306,6 +332,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
   const nUs = cfg.forces.usSquads[0] + rng.int(cfg.forces.usSquads[1] - cfg.forces.usSquads[0] + 1);
   const nDe = cfg.forces.deSquads[0] + rng.int(cfg.forces.deSquads[1] - cfg.forces.deSquads[0] + 1);
   const counts: Record<Side, number> = { us: nUs, de: nDe };
+  counts[attacker] += cfg.forces.attackerBonusSquads;
   for (const side of [attacker, defender] as const) {
     const role = side === attacker ? "attack" : "defend";
     const hq = makeSquad(side, side === "us" ? "Platoon HQ" : "Zugtrupp", "#c8c8c8", true, hqSlots(side, side === "us" && rng.chance(cfg.forces.usSniperChance)), "hq");
@@ -319,6 +346,10 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
     const objective = layout.objective;
     const aidPost = role === "attack" ? w.freeTileNear({ x: objective.x, y: H - 5 }, 8) ?? { x: objective.x, y: H - 5 } : w.freeTileNear({ x: objective.x, y: Math.max(3, objective.y - 14) }, 8) ?? { x: objective.x, y: 3 };
     const scoutIds: number[] = [];
+    if (role === "attack") {
+      // Reconnaissance: a small team ahead of each flank, to lie up in sight of the defence and radio back what is there.
+      for (let i = 0; i < cfg.forces.reconTeams; i++) scoutIds.push(makeSquad(side, `${side === "us" ? "Recon" : "Aufklärer"} ${i + 1}`, "#8fd8c0", false, scoutSlots(side), "scout").id);
+    }
     if (role === "defend") {
       const n = Math.min(layout.scoutSpots.length, 2 + rng.int(2));
       for (let i = 0; i < n; i++) scoutIds.push(makeSquad(side, `${side === "us" ? "Outpost" : "Spähtrupp"} ${i + 1}`, "#8fd8c0", false, scoutSlots(side), "scout").id);
@@ -332,9 +363,15 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       objective,
       aidPost,
       rearY,
-      fireMissionsLeft: cfg.mortars.missions[side],
+      fireMissionsLeft: cfg.mortars.missions[role],
       missions: [],
       scoutIds,
+      plan: null,
+      planTick: -1000,
+      smokeAt: -1000,
+      reports: [],
+      shelled: [],
+      stall: null,
       mortarPit: null,
       priority: null,
       phase: role === "attack" ? "forming up" : "waiting",
@@ -343,6 +380,75 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       withdrawTick: -1,
     };
   }
+
+  // ---- Armour: each side has a tank one time in ten; the defenders may have a field gun; a few men carry launchers ----
+  const armourRng = new Rng(seed, "armour");
+  const tankFor: Record<Side, boolean> = { us: armourRng.chance(cfg.armour.tankChance), de: armourRng.chance(cfg.armour.tankChance) };
+  const gunFor = armourRng.chance(cfg.armour.fieldGunChance);
+  for (const side of ["us", "de"] as const) {
+    const pl = w.platoons[side];
+    const n = cfg.armour.atMen[0] + armourRng.int(cfg.armour.atMen[1] - cfg.armour.atMen[0] + 1);
+    const pools = pl.squadIds.map((id) => w.squad(id).members.map((m) => w.soldier(m)).filter((m) => m.role === "rifleman"));
+    for (let k = 0, got = 0; got < n && k < 40; k++) {
+      const m = pools[k % pools.length]?.shift();
+      if (!m) continue;
+      m.role = "at_gunner";
+      m.rockets = cfg.armour.rockets;
+      got++;
+    }
+  }
+  const nextTankName = { us: ["M4 Sherman"], de: ["Panzer IV"] };
+  const makeVehicle = (side: Side, kind: "tank" | "field_gun"): Tank => {
+    const slots = kind === "tank" ? tankSlots(side) : gunSlots(side);
+    const nameOf = kind === "tank" ? nextTankName[side][0]! : side === "us" ? "57 mm anti-tank gun" : "5 cm Pak 38";
+    const sq = makeSquad(side, kind === "tank" ? `${nameOf} crew` : `${nameOf} crew`, "#c8c8c8", false, slots, "armour");
+    const v = w.soldier(sq.members[0]!);
+    v.first = nameOf;
+    v.last = nameOf;
+    v.name = nameOf;
+    v.age = 0;
+    v.hometown = "";
+    const crewIds = sq.members.slice(1);
+    const rec: Tank = {
+      id: v.id,
+      kind,
+      side,
+      name: nameOf,
+      crew: crewIds,
+      state: "ready",
+      mode: "emplaced",
+      shells: kind === "tank" ? cfg.armour.tank.shells : cfg.armour.field.shells,
+      reloadLeft: 0,
+      hull: { x: 0, y: side === attacker ? -1 : 1 },
+      turret: { x: 0, y: side === attacker ? -1 : 1 },
+      goal: null,
+      path: [],
+      pathIdx: 0,
+      moveAcc: 0,
+      replanTick: 0,
+      stuckUntil: 0,
+      stuckCount: 0,
+      burnTick: -1,
+      trackedTick: -1,
+      repair: null,
+      threatTick: -1000,
+      movedTick: -1000,
+      bailAt: 0,
+      cookAt: 0,
+      post: null,
+      lastTarget: null,
+    };
+    w.tanks.set(v.id, rec);
+    for (const id of crewIds) w.soldier(id).tankId = v.id;
+    v.posture = "stand";
+    return rec;
+  };
+  if (tankFor[attacker]) {
+    const t = makeVehicle(attacker, "tank");
+    t.mode = "advance";
+  }
+  if (tankFor[defender]) makeVehicle(defender, "tank");
+  if (gunFor) makeVehicle(defender, "field_gun");
 
   // ---- Deployment ----
   deployAttackers(w, attacker, rng);
@@ -360,8 +466,23 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
     forces: { us: w.side("us").length, de: w.side("de").length },
     squads: w.squads.map((s) => ({ id: s.id, side: s.side, name: s.name, men: s.members.length })),
     objective: [layout.objective.x, layout.objective.y],
+    armour: [...w.tanks.values()].map((t) => ({ id: t.id, side: t.side, kind: t.kind, name: t.name })),
   });
   return w;
+}
+
+/** Nearest tile a tank can stand on, spiralling out. */
+function findStand(w: World, near: Point, radius: number, self: number): Point | null {
+  for (let r = 0; r <= radius; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = near.x + dx, y = near.y + dy;
+        if (tankCanStand(w, x, y, self) && w.isFree(x, y, self, 0)) return { x, y };
+      }
+    }
+  }
+  return null;
 }
 
 function placeAt(w: World, s: Soldier, p: Point): void {
@@ -378,10 +499,87 @@ function deployAttackers(w: World, side: Side, rng: Rng): void {
     const reserve = sq.task === "reserve";
     const lineIds = pl.squadIds.filter((q) => w.squad(q).task !== "reserve");
     const j = Math.max(0, lineIds.indexOf(id));
-    const cx = Math.max(8, Math.min(W - 9, Math.round(pl.objective.x + (reserve ? 0 : (j - (lineIds.length - 1) / 2) * 24) + (rng.next() - 0.5) * 6)));
-    const cy = reserve ? H - 3 : H - 6;
+    const cx = Math.max(8, Math.min(W - 9, Math.round(pl.objective.x + (reserve ? 0 : (j - (lineIds.length - 1) / 2) * w.config.forces.startSpacing) + (rng.next() - 0.5) * 8)));
+    // Staggered in depth as well, so no two squads stand abreast of one another on the road.
+    const cy = reserve ? H - 3 : H - 6 - (j % 2) * 4;
     sq.members.forEach((mid, k) => placeAt(w, w.soldier(mid), { x: cx - 4 + (k % 4) * 2, y: cy - Math.floor(k / 4) * 2 + (reserve ? 0 : 1) }));
   });
+  // The platoon's mortar sets up behind the start line.
+  {
+    const open = (x: number, y: number) => w.map.inBounds(x, y) && ["grass", "wheat", "orchard", "crater", "road"].includes(w.map.at(x, y)) && w.map.building[w.map.idx(x, y)]! < 0;
+    let best: Point | null = null;
+    for (let r = 0; r <= 14 && !best; r++) {
+      for (let dy = -r; dy <= r && !best; dy++) {
+        for (let dx = -r; dx <= r && !best; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const x = pl.objective.x + 9 + dx, y = H - 9 + dy;
+          if (open(x - 1, y) && open(x, y) && open(x + 1, y) && w.occupancy[w.map.cell(x, y, 0)] === 0) best = { x, y };
+        }
+      }
+    }
+    if (best) {
+      w.map.set(best.x, best.y, "foxhole");
+      w.map.set(best.x - 1, best.y, "wall");
+      w.map.set(best.x + 1, best.y, "wall");
+      pl.mortarPit = best;
+    }
+  }
+  // Recon teams go out ahead on either flank, to a hide just out of sight of the defended hedge.
+  const reconOf = pl.scoutIds.map((id) => w.squad(id));
+  reconOf.forEach((sq, i) => {
+    const sign = reconOf.length === 1 ? 0 : i % 2 === 0 ? -1 : 1;
+    const lane = Math.max(10, Math.min(W - 11, pl.objective.x + sign * (30 + 28 * Math.floor(i / 2))));
+    const row = w.layout.line.rowAt[lane] ?? w.layout.line.y;
+    const want = { x: lane, y: row + Math.round(w.config.perception.maxRange * 0.6) + 14 };
+    // The most concealed tile near it: trees, scrub or the lee of a hedge.
+    let best: Point | null = null, bs = -Infinity;
+    for (let dy = -10; dy <= 10; dy++) {
+      for (let dx = -12; dx <= 12; dx++) {
+        const x = want.x + dx, y = want.y + dy;
+        if (!w.map.inBounds(x, y) || !w.map.passable(x, y) || w.map.building[w.map.idx(x, y)]! >= 0) continue;
+        const t = w.map.at(x, y);
+        if (t === "water" || t === "road" || t === "bridge" || t === "hedge") continue;
+        if (!w.isFree(x, y, 0, 0)) continue;
+        const hide = t === "woods" ? 1 : t === "brush" ? 0.85 : w.map.besideCover(x, y) ? 0.6 : 0.1;
+        const score = hide - Math.hypot(dx, dy) * 0.02;
+        if (score > bs) {
+          bs = score;
+          best = { x, y };
+        }
+      }
+    }
+    const spot = best ?? w.freeTileNear(want, 8) ?? want;
+    const men = sq.members.map((m) => w.soldier(m));
+    const keep: Record<number, Point> = {};
+    men.forEach((m, k) => {
+      placeAt(w, m, { x: lane - 2 + k * 2, y: H - 8 });
+      const p = w.freeTileNear({ x: spot.x + (k === 1 ? 0 : k === 0 ? -2 : 2), y: spot.y + (k === 1 ? 0 : 1) }, 3, m.id) ?? spot;
+      keep[m.id] = p;
+      if (m.role === "sniper") {
+        m.hide = p;
+        m.hideTick = 1e9;
+      }
+    });
+    for (const el of ["A", "B"] as const) sq.orders[el] = { kind: "move", positions: keep, target: null, pace: "walk", fire: "hold", issued: 0 };
+    sq.state = "hold";
+    sq.intent = "going out ahead to find the defence and radio what is there";
+    sq.post = spot;
+    sq.facing = { x: 0, y: -1 };
+  });
+  // The tank goes ahead of the platoon, up the middle.
+  for (const t of w.tanks.values()) {
+    if (t.side !== side || t.kind !== "tank") continue;
+    const v = w.soldier(t.id);
+    const spot = findStand(w, { x: pl.objective.x + 4, y: H - 12 }, 10, v.id) ?? { x: pl.objective.x, y: H - 10 };
+    w.place(v, spot.x, spot.y, 0);
+    for (const id of t.crew) {
+      const c = w.soldier(id);
+      c.status = "aboard";
+      c.x = spot.x;
+      c.y = spot.y;
+    }
+    t.mode = "advance";
+  }
   const hq = w.squad(pl.hqSquadId);
   hq.members.forEach((mid, k) => placeAt(w, w.soldier(mid), { x: pl.objective.x - 4 + k * 2, y: H - 3 }));
   hq.state = "advance";
@@ -521,6 +719,45 @@ function deployDefenders(w: World, side: Side, layout: Layout, rng: Rng): void {
     sq.post = spot;
     sq.facing = { x: 0, y: 1 };
   });
+  // The defenders' armour: the tank hull-down behind the hedge with the best field of fire, the gun well away from it.
+  const placed: Point[] = [];
+  const vehicles = [...w.tanks.values()].filter((t) => t.side === side).sort((a, b) => (a.kind === "tank" ? 0 : 1) - (b.kind === "tank" ? 0 : 1));
+  for (const t of vehicles) {
+    const v = w.soldier(t.id);
+    const pool = [...layout.linePositions, ...layout.mgPositions];
+    const view = (p: Point) => vantage(w, p, { x: p.x, y: Math.min(w.map.height - 1, p.y + 45) });
+    const cands = pool
+      .filter((p) => tankCanStand(w, p.x, p.y, v.id) && w.isFree(p.x, p.y, v.id, 0) && w.soldiers.every((s) => s.id === v.id || !w.onField(s) || cheb(s, p) >= 3) && placed.every((q) => cheb(q, p) >= 16))
+      .map((p) => ({ p, v: view(p) - Math.abs(p.x - road) * 0.003 }))
+      .sort((a, b) => b.v - a.v || a.p.x - b.p.x);
+    const spot = cands[0]?.p ?? findStand(w, { x: road + 10 + 12 * placed.length, y: layout.line.rowAt[road] ?? layout.line.y }, 14, v.id) ?? { x: road, y: layout.line.y };
+    placed.push(spot);
+    w.place(v, spot.x, spot.y, 0);
+    t.mode = "emplaced";
+    t.post = spot;
+    t.hull = { x: 0, y: 1 };
+    t.turret = { x: 0, y: 1 };
+    const crew = t.crew.map((id) => w.soldier(id));
+    if (t.kind === "tank") {
+      for (const c of crew) {
+        c.status = "aboard";
+        c.x = spot.x;
+        c.y = spot.y;
+      }
+    } else {
+      const sq = w.squad(v.squadId);
+      const keep: Record<number, Point> = {};
+      crew.forEach((c, k) => {
+        const p = w.freeTileNear({ x: spot.x + (k === 0 ? -1 : k === 1 ? 1 : 0), y: spot.y - 1 - (k === 2 ? 1 : 0) }, 3, c.id) ?? spot;
+        placeAt(w, c, p);
+        c.posture = "crouch";
+        keep[c.id] = { x: c.x, y: c.y };
+      });
+      for (const el of ["A", "B"] as const) sq.orders[el] = { kind: "hold", positions: keep, target: null, pace: "crouch", fire: "return", issued: 0 };
+      sq.state = "hold";
+      sq.post = spot;
+    }
+  }
   const hq = w.squad(pl.hqSquadId);
   const post = w.freeTileNear({ x: layout.objective.x, y: layout.objective.y - 4 }, 6) ?? layout.objective;
   hq.post = post;
