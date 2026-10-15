@@ -174,7 +174,17 @@
       } catch (e) { sid = Math.random().toString(36).slice(2, 10); }
       var ref = "";
       try { ref = document.referrer ? new URL(document.referrer).hostname.replace(/^www\./, "") : ""; } catch (e) {}
-      var src = new URLSearchParams(location.search).get("utm_source") || ref;
+      var own = /(^|\.)shaykas\.com$/;
+      var src = new URLSearchParams(location.search).get("utm_source") || (own.test(ref) ? "" : ref);
+      try { if (src) sessionStorage.setItem("squad.src", src); else src = sessionStorage.getItem("squad.src") || ""; } catch (e) {}
+      // Carry the source into the game, which is a separate page.
+      if (src) {
+        document.querySelectorAll('a[href^="/squad/"], a[href^="/civ/"]').forEach(function (a) {
+          var u = new URL(a.getAttribute("href"), location.origin);
+          if (!u.searchParams.get("utm_source")) u.searchParams.set("utm_source", src);
+          a.setAttribute("href", u.pathname + u.search);
+        });
+      }
       var send = function (name, extra) {
         var body = { name: name, sid: sid, t: Math.round(performance.now()), ref: ref, src: src };
         for (var k in extra) body[k] = extra[k];
@@ -184,9 +194,8 @@
       document.addEventListener("click", function (ev) {
         var a = ev.target.closest && ev.target.closest("a[href]");
         if (!a) return;
-        var to = a.getAttribute("href");
-        if (to === "/squad/" || to === "/civ/") send("landing_play", { to: to });
-        else if (to === "/squad/?start=1") send("landing_play", { to: "/squad/", full: true });
+        var u = new URL(a.getAttribute("href"), location.origin);
+        if (u.pathname === "/squad/" || u.pathname === "/civ/") send("landing_play", { to: u.pathname, full: u.searchParams.get("start") === "1" });
       });
     })();
     // Respect reduced motion: show the still frame, not the looping clip.

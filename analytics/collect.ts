@@ -1,9 +1,11 @@
 // A tiny collector for the viewers' anonymous events: node analytics/collect.ts
 // Listens on 127.0.0.1:5180 (nginx proxies /a/e to it), appends one JSON line per event to
 // $STATE_DIRECTORY/events.ndjson. No IP address, cookie or user agent string is stored: only a
-// random per-tab session id, the event, and a coarse device class and country from the CDN.
+// random per-tab session id, the event, a coarse device class and country from the CDN, and `vid`, a
+// one-day visitor id derived from a salted hash (see visitorId) that cannot be reversed or matched after the day ends.
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { createServer } from "node:http";
+import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 
 const port = Number(process.env.PORT ?? 5180);
@@ -46,6 +48,20 @@ function write(line: string): void {
   appendFileSync(file, `${line}\n`);
 }
 
+// An approximate count of distinct visitors per day, without keeping anything that identifies one:
+// a hash of address and browser with a random salt that is generated fresh each UTC day and only ever
+// held in memory. Once the day is over (or the service restarts) the ids can no longer be matched to anyone.
+let saltDay = "";
+let salt = randomBytes(16);
+function visitorId(ip: string, ua: string): string {
+  const day = new Date().toISOString().slice(0, 10);
+  if (day !== saltDay) {
+    saltDay = day;
+    salt = randomBytes(16);
+  }
+  return createHash("sha256").update(salt).update(ip).update("|").update(ua).digest("hex").slice(0, 12);
+}
+
 const BOT = /bot|crawl|spider|slurp|headless|lighthouse|pagespeed|preview|facebookexternalhit|embedly|monitor|uptime|curl|wget|python|node-fetch/i;
 
 createServer((req, res) => {
@@ -80,7 +96,7 @@ createServer((req, res) => {
       const ev = clean(JSON.parse(Buffer.concat(chunks).toString("utf8")));
       if (ev) {
         const ua = String(req.headers["user-agent"] ?? "");
-        write(JSON.stringify({ ts: new Date().toISOString(), cc: String(req.headers["cf-ipcountry"] ?? "").slice(0, 2), dev: /mobi|android|iphone|ipad/i.test(ua) ? "mobile" : "desktop", ...ev }));
+        write(JSON.stringify({ ts: new Date().toISOString(), vid: visitorId(ip, ua), cc: String(req.headers["cf-ipcountry"] ?? "").slice(0, 2), dev: /mobi|android|iphone|ipad/i.test(ua) ? "mobile" : "desktop", ...ev }));
       }
     } catch {
       // Bad input is dropped without a word.
