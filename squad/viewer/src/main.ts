@@ -12,6 +12,9 @@ import { clock, describe, label, roleName, worstWound, type FeedLine } from "./f
 import { BLAST_SECONDS } from "./fx.ts";
 import { Renderer, drawMinimap, gridSquare, type Camera, type ViewOptions } from "./render.ts";
 import { BODY_RECTS, SIDE_COLORS, TILE, appearance, faceCanvas, hash2, skinOf } from "./sprites.ts";
+import { barrageTarget, busiestFight, contactDistance, framingZoom, frontLine } from "./cinematic.ts";
+import { startHeartbeat, track, trackFirstInteraction } from "./analytics.ts";
+import { shareResult } from "./share.ts";
 
 // Ticks (seconds of battle) per real second.
 const SPEEDS = [
@@ -57,6 +60,189 @@ let reportShown = false;
 let zoomGoal: { zoom: number; sx: number; sy: number } | null = null;
 const opts: ViewOptions = { roofs: true, names: false, orders: true, sight: true, chronicle: true };
 const cam: Camera = { x: 0, y: 0, zoom: 1.6 };
+
+// ---------- Cinematic start ----------
+// A first visit opens at first contact with a camera that follows the fighting and a simple screen:
+// the clock, pause, sound, and one button to call a barrage. Everything else is a tap away.
+
+const CINE_PREF = "squad.cinematic";
+/** Battles that open hot: the first contact is in open ground and in view. */
+const FEATURED_SEEDS = [19, 15];
+function cinematicPref(): boolean {
+  try {
+    return localStorage.getItem(CINE_PREF) !== "off";
+  } catch {
+    return true;
+  }
+}
+function setCinematicPref(on: boolean): void {
+  try {
+    localStorage.setItem(CINE_PREF, on ? "on" : "off");
+  } catch {
+    // Not important.
+  }
+}
+let battlesRun = 0;
+let battleToken = 0;
+/** True while the march up is being run through unseen, up to first contact. */
+let ffActive = false;
+let simpleUi = false;
+let cinematic = false;
+const director = {
+  on: false,
+  c: null as { x: number; y: number } | null,
+  goal: null as { x: number; y: number } | null,
+  lastX: NaN,
+  lastY: NaN,
+  lastZoom: NaN,
+  nextLook: 0,
+  quietSince: 0,
+};
+
+function setSimple(on: boolean): void {
+  simpleUi = on;
+  document.body.classList.toggle("simple", on);
+  syncSideIcon();
+  window.dispatchEvent(new Event("resize"));
+}
+
+function setDirector(on: boolean): void {
+  director.on = on;
+  director.c = null;
+  director.goal = null;
+  director.nextLook = 0;
+  director.lastX = NaN;
+  if (on) {
+    zoomGoal = null;
+    follow = false;
+  }
+  document.getElementById("cinebtn")?.classList.toggle("on", on);
+}
+
+/** One frame of the auto camera: glides to the busiest fight in view, never cuts, hands over at any input. */
+function directorStep(dt: number): void {
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width === 0 || !world) return;
+  const keyed = [...keys].some((k) => (k.length === 1 ? "wasdqe".includes(k) : k.startsWith("arrow")));
+  const moved = !Number.isNaN(director.lastX) && (Math.abs(cam.x - director.lastX) > 1.5 || Math.abs(cam.y - director.lastY) > 1.5 || Math.abs(cam.zoom - director.lastZoom) > 0.01);
+  if (keyed || moved || zoomGoal !== null || follow) {
+    setDirector(false);
+    trackFirstInteraction("camera");
+    return;
+  }
+  const t = now();
+  if (!director.c || t >= director.nextLook) {
+    director.nextLook = t + 2.5;
+    const cur = director.c;
+    let f: { x: number; y: number } | null = cur ? busiestFight(world, { x: cur.x, y: cur.y, r: 30 }) : busiestFight(world);
+    if (f) director.quietSince = t;
+    // Only go looking further afield when the neighbourhood has been quiet for a while.
+    if (!f && (!cur || t - director.quietSince > 8)) f = busiestFight(world) ?? frontLine(world);
+    if (f) {
+      director.goal = { x: f.x, y: f.y };
+      if (!cur) {
+        director.c = { x: f.x, y: f.y };
+        cam.zoom = framingZoom(rect.width, TILE);
+      }
+    }
+  }
+  const c = director.c, g = director.goal;
+  if (!c || !g) return;
+  const dx = g.x - c.x, dy = g.y - c.y, d = Math.hypot(dx, dy);
+  if (d > 0.02) {
+    const v = Math.min(d > 40 ? 9 : 4.5, d * 1.0);
+    const step = Math.min(d, v * dt);
+    c.x += (dx / d) * step;
+    c.y += (dy / d) * step;
+  }
+  cam.zoom += (framingZoom(rect.width, TILE) - cam.zoom) * (1 - Math.exp(-dt * 1.2));
+  cam.x = c.x * TILE + TILE / 2 - rect.width / cam.zoom / 2;
+  cam.y = c.y * TILE + TILE / 2 - rect.height / cam.zoom / 2;
+  director.lastX = cam.x;
+  director.lastY = cam.y;
+  director.lastZoom = cam.zoom;
+  userCamera = true;
+}
+
+/** Runs the march up unseen, to the first shots, so a visitor lands in the fight and not in a field. */
+async function fastForwardToContact(token: number): Promise<void> {
+  ffActive = true;
+  busy = true;
+  $("ff").classList.add("on");
+  try {
+    for (let i = 0; i < 260 && token === battleToken && world.phase !== "over"; i++) {
+      if (contactDistance(world) < 28) break;
+      for (let j = 0; j < 4; j++) {
+        prev = new Map(world.soldiers.map((s) => [s.id, { x: s.x, y: s.y }]));
+        await engine.step();
+      }
+      if (i % 6 === 0) await new Promise((r) => setTimeout(r, 0));
+    }
+  } finally {
+    if (token === battleToken) {
+      prev = new Map(world.soldiers.map((s) => [s.id, { x: s.x, y: s.y }]));
+      acc = 0;
+      $("toasts").innerHTML = "";
+      lastSquadAlert.clear();
+      boltsEl.innerHTML = "";
+      chains.clear();
+      paused = false;
+      dirty = { feed: true, events: true };
+    }
+    ffActive = false;
+    busy = false;
+    $("ff").classList.remove("on");
+    syncControls();
+  }
+}
+
+let hookCheckAt = 0;
+let hookFightAt = -99;
+let hookLabel = "";
+function updateHook(): void {
+  const el = $("hook");
+  const t = now();
+  const live = simpleUi && !ffActive && world.phase !== "over";
+  if (t >= hookCheckAt) {
+    hookCheckAt = t + 0.5;
+    let n = 0;
+    if (live) for (const m of world.soldiers) if (world.tick - m.lastFiredTick < 10 && ++n >= 3) break;
+    if (n >= 3) hookFightAt = t;
+  }
+  // Once the fighting has started the button stays up through lulls, so it does not flicker.
+  const show = live && t - hookFightAt < 12;
+  if (el.hidden === show) el.hidden = !show;
+  const cool = t < hookCooldownUntil;
+  el.classList.toggle("cool", cool);
+  el.classList.toggle("fresh", hookUsed === 0);
+  const label = cool ? `Reloading ${Math.ceil(hookCooldownUntil - t)}` : "Call in a barrage";
+  if (label !== hookLabel) {
+    hookLabel = label;
+    el.innerHTML = `${icon("barrage")} ${label}`;
+  }
+  // Browsers keep sound off until a first tap; say so, once.
+  const hint = $("soundhint");
+  const want = !sfx.ready && sfx.enabled && !ffActive && world.phase !== "over";
+  if (hint.hidden === want) hint.hidden = !want;
+}
+
+/** One tap: a barrage on the nearest enemy in view, or just off the middle if none is, so it is always in the picture. */
+let hookCooldownUntil = 0;
+let hookUsed = 0;
+function callBarrageFromView(): void {
+  if (!world || world.phase === "over" || now() < hookCooldownUntil) return;
+  const rect = canvas.getBoundingClientRect();
+  const halfW = rect.width / cam.zoom / 2 / TILE, halfH = rect.height / cam.zoom / 2 / TILE;
+  const centre = { x: cam.x / TILE + halfW, y: cam.y / TILE + halfH };
+  const at = barrageTarget(world, centre, halfW, halfH);
+  engine.intervene({ kind: "artillery", x: Math.round(at.x), y: Math.round(at.y) });
+  hookUsed++;
+  hookCooldownUntil = now() + 14;
+  track("barrage", { via: "button", n: hookUsed });
+  trackFirstInteraction("barrage");
+  if (hookUsed === 1) toast("battle", "Barrage called", "Smoke and a sniper shot are under Controls. Tap any alert to look at it.");
+}
+
 
 const now = () => performance.now() / 1000;
 const tickSeconds = () => 1 / SPEEDS[speed]!.tps;
@@ -365,9 +551,11 @@ function cineFrame(dt: number): void {
 
 function onEvent(e: SimEvent): void {
   if (!world) return;
-  chainFor(e);
-  effectsFor(e);
-  soundsFor(e);
+  if (!ffActive) {
+    chainFor(e);
+    effectsFor(e);
+    soundsFor(e);
+  }
   const line = describe(e, world);
   if (line) {
     feed.push(line);
@@ -375,7 +563,7 @@ function onEvent(e: SimEvent): void {
     dirty.feed = true;
     if (line.major) dirty.events = true;
   }
-  toastFor(e);
+  if (!ffActive) toastFor(e);
 }
 
 // ---------- Sound ----------
@@ -712,7 +900,7 @@ function effectsFor(e: SimEvent): void {
   }
 }
 
-function toast(kind: string, title: string, text: string, people: number[] = [], accent: string | null = null, squad: number | null = null): HTMLElement {
+function toast(kind: string, title: string, text: string, people: number[] = [], accent: string | null = null, squad: number | null = null, at: { x: number; y: number } | null = null): HTMLElement {
   const el = document.createElement("div");
   el.className = `toast ${kind}`;
   // A squad's alert takes the camera to that squad when clicked.
@@ -720,14 +908,18 @@ function toast(kind: string, title: string, text: string, people: number[] = [],
     el.dataset.squad = String(squad);
     el.title = "Click to look at this squad";
   }
+  // Any alert about a place or a man takes the camera there when tapped.
+  if (squad === null && people.length > 0) el.dataset.focus = String(people[0]);
+  if (at) el.dataset.at = `${at.x},${at.y}`;
+  if (el.dataset.squad || el.dataset.focus || el.dataset.at) el.classList.add("tap");
   if (accent) el.style.borderLeft = `6px solid ${accent}`;
   el.innerHTML = `<b>${esc(title)}</b>${linkNames(esc(text), people)}`;
   const box = $("toasts");
   box.prepend(el);
   // On a phone the map is small: fewer alerts, and they go sooner.
-  const small = window.matchMedia("(max-width: 900px)").matches;
+  const small = window.matchMedia("(max-width: 900px)").matches || simpleUi;
   while (box.children.length > (small ? 2 : 5)) box.lastElementChild?.remove();
-  setTimeout(() => el.remove(), small ? 5000 : 9000);
+  setTimeout(() => el.remove(), small ? 6000 : 9000);
   return el;
 }
 
@@ -747,6 +939,8 @@ const SQUAD_ALERTS: Record<string, [string, string]> = {
   advance: ["Advancing", "is pushing on"],
 };
 const lastSquadAlert = new Map<number, { state: string; tick: number }>();
+let lastCasualtyToast = -999;
+let lastMedicToast = -999;
 
 function squadAlert(e: SimEvent): void {
   const d = e.data;
@@ -816,7 +1010,10 @@ function toastFor(e: SimEvent): void {
       break;
     }
     case "building_collapse":
-      toast("fire", "Collapse", `${(d.name as string).replace(/^./, (c) => c.toUpperCase())} falls in under the shelling${(d.hurt as number[]).length ? `; ${(d.hurt as number[]).length} men caught inside` : ""}.`, d.hurt as number[]);
+    {
+      const b = world.buildings[d.building as number];
+      toast("fire", "Collapse", `${(d.name as string).replace(/^./, (c) => c.toUpperCase())} falls in under the shelling${(d.hurt as number[]).length ? `; ${(d.hurt as number[]).length} men caught inside` : ""}.`, d.hurt as number[], null, null, b ? { x: b.x + b.w / 2, y: b.y + b.h / 2 } : null);
+    }
       break;
     case "death": {
       const p = s("person");
@@ -826,6 +1023,23 @@ function toastFor(e: SimEvent): void {
     case "fire_mission": {
       const r = s("by");
       if (r) toast("fire", "Fire mission", `${label(r)} is calling in mortars.`, [r.id]);
+      break;
+    }
+    case "casualty": {
+      // Not every man down: one every few seconds, so the screen tells the story and does not shout.
+      const p = s("person");
+      if (p && e.tick - lastCasualtyToast >= 25) {
+        lastCasualtyToast = e.tick;
+        toast("death", p.side === "us" ? "Man down" : "Enemy down", `${label(p)} is down${p.side === "us" ? ": a medic is needed" : ""}.`, [p.id]);
+      }
+      break;
+    }
+    case "wounds_treated": {
+      const a = s("by"), p = s("person");
+      if (a && p && a.role === "medic" && e.tick - lastMedicToast >= 40) {
+        lastMedicToast = e.tick;
+        toast("squad", "Medic", `${label(a)} is dressing ${label(p)}'s wounds under fire.`, [a.id, p.id]);
+      }
       break;
     }
     case "platoon_withdraws":
@@ -845,6 +1059,7 @@ function toastFor(e: SimEvent): void {
       break;
     }
     case "battle_end":
+      track("battle_end", { tick: world.tick, winner: String(world.result?.winner ?? "none"), cinematic });
       toast("battle", "The fighting ends", d.reason as string);
       paused = true;
       syncControls();
@@ -860,7 +1075,8 @@ function toastFor(e: SimEvent): void {
 
 // ---------- Battles ----------
 
-function newBattle(seed: number): void {
+function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: false }): void {
+  const token = ++battleToken;
   const log = new EventLog({ hash: false });
   chains.clear();
   blasts.length = 0;
@@ -892,7 +1108,19 @@ function newBattle(seed: number): void {
   $("date").title = `${world.layout.name}, ${world.weather.label}`;
   fitCamera();
   renderRoster();
+  // The cinematic start: simple screen, auto camera, run through the march up to the first shots.
+  cinematic = opts.cinematic;
+  hookUsed = 0;
+  hookCooldownUntil = 0;
+  setSimple(cinematic);
+  setDirector(cinematic);
+  if (cinematic) {
+    paused = true;
+    void fastForwardToContact(token);
+  }
   syncControls();
+  battlesRun++;
+  track("battle_start", { seed, n: battlesRun, cinematic, phone: isPhone() });
   try {
     history.replaceState(null, "", `?seed=${seed}`);
   } catch {
@@ -984,10 +1212,12 @@ function frame(t: number): void {
     }
   }
   if (cine) cineFrame(dt);
+  else if (director.on && !ffActive) directorStep(dt);
   else {
     panCamera(dt);
     easeZoom(dt);
   }
+  updateHook();
   placeBolts();
   placeBlasts();
   renderer.hovered = hover ? pickAt(hover.sx, hover.sy) : null;
@@ -1532,7 +1762,8 @@ function openReport(): void {
     return `<li><span style="color:${SIDE_COLORS[t.side].name}">${esc(t.side === "us" ? "American" : "German")} ${esc(t.name)}</span>: ${stateText[t.state] ?? t.state}; ${t.kind === "tank" ? `${t.shells} shells left; ` : ""}crew of ${crew.length}: ${dead} killed, ${hurt} wounded${t.stuckCount > 0 ? `; bogged down ${t.stuckCount} time${t.stuckCount > 1 ? "s" : ""}` : ""}.</li>`;
   });
   const after = world.aftermath ?? {};
-  const html = `${head}
+  const share = r ? `<p><button id="sharebtn"><i data-icon="report"></i> Share this result</button> <span id="sharemsg" class="hint"></span></p>` : "";
+  const html = `${head}${share}
     <table class="aar"><tr><th></th><th>men</th><th>killed</th><th>wounded</th><th>prisoners</th><th>left field</th><th>rounds / hits</th></tr>${rows.join("")}</table>
     ${firstFall}
     ${armour.length ? `<h3>Armour</h3><ul class="plain">${armour.join("")}</ul>` : ""}
@@ -1542,6 +1773,7 @@ function openReport(): void {
     <h3>The wounded, and a month later</h3>
     <ul class="plain">${hurt.map((s) => `<li class="l-wound">${personLink(s)} (${esc(world.squad(s.squadId).name)}): ${s.injuries.filter((i) => !i.permanent && i.severity >= 0.1).map((i) => esc(describeInjury(i))).join("; ")}${after[s.id] ? ` — <i>${esc(after[s.id]!.outcome)}</i>` : ""}</li>`).join("") || "<li>None.</li>"}</ul>`;
   openModal(`After-action report · ${world.config.time.date}`, html);
+  hydrateIcons($("mbody"));
   $("mnew").style.display = r ? "" : "none";
 }
 
@@ -1672,7 +1904,11 @@ canvas.addEventListener("pointerup", (ev) => {
     return;
   }
   if (power === "artillery" || power === "smoke") {
-    if (world.map.inBounds(tx, ty)) engine.intervene({ kind: power, x: tx, y: ty });
+    if (world.map.inBounds(tx, ty)) {
+      engine.intervene({ kind: power, x: tx, y: ty });
+      track(power === "artillery" ? "barrage" : power, { via: "map" });
+      trackFirstInteraction(power);
+    }
     setPower("inspect");
     if (paused && !busy) void advance(1);
     return;
@@ -1811,6 +2047,8 @@ function toggle(name: keyof ViewOptions): void {
 }
 
 function setSpeed(i: number): void {
+  track("speed", { to: SPEEDS[i]!.label });
+  trackFirstInteraction("speed");
   speed = i;
   paused = false;
   syncControls();
@@ -1889,6 +2127,17 @@ document.addEventListener("click", (ev) => {
       userCamera = true;
       zoomGoal = null;
     }
+    return;
+  }
+  const tap = t.closest<HTMLElement>(".toast[data-focus], .toast[data-at]");
+  if (tap && !tap.dataset.squad) {
+    if (tap.dataset.focus) return openPerson(Number(tap.dataset.focus));
+    const [x, y] = tap.dataset.at!.split(",").map(Number) as [number, number];
+    const rect = canvas.getBoundingClientRect();
+    cam.x = x * TILE + TILE / 2 - rect.width / cam.zoom / 2;
+    cam.y = y * TILE + TILE / 2 - rect.height / cam.zoom / 2;
+    userCamera = true;
+    follow = false;
     return;
   }
   const alert = t.closest<HTMLElement>("[data-squad]");
@@ -2002,45 +2251,90 @@ $("modal").addEventListener("click", (ev) => {
 });
 $<HTMLFormElement>("seedform").addEventListener("submit", (ev) => {
   ev.preventDefault();
-  newBattle(Number($<HTMLInputElement>("seed").value) || 1);
+  requestNewBattle(Number($<HTMLInputElement>("seed").value) || 1);
 });
 $("random").addEventListener("click", () => {
   const seed = 1 + Math.floor(Math.random() * 99999);
   $<HTMLInputElement>("seed").value = String(seed);
-  newBattle(seed);
+  requestNewBattle(seed);
+});
+
+/** The first battle opens cinematic; after that the player chooses how to watch, and can turn the lot off. */
+let pendingSeed = 1;
+function requestNewBattle(seed: number): void {
+  $("modal").classList.remove("open");
+  if (battlesRun === 0) return newBattle(seed, { cinematic: cinematicPref() });
+  if (!cinematicPref()) return newBattle(seed, { cinematic: false });
+  pendingSeed = seed;
+  const box = $("nextmodal");
+  box.innerHTML = `<div class="box"><h2>Next battle <small>seed ${seed}</small></h2>
+    <button class="big" data-go="cine"><b>Jump to the action</b><small>Skips the march up. The camera follows the fighting and the screen stays simple.</small></button>
+    <button class="big" data-go="start"><b>Watch from the start</b><small>Your own camera and all the controls, from the first minute.</small></button>
+    <label><input type="checkbox" id="cinoff"> Turn cinematic features off for good</label>
+    <p class="hint">Auto camera, simple screen and skipping the march. The Auto-cam button brings them back.</p></div>`;
+  box.classList.add("open");
+}
+$("nextmodal").addEventListener("click", (ev) => {
+  const t = ev.target as HTMLElement;
+  const go = t.closest<HTMLElement>("[data-go]")?.dataset.go;
+  if (!go) {
+    if (t === $("nextmodal")) $("nextmodal").classList.remove("open");
+    return;
+  }
+  const off = $<HTMLInputElement>("cinoff").checked;
+  if (off) setCinematicPref(false);
+  $("nextmodal").classList.remove("open");
+  track("watch_choice", { go, off });
+  newBattle(pendingSeed, { cinematic: go === "cine" && !off });
+});
+$("cinebtn").addEventListener("click", () => {
+  if (!cinematicPref()) setCinematicPref(true);
+  setDirector(!director.on);
+  track("auto_cam", { on: director.on });
+});
+$("morebtn").addEventListener("click", () => {
+  setSimple(false);
+  track("controls_opened", {});
+});
+$("hook").addEventListener("click", () => callBarrageFromView());
+$("soundhint").addEventListener("click", () => {
+  sfx.unlock();
+  syncSound();
+});
+$("mbody").addEventListener("click", async (ev) => {
+  if (!(ev.target as HTMLElement).closest("#sharebtn") || !world.result) return;
+  const r = world.result, v = verdict(world);
+  const side = (sd: Side) => {
+    const all = world.side(sd);
+    return { name: world.platoons[sd].name, men: all.length, dead: all.filter((x) => x.status === "dead").length, wounded: all.filter((x) => x.status !== "dead" && x.injuries.some((i) => !i.permanent && i.severity >= 0.1)).length };
+  };
+  const seed = Number($<HTMLInputElement>("seed").value) || 1;
+  const winner = r.winner === null ? "No decision" : r.winner === "us" ? "American victory" : "German victory";
+  const res = await shareResult({
+    seed,
+    place: `${world.layout.name}, ${world.weather.label}`,
+    headline: v.label.toLowerCase().includes("victory") ? `${winner.split(" ")[0]} ${v.label.toLowerCase()}` : `${winner}: ${v.label}`,
+    detail: `${r.reason[0]!.toUpperCase() + r.reason.slice(1)}. ${v.summary}`,
+    us: side("us"),
+    de: side("de"),
+    rounds: world.soldiers.reduce((a, x) => a + x.shots, 0),
+    url: `${location.origin}${location.pathname}?seed=${seed}`,
+  });
+  const msg = document.getElementById("sharemsg");
+  if (msg) msg.textContent = res === "shared" ? "Shared." : res === "saved" ? "Card saved and link copied." : "";
+  track("share", { res });
 });
 
 const params = new URLSearchParams(location.search);
-const startSeed = Number(params.get("seed")) || 1 + Math.floor(Math.random() * 99999);
+const startSeed = Number(params.get("seed")) || FEATURED_SEEDS[Math.floor(Math.random() * FEATURED_SEEDS.length)]!;
 $<HTMLInputElement>("seed").value = String(startSeed);
-newBattle(startSeed);
-// Start gate: nothing runs, and no sound plays, until the visitor clicks in.
-{
-  const gate = document.createElement("div");
-  gate.setAttribute("role", "button");
-  gate.tabIndex = 0;
-  gate.style.cssText =
-    "position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(10,10,6,.82);color:var(--ink);cursor:pointer;text-align:center;padding:16px";
-  gate.innerHTML = `<div style="font:22px 'Silkscreen',monospace;letter-spacing:1px">Bocage · Battle Simulation</div><div style="font:20px 'VT323',monospace;color:var(--dim)">Click anywhere to start the simulation</div>`;
-  document.body.appendChild(gate);
-  const begin = (): void => {
-    gate.remove();
-    window.removeEventListener("keydown", onKey, true);
-    started = true;
-    sfx.unlock();
-    paused = false;
-    syncControls();
-  };
-  const onKey = (ev: KeyboardEvent): void => {
-    ev.stopImmediatePropagation();
-    ev.preventDefault();
-    if (ev.key === "Enter" || ev.key === " ") begin();
-  };
-  gate.addEventListener("click", begin);
-  window.addEventListener("keydown", onKey, true);
-  paused = true;
-  syncControls();
-}
+started = true;
+// Nothing waits behind a "click to start": the battle is already under way, muted until the first tap.
+const wantCinematic = params.get("start") === "1" || params.get("cinematic") === "0" ? false : cinematicPref();
+newBattle(startSeed, { cinematic: wantCinematic });
+for (const ev of ["pointerdown", "keydown"] as const) window.addEventListener(ev, () => trackFirstInteraction(ev), { capture: true, once: true });
+track("session_start", { seed: startSeed, cinematic: wantCinematic, phone: isPhone(), w: window.innerWidth });
+startHeartbeat(() => ({ tick: world?.tick ?? 0, battle: battlesRun, cinematic, simple: simpleUi, over: world?.phase === "over" }));
 requestAnimationFrame(frame);
 
 // For the console: squad.advance(60) runs a minute.

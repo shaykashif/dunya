@@ -219,6 +219,51 @@
   @keyframes boltpulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.18); } }
   #cine { position: absolute; left: 50%; bottom: 74px; transform: translateX(-50%); z-index: 7; background: rgba(12,14,8,.92); border: 2px solid #f2c84a; padding: 6px 14px; font-size: 20px; color: #ffe9a0; letter-spacing: .5px; pointer-events: none; display: none; text-align: center; max-width: 80%; }
   #cine small { display: block; color: #bdb89a; font-size: 15px; }
+
+  /* ---- The simple screen: a first visit shows the fight, the clock, and one big button. ---- */
+  #morebtn, #hook, #soundhint, #ff { display: none; }
+  body.simple #morebtn { display: inline-block; pointer-events: auto; }
+  body.simple { grid-template-columns: 1fr; }
+  body.simple aside, body.simple #toggles, body.simple #powers, body.simple #help, body.simple #gridref,
+  body.simple #chronicle, body.simple #vol, body.simple #step, body.simple #speeds, body.simple #sidetoggle { display: none; }
+  body.simple #minimap { opacity: .85; }
+  body.simple #toasts { left: 50%; right: auto; transform: translateX(-50%); top: 58px; width: min(520px, 94vw); gap: 6px; }
+  .toast.tap { cursor: pointer; }
+  .toast.tap::after { content: "tap to look"; display: block; margin-top: 2px; font: 10px "Silkscreen", monospace; color: var(--dim); }
+  body.simple .toast { font-size: 18px; }
+  #hook { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 7; padding: 12px 22px; min-height: 52px; font: 15px "Silkscreen", monospace; letter-spacing: 1px; color: #fff6d8; background: #7a2a14; border: 3px solid #ff9a40; box-shadow: 0 5px 0 #000c, 0 0 18px #ff8a30aa; }
+  body.simple #hook:not([hidden]) { display: inline-flex; align-items: center; gap: 8px; }
+  #hook.fresh { animation: hookpulse 1s ease-in-out infinite; }
+  #hook.cool { background: #3a3a2a; border-color: var(--edge); box-shadow: 0 5px 0 #000c; color: var(--dim); animation: none; }
+  #hook .px { height: 1.3em; }
+  @keyframes hookpulse { 0%, 100% { transform: translateX(-50%) scale(1); } 50% { transform: translateX(-50%) scale(1.07); } }
+  #soundhint { position: absolute; left: 50%; bottom: 92px; transform: translateX(-50%); z-index: 7; cursor: pointer; font-size: 18px; }
+  #soundhint:not([hidden]) { display: block; }
+  #ff { position: absolute; inset: 0; z-index: 9; background: rgba(10,10,6,.9); flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; pointer-events: none; }
+  #ff.on { display: flex; }
+  #ff b { font: 18px "Silkscreen", monospace; color: var(--gold); }
+  #ff small { color: var(--dim); font-size: 20px; }
+  #nextmodal { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.62); padding: 14px; }
+  #nextmodal.open { display: flex; }
+  #nextmodal .box { background: var(--panel); border: 3px solid var(--gold); padding: 14px 16px; width: min(460px, 100%); display: flex; flex-direction: column; gap: 10px; box-shadow: 0 6px 0 #000c; }
+  #nextmodal h2 { font: 15px "Silkscreen", monospace; color: var(--gold); margin: 0; }
+  #nextmodal h2 small { color: var(--dim); font-size: 12px; margin-left: 6px; }
+  #nextmodal button.big { text-align: left; padding: 10px 12px; min-height: 52px; }
+  #nextmodal button.big b { display: block; font: 13px "Silkscreen", monospace; color: var(--ink); }
+  #nextmodal button.big small { display: block; color: var(--dim); font-size: 17px; margin-top: 2px; }
+  #nextmodal label { font-size: 18px; color: var(--ink); cursor: pointer; }
+  #nextmodal .hint { font-size: 15px; }
+  #cinebtn { font-size: 14px; }
+  @media (max-width: 900px) {
+    body.simple { grid-template-rows: minmax(0, 1fr); }
+    body.simple #minimap { display: none; }
+    body.simple #toasts { top: 60px; bottom: auto; left: 8px; right: 8px; transform: none; width: auto; max-height: none; overflow: visible; flex-direction: column; }
+    body.simple .toast { -webkit-line-clamp: 3; font-size: 17px; }
+    #hook { left: 12px; right: 12px; transform: none; width: auto; bottom: calc(14px + env(safe-area-inset-bottom)); justify-content: center; min-height: 60px; font-size: 16px; }
+    @keyframes hookpulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
+    #soundhint { bottom: calc(86px + env(safe-area-inset-bottom)); }
+    body.simple #morebtn, #cinebtn { min-height: 36px; }
+  }
   .pxi { display: inline-block; line-height: 0; vertical-align: -0.18em; }
   .px { height: 1.05em; width: auto; image-rendering: pixelated; }
   button .px { height: 1.15em; }
@@ -237,6 +282,7 @@
         <button id="step" title="Ten seconds on"><i data-icon="step"></i></button>
         <span id="speeds"></span>
         <button id="sound" title="Sound on / off (M)"><i data-icon="sound"></i></button>
+        <button id="cinebtn" class="on" title="Auto camera: follows the fighting. Any drag or key takes the camera back.">Auto-cam</button>
         <input id="vol" type="range" min="0" max="100" value="70" title="Volume" aria-label="Volume">
       </div>
       <div class="chip" id="toggles">
@@ -246,6 +292,7 @@
         <button data-toggle="sight" title="Who the selected man can see (V)">Sight</button>
         <button data-toggle="chronicle" title="Battle log overlay (C)">Log</button>
       </div>
+      <button id="morebtn" class="chip" title="Show every control: roofs, names, orders, powers, the side panel">Controls</button>
     </div>
     <div class="chip" id="powers">
       <button data-power="inspect" title="Inspect (I)"><i data-icon="inspect"></i></button>
@@ -255,6 +302,9 @@
     </div>
     <div id="chronicle"><ul id="feed"></ul></div>
     <div id="toasts"></div>
+    <button id="hook" hidden></button>
+    <button id="soundhint" class="chip" hidden>Tap for sound</button>
+    <div id="ff"><b>Moving up to the line</b><small>Skipping the march to first contact</small></div>
     <canvas id="minimap" title="Click to look there"></canvas>
     <div id="gridref">Grid —</div>
     <div id="help" class="chip">drag to pan · wheel to zoom · click a soldier · WASD pan · Q/E zoom · space pause · 1–6 speed · M sound · F follow · hover a house to look inside</div>
@@ -278,6 +328,7 @@
     </div>
   </aside>
   <div id="quick"></div>
+  <div id="nextmodal"></div>
   <div id="modal"><div class="box"><header><h2 id="mtitle">Report</h2><button id="mnew" style="display:none"><i data-icon="dice"></i> new battle</button><button id="mclose"><i data-icon="close"></i> close</button></header><div class="body" id="mbody"></div></div></div>
   <script src="dist/viewer.js"></script>
 </body>

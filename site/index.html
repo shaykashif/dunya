@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Simulations · Shay Kashif</title>
-<meta name="description" content="Two simulations that run entirely in your browser: a Normandy 1944 infantry battle, soldier by soldier, and a living village of fifty-odd people with feuds, love and a council that judges on belief.">
+<title>Bocage · A Normandy 1944 battle, soldier by soldier · Shay Kashif</title>
+<meta name="description" content="Watch a Normandy 1944 infantry battle play out soldier by soldier in your browser, and call in artillery on it. Free, no install. Plus a living village of fifty-odd people with feuds, love and a council that judges.">
 <meta name="author" content="Shay Kashif">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://sim.shaykas.com/">
-<meta property="og:title" content="Simulations by Shay Kashif">
-<meta property="og:description" content="Choose a simulation: a Normandy 1944 infantry battle, or a living village. Both run entirely in your browser.">
+<meta property="og:title" content="Bocage: a Normandy 1944 battle, soldier by soldier">
+<meta property="og:description" content="Every man is simulated: squads flank and assault, medics crawl out under fire, houses fall in. Call in a barrage. Free, in your browser.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://sim.shaykas.com/">
 <meta property="og:site_name" content="Shay Kashif">
@@ -19,8 +19,8 @@
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="A pixel-art American soldier and a villager beside the words Choose a Simulation">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Simulations by Shay Kashif">
-<meta name="twitter:description" content="Choose a simulation: a Normandy 1944 infantry battle, or a living village. Both run entirely in your browser.">
+<meta name="twitter:title" content="Bocage: a Normandy 1944 battle, soldier by soldier">
+<meta name="twitter:description" content="Every man is simulated: squads flank and assault, medics crawl out under fire, houses fall in. Call in a barrage. Free, in your browser.">
 <meta name="twitter:image" content="https://sim.shaykas.com/og.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="theme-color" content="#16180f">
@@ -40,53 +40,73 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=VT323&display=swap" rel="stylesheet">
 <style>
-  :root { --bg: #16180f; --panel: #23261a; --edge: #535a3a; --ink: #ece6cc; --dim: #a8a888; --gold: #e8c84a; }
+  :root { --bg: #16180f; --panel: #23261a; --edge: #535a3a; --ink: #ece6cc; --dim: #a8a888; --gold: #e8c84a; --fire: #ff9a40; }
   * { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); font: 20px/1.2 "VT323", monospace; }
-  body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 32px 16px; }
-  h1 { font: 22px "Silkscreen", monospace; letter-spacing: 1px; margin: 0 0 6px; text-align: center; }
-  .sub { color: var(--dim); margin: 0 0 28px; text-align: center; max-width: 560px; }
-  .cards { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; width: 100%; max-width: 760px; }
-  a.card { flex: 1 1 300px; max-width: 360px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px 18px 20px; background: var(--panel); border: 3px solid var(--edge); box-shadow: 0 5px 0 #000a; color: var(--ink); text-decoration: none; }
+  body { display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 20px 16px 28px; }
+  .hero { width: 100%; max-width: 880px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .stage { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; background: #0c0e08; border: 3px solid var(--edge); box-shadow: 0 6px 0 #000a; overflow: hidden; }
+  .stage video, .stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; display: block; }
+  .stage:hover, .stage:focus-visible { border-color: var(--gold); outline: none; }
+  .stage .play { position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); padding: 12px 22px; font: 16px "Silkscreen", monospace; letter-spacing: 1px; color: #fff6d8; background: #7a2a14; border: 3px solid var(--fire); box-shadow: 0 5px 0 #000c, 0 0 18px #ff8a30aa; white-space: nowrap; }
+  .stage:hover .play { background: #92341a; }
+  h1 { font: 24px "Silkscreen", monospace; letter-spacing: 1px; margin: 4px 0 0; text-align: center; }
+  .tag { color: var(--gold); margin: 0; text-align: center; }
+  .pitch { color: var(--dim); margin: 0; text-align: center; max-width: 620px; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: center; margin: 2px 0 0; padding: 0; list-style: none; color: var(--ink); font-size: 18px; }
+  .facts li::before { content: "▸ "; color: var(--gold); }
+  .more { width: 100%; max-width: 880px; margin-top: 30px; padding-top: 18px; border-top: 2px solid var(--edge); display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .more h2 { font: 13px "Silkscreen", monospace; color: var(--dim); letter-spacing: 1px; margin: 0; }
+  a.card { display: flex; align-items: center; gap: 16px; width: 100%; max-width: 560px; padding: 14px 18px; background: var(--panel); border: 3px solid var(--edge); box-shadow: 0 5px 0 #000a; color: var(--ink); text-decoration: none; transition: transform .1s; }
   a.card:hover, a.card:focus-visible { border-color: var(--gold); transform: translateY(-2px); outline: none; }
-  a.card canvas { width: 128px; height: 192px; image-rendering: pixelated; }
-  .name { font: 18px "Silkscreen", monospace; }
-  .desc { color: var(--dim); text-align: center; }
-  footer { margin-top: 32px; color: var(--dim); font-size: 17px; }
+  a.card canvas { width: 64px; height: 96px; image-rendering: pixelated; flex: none; }
+  .name { display: block; font: 16px "Silkscreen", monospace; margin-bottom: 4px; }
+  .desc { color: var(--dim); }
+  footer { margin-top: 26px; color: var(--dim); font-size: 17px; display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
   footer a { color: var(--gold); }
-  .source { position: fixed; top: 12px; right: 12px; display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--panel); border: 2px solid var(--edge); box-shadow: 0 3px 0 #000a; color: var(--ink); text-decoration: none; font-size: 18px; }
-  .source:hover { border-color: var(--gold); }
-  .source svg { width: 16px; height: 16px; fill: currentColor; }
-  @media (max-width: 700px) {
-    .source { top: auto; bottom: calc(12px + env(safe-area-inset-bottom)); right: 50%; transform: translateX(50%); }
-    body { padding-bottom: 64px; }
+  @media (max-width: 600px) {
+    h1 { font-size: 19px; }
+    .stage .play { font-size: 14px; padding: 12px 16px; bottom: 6%; }
+    a.card { padding: 12px; }
   }
+  @media (prefers-reduced-motion: reduce) { .stage:hover { transform: none; } }
 </style>
 </head>
 <body>
-  <a class="source" href="https://github.com/shaykashif/dunya" target="_blank" rel="noopener" aria-label="Source on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>Source</a>
-
-  <h1>Simulations</h1>
-  <p class="sub">Two worlds that run entirely in your browser. Pick one.</p>
-  <main class="cards">
-    <a class="card" href="/squad/">
-      <canvas width="8" height="12" data-sprite="soldier" role="img" aria-label="American soldier"></canvas>
-      <span class="name">Battle</span>
-      <span class="desc">A US rifle platoon attacks a German position in the Normandy hedgerows, June 1944, soldier by soldier.</span>
+  <main class="hero">
+    <a class="stage" href="/squad/" aria-label="Watch the battle">
+      <video autoplay muted loop playsinline preload="metadata" poster="/media/battle-poster.jpg" aria-hidden="true">
+        <source src="/media/battle-loop.mp4" type="video/mp4">
+      </video>
+      <span class="play">&#9654; WATCH THE BATTLE</span>
     </a>
+    <h1>Bocage · Normandy, June 1944</h1>
+    <p class="tag">Every soldier is simulated. Then you can call in the artillery.</p>
+    <p class="pitch">An American rifle platoon attacks a German position in the hedgerows. Squads bound, pin, flank and assault; medics crawl out under fire; houses fall in. It opens at the first shots, and one button calls a barrage.</p>
+    <ul class="facts">
+      <li>Free, in your browser</li>
+      <li>No install, no account</li>
+      <li>A new battle every time</li>
+    </ul>
+  </main>
+
+  <section class="more">
+    <h2>ALSO HERE</h2>
     <a class="card" href="/civ/">
       <canvas width="8" height="12" data-sprite="villager" role="img" aria-label="Villager"></canvas>
-      <span class="name">Civilization</span>
-      <span class="desc">A living village of fifty-odd people: they farm, feud, fall in love and face a council.</span>
+      <span>
+        <span class="name">Civilization</span>
+        <span class="desc">A living village of fifty-odd people: they farm, feud, fall in love and face a council.</span>
+      </span>
     </a>
-  </main>
-  <footer>By <a href="https://shaykas.com/">Shay Kashif</a></footer>
+  </section>
+
+  <footer>
+    <span>By <a href="https://shaykas.com/">Shay Kashif</a></span>
+    <a href="https://github.com/shaykashif/dunya" target="_blank" rel="noopener">Source on GitHub</a>
+  </footer>
   <script>
     var S = {
-      soldier: {
-        rows: ["..HHHH..", ".HnHHnH.", ".hSSSSh.", "..SESE..", ".cCCCCc.", "SCCCCCCS", "SCbbbbCS", ".cCCCCc.", "..PPPP..", "..P..P..", "..L..L..", "..B..B.."],
-        pal: { H: "#5e6c30", h: "#44501f", n: "#7e8a4a", S: "#f2c9a0", E: "#2a1a10", C: "#a08a56", c: "#7a6840", b: "#c4ac70", P: "#76603e", L: "#c8b888", B: "#5a3e24" }
-      },
       villager: {
         rows: ["..HHHH..", ".HHHHHH.", ".HSSSSH.", "..SESE..", "..SSSS..", ".cCCCCc.", "SCCCCCCS", "SCCCCCCS", ".cCCCCc.", "..PPPP..", "..P..P..", "..B..B.."],
         pal: { H: "#5a3a1e", S: "#e0b088", E: "#2a1a10", C: "#c8483a", c: "#8a2a22", P: "#4a3a2a", B: "#2a2018" }
@@ -101,6 +121,9 @@
         }
       });
     });
+    // Respect reduced motion: show the still frame, not the looping clip.
+    var v = document.querySelector("video");
+    if (v && window.matchMedia("(prefers-reduced-motion: reduce)").matches) { v.removeAttribute("autoplay"); v.pause(); }
   </script>
 </body>
 </html>
