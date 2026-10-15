@@ -71,6 +71,9 @@ const cam: Camera = { x: 0, y: 0, zoom: 1.6 };
 const CINE_PREF = "squad.cinematic";
 /** Battles that open hot: the first contact is in open ground and in view. */
 const FEATURED_SEEDS = [19, 15];
+/** Seeds whose first contact is in open ground and in view; one is "the battle of the day" (UTC). Keep in step with site/index.html. */
+const DAILY_SEEDS = [19, 15, 10, 13, 8, 4, 2];
+const dailySeed = (): number => DAILY_SEEDS[Math.floor(Date.now() / 86_400_000) % DAILY_SEEDS.length]!;
 function cinematicPref(): boolean {
   try {
     return localStorage.getItem(CINE_PREF) !== "off";
@@ -271,6 +274,18 @@ function updateHook(): void {
   const skip = $("skipbtn");
   const canSkip = simpleUi && !ffActive && world.phase !== "over";
   if (skip.hidden === canSkip) skip.hidden = !canSkip;
+  if (canSkip && !paused) {
+    if (liveSince < 0) liveSince = t;
+    watched = t - liveSince;
+  }
+  // After about two minutes of watching, the button becomes the way to see who won.
+  const nudge = canSkip && watched > 120;
+  if (nudge !== skipNudge) {
+    skipNudge = nudge;
+    skip.classList.toggle("nudge", nudge);
+    skip.innerHTML = nudge ? "See who wins &#9656;&#9656;" : "Skip to result &#9656;&#9656;";
+    if (nudge) track("skip_nudge", { tick: world.tick });
+  }
   const rect = canvas.getBoundingClientRect();
   if (t >= hookCheckAt) {
     hookCheckAt = t + 0.5;
@@ -347,6 +362,10 @@ function updateHook(): void {
 /** One tap: a barrage on the nearest enemy in view, or just off the middle if none is, so it is always in the picture. */
 let hookCooldownUntil = 0;
 let hookUsed = 0;
+let liveSince = -1;
+let watched = 0;
+let skipNudge = false;
+let dailyBattle = false;
 function callBarrageFromView(): void {
   if (!world || world.phase === "over" || now() < hookCooldownUntil) return;
   const rect = canvas.getBoundingClientRect();
@@ -1232,6 +1251,8 @@ function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: fal
   // The cinematic start: simple screen, auto camera, run through the march up to the first shots.
   cinematic = opts.cinematic;
   hookUsed = 0;
+  liveSince = -1;
+  watched = 0;
   hookCooldownUntil = 0;
   setSimple(cinematic);
   setDirector(cinematic);
@@ -1241,7 +1262,13 @@ function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: fal
   }
   syncControls();
   battlesRun++;
-  track("battle_start", { seed, n: battlesRun, cinematic, phone: isPhone() });
+  dailyBattle = seed === dailySeed() && new URLSearchParams(location.search).get("daily") === "1";
+  if (dailyBattle) {
+    setTimeout(() => {
+      if (token === battleToken) toast("battle", "Battle of the day", `${world.layout.name}, ${world.weather.label}. Everyone who opens today's battle gets this same fight.`);
+    }, 4500);
+  }
+  track("battle_start", { seed, n: battlesRun, cinematic, phone: isPhone(), daily: dailyBattle });
   try {
     history.replaceState(null, "", `?seed=${seed}`);
   } catch {
@@ -1886,7 +1913,11 @@ function openReport(): void {
     return `<li><span style="color:${SIDE_COLORS[t.side].name}">${esc(t.side === "us" ? "American" : "German")} ${esc(t.name)}</span>: ${stateText[t.state] ?? t.state}; ${t.kind === "tank" ? `${t.shells} shells left; ` : ""}crew of ${crew.length}: ${dead} killed, ${hurt} wounded${t.stuckCount > 0 ? `; bogged down ${t.stuckCount} time${t.stuckCount > 1 ? "s" : ""}` : ""}.</li>`;
   });
   const after = world.aftermath ?? {};
-  const share = r ? `<p><button id="sharebtn"><i data-icon="report"></i> Share this result</button> <span id="sharemsg" class="hint"></span></p>` : "";
+  const seedNow = Number($<HTMLInputElement>("seed").value) || 1;
+  const nextDaily = dailySeed();
+  const share = r
+    ? `<div class="after"><button id="sharebtn" class="primary"><i data-icon="report"></i> Share this result</button><button id="againbtn" class="primary alt"><i data-icon="dice"></i> Play another battle</button>${nextDaily !== seedNow ? `<button id="dailybtn" data-seed="${nextDaily}">Today's battle</button>` : ""}<button id="replaybtn" data-seed="${seedNow}">Replay this one</button></div><p id="sharemsg" class="hint"></p>`
+    : "";
   const html = `${head}${share}
     <table class="aar"><tr><th></th><th>men</th><th>killed</th><th>wounded</th><th>prisoners</th><th>left field</th><th>rounds / hits</th></tr>${rows.join("")}</table>
     ${firstFall}
@@ -2430,7 +2461,23 @@ $("ffstop").addEventListener("click", () => {
   skipCancel = true;
 });
 $("mbody").addEventListener("click", async (ev) => {
-  if (!(ev.target as HTMLElement).closest("#sharebtn") || !world.result) return;
+  const t = ev.target as HTMLElement;
+  if (t.closest("#againbtn")) {
+    track("play_again", { from: "report" });
+    $("modal").classList.remove("open");
+    $("random").click();
+    return;
+  }
+  const go = t.closest<HTMLElement>("#dailybtn, #replaybtn");
+  if (go) {
+    track(go.id === "dailybtn" ? "daily_from_report" : "replay_from_report", {});
+    $("modal").classList.remove("open");
+    const seed = Number(go.dataset.seed) || 1;
+    $<HTMLInputElement>("seed").value = String(seed);
+    requestNewBattle(seed);
+    return;
+  }
+  if (!t.closest("#sharebtn") || !world.result) return;
   const r = world.result, v = verdict(world);
   const side = (sd: Side) => {
     const all = world.side(sd);
@@ -2440,7 +2487,7 @@ $("mbody").addEventListener("click", async (ev) => {
   const winner = r.winner === null ? "No decision" : r.winner === "us" ? "American victory" : "German victory";
   const res = await shareResult({
     seed,
-    place: `${world.layout.name}, ${world.weather.label}`,
+    place: `${dailyBattle ? "Battle of the day · " : ""}${world.layout.name}, ${world.weather.label}`,
     headline: v.label.toLowerCase().includes("victory") ? `${winner.split(" ")[0]} ${v.label.toLowerCase()}` : `${winner}: ${v.label}`,
     detail: `${r.reason[0]!.toUpperCase() + r.reason.slice(1)}. ${v.summary}`,
     us: side("us"),
@@ -2474,7 +2521,7 @@ try {
 } catch {
   // No usable referrer.
 }
-track("session_start", { seed: startSeed, cinematic: wantCinematic, phone: isPhone(), w: window.innerWidth, ref: refHost, src: params.get("utm_source") ?? savedSrc() ?? (/(^|\.)shaykas\.com$/.test(refHost) ? "" : refHost) });
+track("session_start", { daily: params.get("daily") === "1", seed: startSeed, cinematic: wantCinematic, phone: isPhone(), w: window.innerWidth, ref: refHost, src: params.get("utm_source") ?? savedSrc() ?? (/(^|\.)shaykas\.com$/.test(refHost) ? "" : refHost) });
 startHeartbeat(() => ({ tick: world?.tick ?? 0, battle: battlesRun, cinematic, simple: simpleUi, over: world?.phase === "over" }));
 requestAnimationFrame(frame);
 

@@ -91,6 +91,8 @@
   h1 { font: 24px "Silkscreen", monospace; letter-spacing: 1px; margin: 4px 0 0; text-align: center; }
   .tag { color: var(--gold); margin: 0; text-align: center; }
   .pitch { color: var(--dim); margin: 0; text-align: center; max-width: 620px; }
+  a.daily { font: 13px "Silkscreen", monospace; letter-spacing: .5px; color: var(--gold); text-decoration: none; border: 2px solid var(--edge); padding: 8px 12px; background: var(--panel); text-align: center; }
+  a.daily:hover, a.daily:focus-visible { border-color: var(--gold); outline: none; }
   a.full { font-size: 16px; color: var(--dim); text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 3px; margin-top: -4px; }
   a.full:hover, a.full:focus-visible { color: var(--gold); outline: none; }
   .facts { display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: center; margin: 2px 0 0; padding: 0; list-style: none; color: var(--ink); font-size: 18px; }
@@ -123,6 +125,7 @@
     <h1>Bocage: a WW2 battle simulator</h1>
     <p class="tag">Normandy, June 1944. Every soldier is simulated, then you can call in the artillery.</p>
     <p class="pitch">An American rifle platoon attacks a German position in the hedgerows. Squads bound, pin, flank and assault; medics crawl out under fire; houses fall in. It opens at the first shots, and one button calls a barrage.</p>
+    <a id="daily" class="daily" href="/squad/?daily=1">&#9733; Today's battle: the same fight for everyone &rsaquo;</a>
     <a class="full" href="/ww2-battle-simulator/">How the simulation works &rsaquo;</a>
     <a class="full" href="/squad/?start=1">or take full control from the start &rsaquo;</a>
     <ul class="facts">
@@ -195,8 +198,15 @@
         var a = ev.target.closest && ev.target.closest("a[href]");
         if (!a) return;
         var u = new URL(a.getAttribute("href"), location.origin);
-        if (u.pathname === "/squad/" || u.pathname === "/civ/") send("landing_play", { to: u.pathname, full: u.searchParams.get("start") === "1" });
+        if (u.pathname === "/squad/" || u.pathname === "/civ/") send("landing_play", { to: u.pathname, full: u.searchParams.get("start") === "1", daily: u.searchParams.get("daily") === "1" });
       });
+    })();
+    // The battle of the day: one vetted seed per UTC day, the same for everyone. Keep in step with DAILY_SEEDS in squad/viewer/src/main.ts.
+    (function () {
+      var seeds = [19, 15, 10, 13, 8, 4, 2];
+      var seed = seeds[Math.floor(Date.now() / 86400000) % seeds.length];
+      var a = document.getElementById("daily");
+      if (a) a.setAttribute("href", "/squad/?seed=" + seed + "&daily=1");
     })();
     // Respect reduced motion: show the still frame, not the looping clip.
     var v = document.querySelector("video");
