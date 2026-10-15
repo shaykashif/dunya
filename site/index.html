@@ -121,6 +121,30 @@
         }
       });
     });
+    // Anonymous counters (live site only): who looked, and who pressed play. See analytics/.
+    (function () {
+      if (location.hostname !== "sim.shaykas.com" || !navigator.sendBeacon) return;
+      var sid = "";
+      try {
+        sid = sessionStorage.getItem("squad.sid") || "";
+        if (!sid) { sid = Math.random().toString(36).slice(2, 10); sessionStorage.setItem("squad.sid", sid); }
+      } catch (e) { sid = Math.random().toString(36).slice(2, 10); }
+      var ref = "";
+      try { ref = document.referrer ? new URL(document.referrer).hostname.replace(/^www\./, "") : ""; } catch (e) {}
+      var src = new URLSearchParams(location.search).get("utm_source") || ref;
+      var send = function (name, extra) {
+        var body = { name: name, sid: sid, t: Math.round(performance.now()), ref: ref, src: src };
+        for (var k in extra) body[k] = extra[k];
+        try { navigator.sendBeacon("/a/e", JSON.stringify(body)); } catch (e) {}
+      };
+      send("landing_view", { phone: window.innerWidth <= 900, w: window.innerWidth });
+      document.addEventListener("click", function (ev) {
+        var a = ev.target.closest && ev.target.closest("a[href]");
+        if (!a) return;
+        var to = a.getAttribute("href");
+        if (to === "/squad/" || to === "/civ/") send("landing_play", { to: to });
+      });
+    })();
     // Respect reduced motion: show the still frame, not the looping clip.
     var v = document.querySelector("video");
     if (v && window.matchMedia("(prefers-reduced-motion: reduce)").matches) { v.removeAttribute("autoplay"); v.pause(); }

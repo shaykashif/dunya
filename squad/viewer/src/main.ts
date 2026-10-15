@@ -2333,7 +2333,13 @@ started = true;
 const wantCinematic = params.get("start") === "1" || params.get("cinematic") === "0" ? false : cinematicPref();
 newBattle(startSeed, { cinematic: wantCinematic });
 for (const ev of ["pointerdown", "keydown"] as const) window.addEventListener(ev, () => trackFirstInteraction(ev), { capture: true, once: true });
-track("session_start", { seed: startSeed, cinematic: wantCinematic, phone: isPhone(), w: window.innerWidth });
+let refHost = "";
+try {
+  refHost = document.referrer ? new URL(document.referrer).hostname.replace(/^www\./, "") : "";
+} catch {
+  // No usable referrer.
+}
+track("session_start", { seed: startSeed, cinematic: wantCinematic, phone: isPhone(), w: window.innerWidth, ref: refHost, src: params.get("utm_source") ?? refHost });
 startHeartbeat(() => ({ tick: world?.tick ?? 0, battle: battlesRun, cinematic, simple: simpleUi, over: world?.phase === "over" }));
 requestAnimationFrame(frame);
 
