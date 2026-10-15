@@ -269,7 +269,7 @@ function updateHook(): void {
   const t = now();
   const live = simpleUi && !ffActive && world.phase !== "over";
   const skip = $("skipbtn");
-  const canSkip = !ffActive && world.phase !== "over";
+  const canSkip = simpleUi && !ffActive && world.phase !== "over";
   if (skip.hidden === canSkip) skip.hidden = !canSkip;
   const rect = canvas.getBoundingClientRect();
   if (t >= hookCheckAt) {
@@ -289,7 +289,7 @@ function updateHook(): void {
   el.classList.toggle("cool", cool);
   el.classList.toggle("fresh", hookUsed === 0);
   const soundOff = !sfx.ready && sfx.enabled;
-  const label = cool ? `Reloading ${Math.ceil(hookCooldownUntil - t)}` : `Call in a barrage${soundOff ? " · sound on" : ""}`;
+  const label = cool ? `Reloading ${Math.ceil(hookCooldownUntil - t)}` : `Call in a barrage${soundOff && !isPhone() ? " · sound on" : ""}`;
   if (label !== hookLabel) {
     hookLabel = label;
     el.innerHTML = `${icon("barrage")} ${label}`;

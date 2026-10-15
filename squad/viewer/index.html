@@ -260,8 +260,10 @@
   #ff.skip { pointer-events: auto; }
   #ff button { display: none; margin-top: 10px; }
   #ff.skip button { display: block; }
-  #skipbtn { pointer-events: auto; font-size: 15px; }
-  #skipbtn[hidden] { display: none; }
+  /* The way out for someone who wants the outcome: a second big button, opposite the barrage. */
+  #skipbtn { display: none; position: absolute; left: 24px; bottom: 28px; z-index: 7; padding: 12px 18px; min-height: 52px; font: 14px "Silkscreen", monospace; letter-spacing: 1px; color: #e8f4ff; background: #1c3a58; border: 3px solid #6ab0f0; box-shadow: 0 5px 0 #000c, 0 0 14px #6ab0f088; }
+  #skipbtn:hover { background: #24507a; }
+  body.simple #skipbtn:not([hidden]) { display: inline-block; }
   #ff b { font: 18px "Silkscreen", monospace; color: var(--gold); }
   #ff small { color: var(--dim); font-size: 20px; }
   #nextmodal { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.62); padding: 14px; }
@@ -284,7 +286,8 @@
     body.simple .toast { -webkit-line-clamp: 1; font-size: 15px; padding: 3px 8px; }
     body.simple .toast b { font-size: 10px; }
     body.simple .toast.tap::after { display: none; }
-    #hook { left: 12px; right: 12px; transform: none; width: auto; bottom: calc(14px + env(safe-area-inset-bottom)); justify-content: center; min-height: 60px; font-size: 16px; }
+    #hook { left: 12px; right: calc(34% + 18px); transform: none; width: auto; bottom: calc(14px + env(safe-area-inset-bottom)); justify-content: center; text-align: center; min-height: 60px; font-size: 14px; padding: 8px 10px; }
+    #skipbtn { left: auto; right: 12px; width: calc(34% - 6px); bottom: calc(14px + env(safe-area-inset-bottom)); min-height: 60px; font-size: 12px; padding: 6px 8px; line-height: 1.3; }
     @keyframes hookpulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
     #goal { bottom: calc(86px + env(safe-area-inset-bottom)); font-size: 10px; }
     #turn { bottom: calc(116px + env(safe-area-inset-bottom)); font-size: 16px; }
@@ -318,7 +321,6 @@
         <button data-toggle="sight" title="Who the selected man can see (V)">Sight</button>
         <button data-toggle="chronicle" title="Battle log overlay (C)">Log</button>
       </div>
-      <button id="skipbtn" class="chip" title="Run the battle through to its end and show the after-action report">Skip to result &#9656;&#9656;</button>
       <button id="morebtn" class="chip" title="Take full control: your own camera, every control, the side panel with every man's details">Take full control</button>
     </div>
     <div class="chip" id="powers">
@@ -330,6 +332,7 @@
     <div id="chronicle"><ul id="feed"></ul></div>
     <div id="toasts"></div>
     <button id="hook" hidden></button>
+    <button id="skipbtn" hidden title="Run the battle through to its end and show the after-action report">Skip to result &#9656;&#9656;</button>
     <div id="goal" class="chip" hidden></div>
     <div id="turn" class="chip" hidden>Turn your phone sideways for a wider view</div>
     <div id="reticle" hidden><b>Hit them here</b></div>
