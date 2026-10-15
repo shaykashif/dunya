@@ -222,7 +222,7 @@
 
   /* ---- The simple screen: a first visit shows the fight, the clock, and one big button. ---- */
   #morebtn, #hook, #soundhint, #ff { display: none; }
-  body.simple #morebtn { display: inline-block; pointer-events: auto; }
+  body.simple #morebtn { display: inline-block; pointer-events: auto; font-size: 15px; }
   body.simple { grid-template-columns: 1fr; }
   body.simple aside, body.simple #toggles, body.simple #powers, body.simple #help, body.simple #gridref,
   body.simple #chronicle, body.simple #vol, body.simple #step, body.simple #speeds, body.simple #sidetoggle { display: none; }
@@ -257,6 +257,8 @@
   @media (max-width: 900px) {
     body.simple { grid-template-rows: minmax(0, 1fr); }
     body.simple #minimap { display: none; }
+    body.simple #clock { flex: 1 1 130px; min-width: 130px; }
+    body.simple #quick { bottom: calc(88px + env(safe-area-inset-bottom)); }
     body.simple #toasts { top: 60px; bottom: auto; left: 8px; right: 8px; transform: none; width: auto; max-height: none; overflow: visible; flex-direction: column; }
     body.simple .toast { -webkit-line-clamp: 3; font-size: 17px; }
     #hook { left: 12px; right: 12px; transform: none; width: auto; bottom: calc(14px + env(safe-area-inset-bottom)); justify-content: center; min-height: 60px; font-size: 16px; }
@@ -292,7 +294,7 @@
         <button data-toggle="sight" title="Who the selected man can see (V)">Sight</button>
         <button data-toggle="chronicle" title="Battle log overlay (C)">Log</button>
       </div>
-      <button id="morebtn" class="chip" title="Show every control: roofs, names, orders, powers, the side panel">Controls</button>
+      <button id="morebtn" class="chip" title="Take full control: your own camera, every control, the side panel with every man's details">Take full control</button>
     </div>
     <div class="chip" id="powers">
       <button data-power="inspect" title="Inspect (I)"><i data-icon="inspect"></i></button>

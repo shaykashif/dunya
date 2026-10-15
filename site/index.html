@@ -53,6 +53,8 @@
   h1 { font: 24px "Silkscreen", monospace; letter-spacing: 1px; margin: 4px 0 0; text-align: center; }
   .tag { color: var(--gold); margin: 0; text-align: center; }
   .pitch { color: var(--dim); margin: 0; text-align: center; max-width: 620px; }
+  a.full { font-size: 16px; color: var(--dim); text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 3px; margin-top: -4px; }
+  a.full:hover, a.full:focus-visible { color: var(--gold); outline: none; }
   .facts { display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: center; margin: 2px 0 0; padding: 0; list-style: none; color: var(--ink); font-size: 18px; }
   .facts li::before { content: "▸ "; color: var(--gold); }
   .more { width: 100%; max-width: 880px; margin-top: 30px; padding-top: 18px; border-top: 2px solid var(--edge); display: flex; flex-direction: column; align-items: center; gap: 10px; }
@@ -83,6 +85,7 @@
     <h1>Bocage · Normandy, June 1944</h1>
     <p class="tag">Every soldier is simulated. Then you can call in the artillery.</p>
     <p class="pitch">An American rifle platoon attacks a German position in the hedgerows. Squads bound, pin, flank and assault; medics crawl out under fire; houses fall in. It opens at the first shots, and one button calls a barrage.</p>
+    <a class="full" href="/squad/?start=1">or take full control from the start &rsaquo;</a>
     <ul class="facts">
       <li>Free, in your browser</li>
       <li>No install, no account</li>
@@ -143,6 +146,7 @@
         if (!a) return;
         var to = a.getAttribute("href");
         if (to === "/squad/" || to === "/civ/") send("landing_play", { to: to });
+        else if (to === "/squad/?start=1") send("landing_play", { to: "/squad/", full: true });
       });
     })();
     // Respect reduced motion: show the still frame, not the looping clip.

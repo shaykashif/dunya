@@ -240,7 +240,7 @@ function callBarrageFromView(): void {
   hookCooldownUntil = now() + 14;
   track("barrage", { via: "button", n: hookUsed });
   trackFirstInteraction("barrage");
-  if (hookUsed === 1) toast("battle", "Barrage called", "Smoke and a sniper shot are under Controls. Tap any alert to look at it.");
+  if (hookUsed === 1) toast("battle", "Barrage called", "Smoke and a sniper shot are under Take full control. Tap a man to see him, or any alert to look at it.");
 }
 
 
@@ -1704,6 +1704,8 @@ function renderQuick(): void {
   $("qmore").addEventListener("click", () => {
     const id = quickId;
     hideQuick();
+    // The full inspector lives in the side panel, which the simple screen hides.
+    if (simpleUi) setSimple(false);
     select(id);
     document.querySelector("aside")?.scrollIntoView({ behavior: "smooth" });
   });
@@ -1932,7 +1934,7 @@ canvas.addEventListener("pointerup", (ev) => {
     }
   }
   // A finger tap: a little card with just that unit, not the whole inspector.
-  if (ev.pointerType === "touch" && hit !== null) {
+  if ((ev.pointerType === "touch" || simpleUi) && hit !== null) {
     selected = hit;
     quickId = hit;
     renderQuick();
@@ -2357,6 +2359,8 @@ requestAnimationFrame(frame);
     follow = false;
   },
   select,
+  /** Where a man is on screen right now, for tests. */
+  screenOf: (id: number) => renderer.screenOf(world.soldier(id), cam, prev),
   sfx,
   chains,
   /** Calls down the player's 105 mm barrage on a tile: squad.barrage(127, 90). */
