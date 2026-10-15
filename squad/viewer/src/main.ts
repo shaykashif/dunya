@@ -2493,7 +2493,8 @@ $("mbody").addEventListener("click", async (ev) => {
     us: side("us"),
     de: side("de"),
     rounds: world.soldiers.reduce((a, x) => a + x.shots, 0),
-    url: `${location.origin}${location.pathname}?seed=${seed}`,
+    // Hosted elsewhere (an itch.io frame, say), the link a result points to is still the real site.
+    url: /^(localhost|127\.0\.0\.1|sim\.shaykas\.com)$/.test(location.hostname) ? `${location.origin}${location.pathname}?seed=${seed}` : `https://sim.shaykas.com/squad/?seed=${seed}&utm_source=itch`,
   });
   const msg = document.getElementById("sharemsg");
   if (msg) msg.textContent = res === "shared" ? "Shared." : res === "saved" ? "Card saved and link copied." : "";
