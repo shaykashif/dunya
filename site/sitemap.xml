@@ -2,14 +2,18 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://sim.shaykas.com/</loc>
-    <changefreq>monthly</changefreq>
+    <lastmod>2026-10-15</lastmod>
   </url>
   <url>
     <loc>https://sim.shaykas.com/squad/</loc>
-    <changefreq>monthly</changefreq>
+    <lastmod>2026-10-15</lastmod>
+  </url>
+  <url>
+    <loc>https://sim.shaykas.com/ww2-battle-simulator/</loc>
+    <lastmod>2026-10-15</lastmod>
   </url>
   <url>
     <loc>https://sim.shaykas.com/civ/</loc>
-    <changefreq>monthly</changefreq>
+    <lastmod>2026-10-15</lastmod>
   </url>
 </urlset>

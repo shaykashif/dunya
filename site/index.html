@@ -3,37 +3,75 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Bocage · A Normandy 1944 battle, soldier by soldier · Shay Kashif</title>
-<meta name="description" content="Watch a Normandy 1944 infantry battle play out soldier by soldier in your browser, and call in artillery on it. Free, no install. Plus a living village of fifty-odd people with feuds, love and a council that judges.">
+<title>Free WW2 Battle Simulator: Normandy 1944 in Your Browser</title>
+<meta name="description" content="Watch a Normandy 1944 squad battle play out soldier by soldier, then call in artillery. A free WW2 battle simulator in your browser, no install.">
 <meta name="author" content="Shay Kashif">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://sim.shaykas.com/">
-<meta property="og:title" content="Bocage: a Normandy 1944 battle, soldier by soldier">
+<meta property="og:title" content="Free WW2 Battle Simulator: Normandy 1944 in Your Browser">
 <meta property="og:description" content="Every man is simulated: squads flank and assault, medics crawl out under fire, houses fall in. Call in a barrage. Free, in your browser.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://sim.shaykas.com/">
 <meta property="og:site_name" content="Shay Kashif">
-<meta property="og:image" content="https://sim.shaykas.com/og.png">
+<meta property="og:image" content="https://sim.shaykas.com/og-battle.png">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="A pixel-art American soldier and a villager beside the words Choose a Simulation">
+<meta property="og:image:alt" content="A pixel-art Normandy hedgerow battle with a barrage landing on a German position">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Bocage: a Normandy 1944 battle, soldier by soldier">
+<meta name="twitter:title" content="Free WW2 Battle Simulator: Normandy 1944 in Your Browser">
 <meta name="twitter:description" content="Every man is simulated: squads flank and assault, medics crawl out under fire, houses fall in. Call in a barrage. Free, in your browser.">
-<meta name="twitter:image" content="https://sim.shaykas.com/og.png">
+<meta name="twitter:image" content="https://sim.shaykas.com/og-battle.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="theme-color" content="#16180f">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
-  "@type": "WebSite",
-  "name": "Shay Kashif Simulations",
-  "url": "https://sim.shaykas.com/",
-  "author": { "@type": "Person", "name": "Shay Kashif", "url": "https://shaykas.com/" },
-  "hasPart": [
-    { "@type": "WebApplication", "name": "Battle Simulation (Bocage)", "url": "https://sim.shaykas.com/squad/" },
-    { "@type": "WebApplication", "name": "Civilization Simulation", "url": "https://sim.shaykas.com/civ/" }
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://sim.shaykas.com/#site",
+      "name": "Bocage: WW2 Battle Simulator",
+      "url": "https://sim.shaykas.com/",
+      "author": { "@type": "Person", "name": "Shay Kashif", "url": "https://shaykas.com/" }
+    },
+    {
+      "@type": "WebApplication",
+      "@id": "https://sim.shaykas.com/squad/#app",
+      "name": "Bocage: Squad Combat Simulation",
+      "url": "https://sim.shaykas.com/squad/",
+      "description": "A free WW2 battle simulator: a US rifle platoon attacks a German position in the Normandy hedgerows, June 1944, simulated soldier by soldier in your browser.",
+      "applicationCategory": "GameApplication",
+      "genre": "Simulation game",
+      "operatingSystem": "Any (web browser)",
+      "browserRequirements": "Requires JavaScript",
+      "inLanguage": "en",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "author": { "@type": "Person", "name": "Shay Kashif", "url": "https://shaykas.com/" }
+    },
+    {
+      "@type": "WebApplication",
+      "@id": "https://sim.shaykas.com/civ/#app",
+      "name": "Civilization Simulation",
+      "url": "https://sim.shaykas.com/civ/",
+      "description": "A living village of fifty-odd people who farm, feud, fall in love and face a council, simulated in your browser.",
+      "applicationCategory": "GameApplication",
+      "genre": "Simulation game",
+      "operatingSystem": "Any (web browser)",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "author": { "@type": "Person", "name": "Shay Kashif", "url": "https://shaykas.com/" }
+    },
+    {
+      "@type": "VideoObject",
+      "name": "Bocage WW2 battle simulator: a barrage lands in the hedgerows",
+      "description": "A short clip of the Bocage battle simulation: squads under fire in the Normandy hedgerows and an artillery barrage.",
+      "thumbnailUrl": "https://sim.shaykas.com/media/battle-poster.jpg",
+      "contentUrl": "https://sim.shaykas.com/media/battle-loop.mp4",
+      "uploadDate": "2026-10-14",
+      "duration": "PT16S"
+    }
   ]
 }
 </script>
@@ -82,9 +120,10 @@
       </video>
       <span class="play">&#9654; WATCH THE BATTLE</span>
     </a>
-    <h1>Bocage · Normandy, June 1944</h1>
-    <p class="tag">Every soldier is simulated. Then you can call in the artillery.</p>
+    <h1>Bocage: a WW2 battle simulator</h1>
+    <p class="tag">Normandy, June 1944. Every soldier is simulated, then you can call in the artillery.</p>
     <p class="pitch">An American rifle platoon attacks a German position in the hedgerows. Squads bound, pin, flank and assault; medics crawl out under fire; houses fall in. It opens at the first shots, and one button calls a barrage.</p>
+    <a class="full" href="/ww2-battle-simulator/">How the simulation works &rsaquo;</a>
     <a class="full" href="/squad/?start=1">or take full control from the start &rsaquo;</a>
     <ul class="facts">
       <li>Free, in your browser</li>
@@ -105,6 +144,7 @@
   </section>
 
   <footer>
+    <a href="/ww2-battle-simulator/">How it works</a>
     <span>By <a href="https://shaykas.com/">Shay Kashif</a></span>
     <a href="https://github.com/shaykashif/dunya" target="_blank" rel="noopener">Source on GitHub</a>
   </footer>

@@ -37,7 +37,8 @@ createServer(async (req, res) => {
     return;
   }
   const [prefix, root] = mounts.find(([p]) => path.startsWith(p))!;
-  const file = join(root, path.slice(prefix.length) || "index.html");
+  const rel = path.slice(prefix.length);
+  const file = join(root, rel === "" || rel.endsWith("/") ? `${rel}index.html` : rel);
   if (!file.startsWith(root)) {
     res.writeHead(403).end();
     return;

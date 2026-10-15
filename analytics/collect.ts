@@ -46,6 +46,8 @@ function write(line: string): void {
   appendFileSync(file, `${line}\n`);
 }
 
+const BOT = /bot|crawl|spider|slurp|headless|lighthouse|pagespeed|preview|facebookexternalhit|embedly|monitor|uptime|curl|wget|python|node-fetch/i;
+
 createServer((req, res) => {
   const url = req.url ?? "/";
   if (req.method === "GET" && url.startsWith("/a/health")) {
@@ -59,6 +61,11 @@ createServer((req, res) => {
   const ip = String(req.headers["cf-connecting-ip"] ?? req.headers["x-real-ip"] ?? req.socket.remoteAddress ?? "");
   if (limited(ip)) {
     res.writeHead(429).end();
+    return;
+  }
+  // Crawlers run the page too; their "sessions" would only blur the funnel.
+  if (BOT.test(String(req.headers["user-agent"] ?? ""))) {
+    res.writeHead(204).end();
     return;
   }
   let size = 0;

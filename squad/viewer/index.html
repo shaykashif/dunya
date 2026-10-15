@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Bocage · Squad Combat Simulation</title>
-<meta name="description" content="A US rifle platoon attacks a German position in the Normandy hedgerows, June 1944, simulated soldier by soldier: squads bound from hedge to hedge, pin machine guns with fire, flank and assault, while medics work under fire and every wound is tracked part by part.">
+<title>Bocage: WW2 Squad Combat Simulator, Normandy 1944 (Free)</title>
+<meta name="description" content="A free WW2 squad combat simulator in your browser: a US platoon attacks a German position in the Normandy hedgerows, soldier by soldier. Call in artillery.">
 <meta name="author" content="Shay Kashif">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://sim.shaykas.com/squad/">
-<meta property="og:title" content="Bocage: Squad Combat Simulation">
+<meta property="og:title" content="Bocage: WW2 Squad Combat Simulator, Normandy 1944">
 <meta property="og:description" content="A US rifle platoon attacks a German position in the Normandy hedgerows, June 1944, simulated soldier by soldier in your browser.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://sim.shaykas.com/squad/">
@@ -19,7 +19,7 @@
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="A pixel-art American soldier beside the words Battle Simulation">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Bocage: Squad Combat Simulation">
+<meta name="twitter:title" content="Bocage: WW2 Squad Combat Simulator, Normandy 1944">
 <meta name="twitter:description" content="A US rifle platoon attacks a German position in the Normandy hedgerows, June 1944, simulated soldier by soldier in your browser.">
 <meta name="twitter:image" content="https://sim.shaykas.com/og-squad.png">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
@@ -293,13 +293,15 @@
     #turn { bottom: calc(116px + env(safe-area-inset-bottom)); font-size: 16px; }
     body.simple #morebtn, #cinebtn { min-height: 36px; }
   }
+  .seo { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
   .pxi { display: inline-block; line-height: 0; vertical-align: -0.18em; }
   .px { height: 1.05em; width: auto; image-rendering: pixelated; }
   button .px { height: 1.15em; }
 </style>
 </head>
 <body>
-  <noscript><h1>Bocage</h1><p>A squad-level infantry battle in the Normandy hedgerows, June 1944, simulated in your browser. This page needs JavaScript.</p></noscript>
+  <noscript><h1>Bocage: WW2 squad combat simulator</h1><p>A free squad-level infantry battle in the Normandy hedgerows, June 1944, simulated soldier by soldier in your browser: squads bound from hedge to hedge, pin machine guns, flank and assault, medics treat the wounded, and you can call in artillery. This page needs JavaScript. <a href="/ww2-battle-simulator/">Read how the simulation works</a>.</p></noscript>
+  <h1 class="seo">Bocage: a free WW2 squad combat simulator (Normandy, June 1944)</h1>
   <div id="stage">
     <canvas id="world"></canvas>
     <div id="topbar">
