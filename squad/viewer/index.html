@@ -257,6 +257,11 @@
   @keyframes reticle { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   #ff { position: absolute; inset: 0; z-index: 9; background: rgba(10,10,6,.9); flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; pointer-events: none; }
   #ff.on { display: flex; }
+  #ff.skip { pointer-events: auto; }
+  #ff button { display: none; margin-top: 10px; }
+  #ff.skip button { display: block; }
+  #skipbtn { pointer-events: auto; font-size: 15px; }
+  #skipbtn[hidden] { display: none; }
   #ff b { font: 18px "Silkscreen", monospace; color: var(--gold); }
   #ff small { color: var(--dim); font-size: 20px; }
   #nextmodal { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.62); padding: 14px; }
@@ -313,6 +318,7 @@
         <button data-toggle="sight" title="Who the selected man can see (V)">Sight</button>
         <button data-toggle="chronicle" title="Battle log overlay (C)">Log</button>
       </div>
+      <button id="skipbtn" class="chip" title="Run the battle through to its end and show the after-action report">Skip to result &#9656;&#9656;</button>
       <button id="morebtn" class="chip" title="Take full control: your own camera, every control, the side panel with every man's details">Take full control</button>
     </div>
     <div class="chip" id="powers">
@@ -327,7 +333,7 @@
     <div id="goal" class="chip" hidden></div>
     <div id="turn" class="chip" hidden>Turn your phone sideways for a wider view</div>
     <div id="reticle" hidden><b>Hit them here</b></div>
-    <div id="ff"><b>Moving up to the line</b><small>Skipping the march to first contact</small></div>
+    <div id="ff"><b>Moving up to the line</b><small>Skipping the march to first contact</small><button id="ffstop">Stop here and watch</button></div>
     <canvas id="minimap" title="Click to look there"></canvas>
     <div id="gridref">Grid —</div>
     <div id="help" class="chip">drag to pan · wheel to zoom · click a soldier · WASD pan · Q/E zoom · space pause · 1–6 speed · M sound · F follow · hover a house to look inside</div>

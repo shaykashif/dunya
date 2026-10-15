@@ -78,6 +78,41 @@ export function busiestFight(world: World, around: (Spot & { r: number }) | null
 }
 
 /**
+ * The framing that shows the most going on: for each man, the men a view centred on him would hold, counted
+ * if they can be seen (not inside a house or deep in trees) and weighted heavily if they are firing or hit.
+ * The result is centred on the men it counts. `around` keeps the search near where the camera already is.
+ */
+export function bestFraming(world: World, halfW: number, halfH: number, around: (Spot & { r: number }) | null = null): Fight | null {
+  const t = world.tick;
+  const inHouse = (m: Soldier) => world.buildings.some((b) => !b.destroyed && m.x >= b.x && m.x < b.x + b.w && m.y >= b.y && m.y < b.y + b.h);
+  const men = onField(world).filter((m) => !inHouse(m) && world.map.at(Math.floor(m.x), Math.floor(m.y)) !== "woods");
+  const active = (m: Soldier) => t - m.lastFiredTick < 10 || t - m.lastHitTick < 12;
+  let best: Fight | null = null;
+  for (const c of men) {
+    if (around && Math.hypot(around.x - c.x, around.y - c.y) > around.r) continue;
+    let score = 0, us = 0, de = 0, sx = 0, sy = 0, n = 0, ex = 0, ey = 0;
+    for (const m of men) {
+      if (Math.abs(m.x - c.x) > halfW * 0.85 || Math.abs(m.y - c.y) > halfH * 0.85) continue;
+      score += active(m) ? 4 : 1;
+      sx += m.x;
+      sy += m.y;
+      n++;
+      if (m.side === "us") us++;
+      else {
+        de++;
+        ex += m.x;
+        ey += m.y;
+      }
+    }
+    if (n < 3) continue;
+    score *= us >= 2 && de >= 2 ? 1.5 : 1;
+    if (best && score <= best.score) continue;
+    best = { score, x: sx / n, y: sy / n, ex: de ? ex / de : sx / n, ey: de ? ey / de : sy / n };
+  }
+  return best;
+}
+
+/**
  * Where one tap of "call in a barrage" lands: on the enemy nearest the middle of the view if there is one
  * on screen, otherwise just off the middle, so the shells are always in the picture.
  */

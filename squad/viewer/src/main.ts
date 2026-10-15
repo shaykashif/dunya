@@ -12,7 +12,7 @@ import { clock, describe, label, roleName, worstWound, type FeedLine } from "./f
 import { BLAST_SECONDS } from "./fx.ts";
 import { Renderer, drawMinimap, gridSquare, type Camera, type ViewOptions } from "./render.ts";
 import { BODY_RECTS, SIDE_COLORS, TILE, appearance, faceCanvas, hash2, skinOf } from "./sprites.ts";
-import { barrageTarget, busiestFight, contactDistance, framingZoom, frontLine } from "./cinematic.ts";
+import { barrageTarget, bestFraming, contactDistance, framingZoom, frontLine } from "./cinematic.ts";
 import { startHeartbeat, track, trackFirstInteraction } from "./analytics.ts";
 import { shareResult } from "./share.ts";
 
@@ -137,10 +137,13 @@ function directorStep(dt: number): void {
   if (!director.c || t >= director.nextLook) {
     director.nextLook = t + 2.5;
     const cur = director.c;
-    let f: { x: number; y: number } | null = cur ? busiestFight(world, { x: cur.x, y: cur.y, r: 30 }) : busiestFight(world);
+    // What a view this wide would hold, so the camera goes where there are men to see.
+    const z = framingZoom(rect.width, TILE);
+    const halfW = rect.width / z / 2 / TILE, halfH = rect.height / z / 2 / TILE;
+    let f: { x: number; y: number } | null = cur ? bestFraming(world, halfW, halfH, { x: cur.x, y: cur.y, r: 30 }) : bestFraming(world, halfW, halfH);
     if (f) director.quietSince = t;
     // Only go looking further afield when the neighbourhood has been quiet for a while.
-    if (!f && (!cur || t - director.quietSince > 8)) f = busiestFight(world) ?? frontLine(world);
+    if (!f && (!cur || t - director.quietSince > 6)) f = bestFraming(world, halfW, halfH) ?? frontLine(world);
     if (f) {
       director.goal = { x: f.x, y: f.y };
       if (!cur) {
@@ -167,13 +170,69 @@ function directorStep(dt: number): void {
   userCamera = true;
 }
 
+/** A function, so the type checker does not assume the phase cannot change while the engine runs. */
+function isOver(): boolean {
+  return world.phase === "over";
+}
+
+function setFfText(title: string, sub: string): void {
+  $("ff").querySelector("b")!.textContent = title;
+  $("ff").querySelector("small")!.textContent = sub;
+}
+
+let skipCancel = false;
+/** Runs the rest of the battle unseen and opens the report: for a visitor who wants the outcome, not the minutes. */
+async function skipToResult(): Promise<void> {
+  if (!world || ffActive || world.phase === "over") return;
+  const token = battleToken;
+  ffActive = true;
+  busy = true;
+  skipCancel = false;
+  track("skip_to_result", { tick: world.tick, cinematic });
+  trackFirstInteraction("skip");
+  setFfText("Running the battle to its end", `Now ${world.clock()}`);
+  $("ff").classList.add("on", "skip");
+  try {
+    for (let i = 0; i < 12000 && token === battleToken && !skipCancel && !isOver(); i++) {
+      await engine.step();
+      if (i % 25 === 0) {
+        $("ff").querySelector("small")!.textContent = `Now ${world.clock()}`;
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+  } finally {
+    if (token === battleToken) {
+      prev = new Map(world.soldiers.map((s) => [s.id, { x: s.x, y: s.y }]));
+      acc = 0;
+      $("toasts").innerHTML = "";
+      lastSquadAlert.clear();
+      boltsEl.innerHTML = "";
+      chains.clear();
+      dirty = { feed: true, events: true };
+    }
+    ffActive = false;
+    busy = false;
+    $("ff").classList.remove("on", "skip");
+    setFfText("Moving up to the line", "Skipping the march to first contact");
+    syncControls();
+  }
+  if (token === battleToken && isOver() && !reportShown) {
+    reportShown = true;
+    paused = true;
+    syncControls();
+    track("battle_end", { tick: world.tick, winner: String(world.result?.winner ?? "none"), cinematic, skipped: true });
+    openReport();
+  }
+}
+
 /** Runs the march up unseen, to the first shots, so a visitor lands in the fight and not in a field. */
 async function fastForwardToContact(token: number): Promise<void> {
   ffActive = true;
   busy = true;
+  setFfText("Moving up to the line", "Skipping the march to first contact");
   $("ff").classList.add("on");
   try {
-    for (let i = 0; i < 260 && token === battleToken && world.phase !== "over"; i++) {
+    for (let i = 0; i < 260 && token === battleToken && !isOver(); i++) {
       if (contactDistance(world) < 28) break;
       for (let j = 0; j < 4; j++) {
         prev = new Map(world.soldiers.map((s) => [s.id, { x: s.x, y: s.y }]));
@@ -209,6 +268,9 @@ function updateHook(): void {
   const el = $("hook");
   const t = now();
   const live = simpleUi && !ffActive && world.phase !== "over";
+  const skip = $("skipbtn");
+  const canSkip = !ffActive && world.phase !== "over";
+  if (skip.hidden === canSkip) skip.hidden = !canSkip;
   const rect = canvas.getBoundingClientRect();
   if (t >= hookCheckAt) {
     hookCheckAt = t + 0.5;
@@ -2363,6 +2425,10 @@ $("morebtn").addEventListener("click", () => {
   track("controls_opened", {});
 });
 $("hook").addEventListener("click", () => callBarrageFromView());
+$("skipbtn").addEventListener("click", () => void skipToResult());
+$("ffstop").addEventListener("click", () => {
+  skipCancel = true;
+});
 $("mbody").addEventListener("click", async (ev) => {
   if (!(ev.target as HTMLElement).closest("#sharebtn") || !world.result) return;
   const r = world.result, v = verdict(world);
@@ -2419,6 +2485,8 @@ requestAnimationFrame(frame);
     follow = false;
   },
   select,
+  director,
+  cam,
   /** Where a man is on screen right now, for tests. */
   screenOf: (id: number) => renderer.screenOf(world.soldier(id), cam, prev),
   sfx,
