@@ -33,6 +33,9 @@ const canvas = $<HTMLCanvasElement>("world");
 const minimap = $<HTMLCanvasElement>("minimap");
 // The alerts fill the space beside the minimap on a phone, so CSS needs to know how wide it is.
 new ResizeObserver(() => document.documentElement.style.setProperty("--mm-w", `${minimap.offsetWidth}px`)).observe(minimap);
+// The alerts sit under the top bar, which wraps to a second row on a narrow screen.
+const topbarEl = document.getElementById("topbar")!;
+new ResizeObserver(() => document.documentElement.style.setProperty("--topbar-h", `${topbarEl.offsetHeight}px`)).observe(topbarEl);
 const gridref = $("gridref");
 /** Where the pointer is over the battlefield, in screen pixels; null when it is off it. */
 let hover: { sx: number; sy: number } | null = null;

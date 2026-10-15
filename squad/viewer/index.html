@@ -227,7 +227,7 @@
   body.simple aside, body.simple #toggles, body.simple #powers, body.simple #help, body.simple #gridref,
   body.simple #chronicle, body.simple #vol, body.simple #step, body.simple #speeds, body.simple #sidetoggle { display: none; }
   body.simple #minimap { opacity: .85; }
-  body.simple #toasts { left: 50%; right: auto; transform: translateX(-50%); top: 58px; width: min(520px, 94vw); gap: 6px; }
+  body.simple #toasts { left: 50%; right: auto; transform: translateX(-50%); top: calc(var(--topbar-h, 46px) + 12px); width: min(520px, 94vw); gap: 6px; }
   .toast.tap { cursor: pointer; }
   .toast.tap::after { content: "tap to look"; display: block; margin-top: 2px; font: 10px "Silkscreen", monospace; color: var(--dim); }
   body.simple .toast { font-size: 18px; }
@@ -259,7 +259,7 @@
     body.simple #minimap { display: none; }
     body.simple #clock { flex: 1 1 130px; min-width: 130px; }
     body.simple #quick { bottom: calc(88px + env(safe-area-inset-bottom)); }
-    body.simple #toasts { top: 60px; bottom: auto; left: 8px; right: 8px; transform: none; width: auto; max-height: none; overflow: visible; flex-direction: column; }
+    body.simple #toasts { top: calc(var(--topbar-h, 60px) + 8px); bottom: auto; left: 8px; right: 8px; transform: none; width: auto; max-height: none; overflow: visible; flex-direction: column; }
     body.simple .toast { -webkit-line-clamp: 3; font-size: 17px; }
     #hook { left: 12px; right: 12px; transform: none; width: auto; bottom: calc(14px + env(safe-area-inset-bottom)); justify-content: center; min-height: 60px; font-size: 16px; }
     @keyframes hookpulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
