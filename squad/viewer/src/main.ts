@@ -1707,8 +1707,9 @@ function renderQuick(): void {
   $("qmore").addEventListener("click", () => {
     const id = quickId;
     hideQuick();
-    // The full inspector lives in the side panel, which the simple screen hides.
+    // The full inspector lives in the side panel, which the simple screen (or a hidden panel) leaves out.
     if (simpleUi) setSimple(false);
+    if (!isPhone() && document.body.classList.contains("side-hidden")) setSide(false);
     select(id);
     document.querySelector("aside")?.scrollIntoView({ behavior: "smooth" });
   });
@@ -1937,7 +1938,9 @@ canvas.addEventListener("pointerup", (ev) => {
     }
   }
   // A finger tap: a little card with just that unit, not the whole inspector.
-  if ((ev.pointerType === "touch" || simpleUi) && hit !== null) {
+  // With no side panel on screen (touch, the simple screen, or a panel the player has hidden) there is
+  // nowhere else to show him, so he gets the card.
+  if ((ev.pointerType === "touch" || simpleUi || document.body.classList.contains("side-hidden")) && hit !== null) {
     selected = hit;
     quickId = hit;
     renderQuick();
@@ -2299,6 +2302,8 @@ $("cinebtn").addEventListener("click", () => {
 });
 $("morebtn").addEventListener("click", () => {
   setSimple(false);
+  // Full control includes the panel with every man's details, unless a phone has no room for it.
+  if (!isPhone() && document.body.classList.contains("side-hidden")) setSide(false);
   track("controls_opened", {});
 });
 $("hook").addEventListener("click", () => callBarrageFromView());
