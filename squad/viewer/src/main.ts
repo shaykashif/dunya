@@ -202,15 +202,23 @@ async function fastForwardToContact(token: number): Promise<void> {
 let hookCheckAt = 0;
 let hookFightAt = -99;
 let hookLabel = "";
+let hookTarget: { x: number; y: number; seen: boolean; men: number } | null = null;
+let goalText = "";
+let turnShownAt = -1;
 function updateHook(): void {
   const el = $("hook");
   const t = now();
   const live = simpleUi && !ffActive && world.phase !== "over";
+  const rect = canvas.getBoundingClientRect();
   if (t >= hookCheckAt) {
     hookCheckAt = t + 0.5;
     let n = 0;
     if (live) for (const m of world.soldiers) if (world.tick - m.lastFiredTick < 10 && ++n >= 3) break;
     if (n >= 3) hookFightAt = t;
+    if (live) {
+      const halfW = rect.width / cam.zoom / 2 / TILE, halfH = rect.height / cam.zoom / 2 / TILE;
+      hookTarget = barrageTarget(world, { x: cam.x / TILE + halfW, y: cam.y / TILE + halfH }, halfW, halfH);
+    }
   }
   // Once the fighting has started the button stays up through lulls, so it does not flicker.
   const show = live && t - hookFightAt < 12;
@@ -218,15 +226,60 @@ function updateHook(): void {
   const cool = t < hookCooldownUntil;
   el.classList.toggle("cool", cool);
   el.classList.toggle("fresh", hookUsed === 0);
-  const label = cool ? `Reloading ${Math.ceil(hookCooldownUntil - t)}` : "Call in a barrage";
+  const soundOff = !sfx.ready && sfx.enabled;
+  const label = cool ? `Reloading ${Math.ceil(hookCooldownUntil - t)}` : `Call in a barrage${soundOff ? " · sound on" : ""}`;
   if (label !== hookLabel) {
     hookLabel = label;
     el.innerHTML = `${icon("barrage")} ${label}`;
   }
-  // Browsers keep sound off until a first tap; say so, once.
-  const hint = $("soundhint");
-  const want = !sfx.ready && sfx.enabled && !ffActive && world.phase !== "over";
-  if (hint.hidden === want) hint.hidden = !want;
+  // Sound starts on the first tap, as browsers insist: the sound button says so until then.
+  $("sound").classList.toggle("attn", simpleUi && soundOff && world.phase !== "over");
+
+  // Until the first barrage, show where it would land: a real enemy group on screen.
+  const ret = $("reticle");
+  const aim = show && hookUsed === 0 && !cool && hookTarget?.seen ? hookTarget : null;
+  if (aim) {
+    const sx = (aim.x * TILE + TILE / 2 - cam.x) * cam.zoom, sy = (aim.y * TILE + TILE / 2 - cam.y) * cam.zoom;
+    const top = topbarEl.offsetHeight + 20, bottom = rect.height - 120;
+    const inView = sx > 24 && sx < rect.width - 24 && sy > top && sy < bottom;
+    ret.hidden = !inView;
+    if (inView) {
+      ret.style.left = `${Math.round(sx)}px`;
+      ret.style.top = `${Math.round(sy)}px`;
+      const lab = ret.firstElementChild as HTMLElement;
+      const txt = `${aim.men > 1 ? `${aim.men} enemy` : "Enemy"} here · tap Barrage`;
+      if (lab.textContent !== txt) lab.textContent = txt;
+    }
+  } else if (!ret.hidden) ret.hidden = true;
+
+  // Who is winning, and for what.
+  const goal = $("goal");
+  if (live) {
+    const fighting = (side: Side) => world.side(side).filter((s) => world.able(s)).length;
+    const total = (side: Side) => world.side(side).length;
+    const att = world.attacker === "us" ? "US attack" : "German attack";
+    const txt = `${att} ${world.layout.objectiveName} · <span class="us">US ${fighting("us")}/${total("us")}</span> v <span class="de">DE ${fighting("de")}/${total("de")}</span>`;
+    if (txt !== goalText) {
+      goalText = txt;
+      goal.innerHTML = txt;
+    }
+  }
+  if (goal.hidden === live) goal.hidden = !live;
+
+  // A phone held upright shows a narrow slice: say so once, early.
+  const turn = $("turn");
+  if (turnShownAt < 0 && live && isPhone() && rect.height > rect.width * 1.1 && t > 4) {
+    let seen = false;
+    try {
+      seen = sessionStorage.getItem("squad.turnhint") === "1";
+      sessionStorage.setItem("squad.turnhint", "1");
+    } catch {
+      // Not important.
+    }
+    turnShownAt = seen ? -2 : t;
+  }
+  const turnOn = turnShownAt >= 0 && t - turnShownAt < 7 && live;
+  if (turn.hidden === turnOn) turn.hidden = !turnOn;
 }
 
 /** One tap: a barrage on the nearest enemy in view, or just off the middle if none is, so it is always in the picture. */
@@ -365,7 +418,8 @@ function placeBlasts(): void {
     if (!wide) continue;
     const sx = (b.x * TILE + 8 - cam.x) * cam.zoom, sy = (b.y * TILE + 8 - cam.y) * cam.zoom;
     const m = 16;
-    const x = Math.max(m, Math.min(rect.width - m, sx)), y = Math.max(m + 40, Math.min(rect.height - m, sy));
+    const top = topbarEl.offsetHeight + 18, bottom = rect.height - (simpleUi ? 100 : m);
+    const x = Math.max(m, Math.min(rect.width - m, sx)), y = Math.max(top, Math.min(bottom, sy));
     b.el.classList.toggle("edge", x !== sx || y !== sy);
     b.el.style.left = `${Math.round(x)}px`;
     b.el.style.top = `${Math.round(y)}px`;
@@ -391,7 +445,8 @@ function placeBolts(): void {
     c.popup.classList.toggle("old", age > 45);
     const sx = (c.from.x * TILE + 8 - cam.x) * cam.zoom, sy = (c.from.y * TILE + 8 - cam.y) * cam.zoom - 22;
     const m = 20;
-    const x = Math.max(m, Math.min(rect.width - m, sx)), y = Math.max(m + 40, Math.min(rect.height - m, sy));
+    const top = topbarEl.offsetHeight + 18, bottom = rect.height - (simpleUi ? 100 : m);
+    const x = Math.max(m, Math.min(rect.width - m, sx)), y = Math.max(top, Math.min(bottom, sy));
     c.popup.classList.toggle("edge", x !== sx || y !== sy);
     c.popup.style.left = `${Math.round(x)}px`;
     c.popup.style.top = `${Math.round(y)}px`;
@@ -920,9 +975,10 @@ function toast(kind: string, title: string, text: string, people: number[] = [],
   const box = $("toasts");
   box.prepend(el);
   // On a phone the map is small: fewer alerts, and they go sooner.
-  const small = window.matchMedia("(max-width: 900px)").matches || simpleUi;
-  while (box.children.length > (small ? 2 : 5)) box.lastElementChild?.remove();
-  setTimeout(() => el.remove(), small ? 6000 : 9000);
+  const phone = window.matchMedia("(max-width: 900px)").matches;
+  const small = phone || simpleUi;
+  while (box.children.length > (simpleUi && phone ? 1 : small ? 2 : 5)) box.lastElementChild?.remove();
+  setTimeout(() => el.remove(), simpleUi && phone ? 4500 : small ? 6000 : 9000);
   return el;
 }
 
@@ -2307,10 +2363,6 @@ $("morebtn").addEventListener("click", () => {
   track("controls_opened", {});
 });
 $("hook").addEventListener("click", () => callBarrageFromView());
-$("soundhint").addEventListener("click", () => {
-  sfx.unlock();
-  syncSound();
-});
 $("mbody").addEventListener("click", async (ev) => {
   if (!(ev.target as HTMLElement).closest("#sharebtn") || !world.result) return;
   const r = world.result, v = verdict(world);

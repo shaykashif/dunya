@@ -81,20 +81,20 @@ export function busiestFight(world: World, around: (Spot & { r: number }) | null
  * Where one tap of "call in a barrage" lands: on the enemy nearest the middle of the view if there is one
  * on screen, otherwise just off the middle, so the shells are always in the picture.
  */
-export function barrageTarget(world: World, centre: Spot, halfW: number, halfH: number): Spot {
+export function barrageTarget(world: World, centre: Spot, halfW: number, halfH: number): Spot & { seen: boolean; men: number } {
   const foes = onField(world).filter((m) => m.side !== "us");
   const seen = foes.filter((m) => Math.abs(m.x - centre.x) < halfW * 0.9 && Math.abs(m.y - centre.y) < halfH * 0.8);
   if (seen.length > 0) {
     seen.sort((a, b) => Math.hypot(a.x - centre.x, a.y - centre.y) - Math.hypot(b.x - centre.x, b.y - centre.y));
     const lead = seen[0]!;
     const group = seen.filter((m) => Math.hypot(m.x - lead.x, m.y - lead.y) < 9);
-    return { x: group.reduce((q, m) => q + m.x, 0) / group.length, y: group.reduce((q, m) => q + m.y, 0) / group.length };
+    return { x: group.reduce((q, m) => q + m.x, 0) / group.length, y: group.reduce((q, m) => q + m.y, 0) / group.length, seen: true, men: group.length };
   }
-  return { x: centre.x + halfW * 0.2, y: centre.y - halfH * 0.15 };
+  return { x: centre.x + halfW * 0.2, y: centre.y - halfH * 0.15, seen: false, men: 0 };
 }
 
 /** The zoom that shows about this many tiles across a canvas this wide, so men are big enough to read. */
 export function framingZoom(canvasWidthPx: number, tilePx: number): number {
-  const tiles = canvasWidthPx <= 520 ? 11 : canvasWidthPx <= 900 ? 16 : 30;
+  const tiles = canvasWidthPx <= 520 ? 15 : canvasWidthPx <= 900 ? 18 : 30;
   return Math.max(1.4, Math.min(5, canvasWidthPx / (tiles * tilePx)));
 }
