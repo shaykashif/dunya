@@ -581,7 +581,7 @@ function surrender(w: World, s: Soldier): void {
 function summaryData(w: World): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const side of ["us", "de"] as const) {
-    const all = w.side(side);
+    const all = w.men(side);
     out[side] = {
       able: all.filter((s) => w.able(s)).length,
       casualties: all.filter((s) => s.status === "casualty").length,
@@ -634,10 +634,8 @@ export function checkBattleEnd(w: World): void {
   w.result = { winner, reason, tick: w.tick };
   // The wounded the losers leave behind, and anyone who gave up, fall into the winners' hands.
   if (winner !== null) {
-    for (const s of w.side(enemyOf(winner))) {
+    for (const s of w.men(enemyOf(winner))) {
       if (s.status !== "casualty" && s.status !== "surrendered") continue;
-      // A knocked-out tank or gun is not a prisoner.
-      if (s.role === "tank" || s.role === "field_gun") continue;
       s.status = "captured";
       s.act = null;
       w.emit("captured", [s.id], { by: null, prisoner: s.id, wounded: true });
@@ -645,7 +643,7 @@ export function checkBattleEnd(w: World): void {
   }
   const tally: Record<string, unknown> = {};
   for (const side of ["us", "de"] as const) {
-    const all = w.side(side);
+    const all = w.men(side);
     tally[side] = {
       men: all.length,
       killed: all.filter((s) => s.status === "dead").length,

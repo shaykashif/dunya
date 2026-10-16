@@ -72,7 +72,7 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
   switch (e.type) {
     case "battle_start": {
       const att = w.platoons[w.attacker], def = w.platoons[w.attacker === "us" ? "de" : "us"];
-      return line(`${w.config.time.date}, dawn: ${w.weather.label}. ${att.name} (${w.side(att.side).length} men) moves up through the hedgerows on ${w.layout.name} to take ${w.layout.objectiveName}, held by ${def.name} (${w.side(def.side).length} men).`, "battle", [], true);
+      return line(`${w.config.time.date}, dawn: ${w.weather.label}. ${att.name} (${w.men(att.side).length} men) moves up through the hedgerows on ${w.layout.name} to take ${w.layout.objectiveName}, held by ${def.name} (${w.men(def.side).length} men).`, "battle", [], true);
     }
     case "contact": {
       const sq = w.squads[d.squad as number]!;

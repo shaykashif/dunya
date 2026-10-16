@@ -135,6 +135,10 @@ export class World {
   side(side: Side): Soldier[] {
     return this.soldiers.filter((s) => s.side === side && !isArmourRole(s.role));
   }
+  /** Every man a side has, crews of its tanks and guns included, but not the vehicles: what its losses are counted over. */
+  men(side: Side): Soldier[] {
+    return this.soldiers.filter((s) => s.side === side && s.role !== "tank" && s.role !== "field_gun");
+  }
   /** Tanks, guns and crew of a side. */
   armour(side: Side): Soldier[] {
     return this.soldiers.filter((s) => s.side === side && isArmourRole(s.role));

@@ -36,7 +36,7 @@ export interface Verdict {
 }
 
 export function sideLoss(w: World, side: Side): SideLoss {
-  const all = w.side(side);
+  const all = w.men(side);
   const after = w.aftermath;
   const dead = all.filter((s) => s.status === "dead");
   const alive = all.filter((s) => s.status !== "dead");

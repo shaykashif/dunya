@@ -55,7 +55,7 @@ export interface RunSummary {
 }
 
 function sideSummary(w: World, side: Side): SideSummary {
-  const all = w.side(side);
+  const all = w.men(side);
   return {
     men: all.length,
     killed: all.filter((s) => s.status === "dead").length,

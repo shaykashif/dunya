@@ -332,8 +332,8 @@ function updateHook(): void {
   // Who is winning, and for what.
   const goal = $("goal");
   if (live) {
-    const fighting = (side: Side) => world.side(side).filter((s) => world.able(s)).length;
-    const total = (side: Side) => world.side(side).length;
+    const fighting = (side: Side) => world.men(side).filter((s) => world.able(s)).length;
+    const total = (side: Side) => world.men(side).length;
     const att = world.attacker === "us" ? "US attack" : "German attack";
     const txt = `${att} ${world.layout.objectiveName} · <span class="us">US ${fighting("us")}/${total("us")}</span> v <span class="de">DE ${fighting("de")}/${total("de")}</span>`;
     if (txt !== goalText) {
@@ -1451,7 +1451,7 @@ function renderForces(): void {
   const rows: string[] = [];
   for (const side of [world.attacker, world.attacker === "us" ? "de" : "us"] as Side[]) {
     const pl = world.platoons[side];
-    const all = world.side(side);
+    const all = world.men(side);
     const n = all.length;
     const able = all.filter((s) => world.able(s) && !s.pinned).length;
     const pinned = all.filter((s) => world.able(s) && s.pinned).length;
@@ -1892,7 +1892,7 @@ function openReport(): void {
     : `<p class="hint">The battle is still going on (${world.clock()}). This is how it stands.</p>`;
   const firstFall = blood ? `<h3>First to fall</h3><p>${esc(blood.text)}</p>` : "";
   const rows = (["us", "de"] as Side[]).map((side) => {
-    const all = world.side(side);
+    const all = world.men(side);
     const c = (f: (s: Soldier) => boolean) => all.filter(f).length;
     const shots = all.reduce((a, s) => a + s.shots, 0), hits = all.reduce((a, s) => a + s.hits, 0);
     return `<tr><td style="color:${SIDE_COLORS[side].name}">${esc(world.platoons[side].name)}</td><td>${all.length}</td><td>${c((s) => s.status === "dead")}</td><td>${c((s) => s.status !== "dead" && s.injuries.some((i) => !i.permanent && i.severity >= 0.1))}</td><td>${c((s) => s.status === "captured" || s.status === "surrendered")}</td><td>${c((s) => s.status === "routed")}</td><td>${shots} / ${hits}</td></tr>`;
@@ -2480,7 +2480,7 @@ $("mbody").addEventListener("click", async (ev) => {
   if (!t.closest("#sharebtn") || !world.result) return;
   const r = world.result, v = verdict(world);
   const side = (sd: Side) => {
-    const all = world.side(sd);
+    const all = world.men(sd);
     return { name: world.platoons[sd].name, men: all.length, dead: all.filter((x) => x.status === "dead").length, wounded: all.filter((x) => x.status !== "dead" && x.injuries.some((i) => !i.permanent && i.severity >= 0.1)).length };
   };
   const seed = Number($<HTMLInputElement>("seed").value) || 1;
