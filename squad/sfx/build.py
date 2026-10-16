@@ -368,11 +368,13 @@ def bullet_crack(secs=0.14):
     n = int(SR * secs)
     t = t_axis(n)
     nwave = np.zeros(n)
-    w = int(SR * RNG.uniform(0.0012, 0.0022))
-    nwave[:w] = np.linspace(1, -1.4, w)
-    air = sg.sosfilt(sg.butter(2, RNG.uniform(1800, 2600), "highpass", fs=SR, output="sos"), RNG.normal(0, 1, n)) * np.exp(-t / RNG.uniform(0.012, 0.022))
-    body = np.sin(2 * math.pi * RNG.uniform(500, 800) * t) * np.exp(-t / 0.012) * 0.4
-    return fade_out(norm(nwave * 1.4 + air * 0.8 + body), 40)
+    w = int(SR * RNG.uniform(0.0015, 0.0028))
+    nwave[:w] = np.linspace(1, -1.6, w)
+    air = sg.sosfilt(sg.butter(2, RNG.uniform(1400, 2000), "highpass", fs=SR, output="sos"), RNG.normal(0, 1, n)) * np.exp(-t / RNG.uniform(0.010, 0.018))
+    # Body, not ring: a burst of mid-band noise and a short low punch fill in what a thin snap lacks.
+    body = noise_env(n, 350, 2400, RNG.uniform(0.016, 0.026))
+    punch_ = sub_thump(n, RNG.uniform(150, 220), 0.014)
+    return fade_out(norm(nwave * 1.1 + air * 0.8 + body * 1.0 + punch_ * 0.75), 40)
 
 
 def mortar_fire(secs=0.7):
@@ -529,7 +531,7 @@ def main():
         bank.group("thud", [f"thud.{i}"])
 
     for i in range(5):
-        bank.add(f"crack.{i}", lofi(bullet_crack(0.11 + 0.012 * i), bits=10, lp=7200, hp=300, drive=2.2), "synth")
+        bank.add(f"crack.{i}", lofi(squash(bullet_crack(0.12 + 0.012 * i), 2.5), bits=10, lp=7000, hp=130, drive=2.6), "synth")
         bank.group("crack", [f"crack.{i}"])
 
     # what bullets hit
