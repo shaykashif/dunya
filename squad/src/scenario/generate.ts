@@ -5,7 +5,7 @@
 // around its MG 42, with a gun team and a rifle team.
 import { emptyOrder } from "../ai/command.ts";
 import { ambushSite, ambushSpots } from "../ai/ambush.ts";
-import { vantage } from "../ai/tactics.ts";
+import { buildingPositions, houseAt, vantage } from "../ai/tactics.ts";
 import { tankCanStand } from "../combat/armour.ts";
 import { Rng } from "../engine/rng.ts";
 import type { EventLog } from "../log/events.ts";
@@ -155,9 +155,9 @@ function scoutSlots(side: Side): Slot[] {
   ];
 }
 
-const SQUAD_COLORS: Record<Side, string[]> = { us: ["#e8c84a", "#5ab0e8", "#e8844a", "#9ae85a", "#e87ae0"], de: ["#b08ae8", "#2fd0b8", "#f0f0f0", "#8a9cff", "#c8b08a"] };
-const US_SQUAD_NAMES = ["1st Squad", "2nd Squad", "3rd Squad", "4th Squad", "5th Squad"];
-const DE_SQUAD_NAMES = ["1. Gruppe", "2. Gruppe", "3. Gruppe", "4. Gruppe", "5. Gruppe"];
+const SQUAD_COLORS: Record<Side, string[]> = { us: ["#e8c84a", "#5ab0e8", "#e8844a", "#9ae85a", "#e87ae0", "#e85a6a"], de: ["#b08ae8", "#2fd0b8", "#f0f0f0", "#8a9cff", "#c8b08a", "#d0e070"] };
+const US_SQUAD_NAMES = ["1st Squad", "2nd Squad", "3rd Squad", "4th Squad", "5th Squad", "6th Squad"];
+const DE_SQUAD_NAMES = ["1. Gruppe", "2. Gruppe", "3. Gruppe", "4. Gruppe", "5. Gruppe", "6. Gruppe"];
 
 function gauss(rng: Rng): number {
   return (rng.next() + rng.next() + rng.next() - 1.5) / 0.5;
@@ -313,6 +313,8 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       shelledTick: -1000,
       refuge: null,
       fellBackTick: -1000,
+      coverTick: -1,
+      sweep: null,
       sniperAlert: null,
       help: null,
       helping: null,
@@ -333,6 +335,9 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
   const nDe = cfg.forces.deSquads[0] + rng.int(cfg.forces.deSquads[1] - cfg.forces.deSquads[0] + 1);
   const counts: Record<Side, number> = { us: nUs, de: nDe };
   counts[attacker] += cfg.forces.attackerBonusSquads;
+  // A city is attacked with more men and more fire: house fighting eats rifle squads.
+  const city = layout.kind === "urban";
+  if (city) counts[attacker] += cfg.urban.attackerSquads;
   for (const side of [attacker, defender] as const) {
     const role = side === attacker ? "attack" : "defend";
     const hq = makeSquad(side, side === "us" ? "Platoon HQ" : "Zugtrupp", "#c8c8c8", true, hqSlots(side, side === "us" && rng.chance(cfg.forces.usSniperChance)), "hq");
@@ -363,7 +368,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       objective,
       aidPost,
       rearY,
-      fireMissionsLeft: cfg.mortars.missions[role],
+      fireMissionsLeft: cfg.mortars.missions[role] + (city && role === "attack" ? cfg.urban.attackerMissions : 0),
       missions: [],
       scoutIds,
       plan: null,
@@ -384,7 +389,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
   // ---- Armour: each side has a tank one time in ten; the defenders may have a field gun; a few men carry launchers ----
   const armourRng = new Rng(seed, "armour");
   const tankFor: Record<Side, boolean> = { us: armourRng.chance(cfg.armour.tankChance), de: armourRng.chance(cfg.armour.tankChance) };
-  const gunFor = armourRng.chance(cfg.armour.fieldGunChance);
+  const gunFor = armourRng.chance(cfg.armour.fieldGunChance * (city ? cfg.urban.fieldGunFactor : 1));
   for (const side of ["us", "de"] as const) {
     const pl = w.platoons[side];
     const n = cfg.armour.atMen[0] + armourRng.int(cfg.armour.atMen[1] - cfg.armour.atMen[0] + 1);
@@ -615,7 +620,9 @@ function deployDefenders(w: World, side: Side, layout: Layout, rng: Rng): void {
     const crew = men.filter((m) => m.role === "asst_gunner" || m.role === "ammo_bearer" || m.role === "asst_leader");
     const line = layout.linePositions.filter((p) => Math.abs(p.x - mg.x) <= 18 && cheb(p, mg) >= 2).sort((a, b) => Math.abs(a.x - mg.x) - Math.abs(b.x - mg.x) || a.x - b.x);
     crew.forEach((m, k) => {
-      const p = k === 0 ? { x: mg.x + (mg.x < road ? 1 : -1), y: mg.y } : { x: mg.x + (k % 2 ? -1 : 1) * 2, y: mg.y - 1 - Math.floor(k / 2) };
+      // Upstairs with the gun, if it is in an upper window.
+      const p: Point = k === 0 ? { x: mg.x + (mg.x < road ? 1 : -1), y: mg.y } : { x: mg.x + (k % 2 ? -1 : 1) * 2, y: mg.y - 1 - Math.floor(k / 2) };
+      if ((mg.z ?? 0) > 0) p.z = mg.z;
       placeAt(w, m, p);
       if (k === 0) dig({ x: m.x, y: m.y });
     });
@@ -643,22 +650,51 @@ function deployDefenders(w: World, side: Side, layout: Layout, rng: Rng): void {
       sq.orders[el] = { kind: "hold", positions: keep, target: null, pace: "crouch", fire: "hold", issued: 0 };
     }
   });
+  // In a city, the town hall on its plaza is the keep: one squad garrisons it from the start, at the windows on every floor.
+  const hall = layout.kind === "urban" ? houseAt(w, layout.objective) : null;
+  let keepSquad = -1;
+  if (hall && pl.squadIds.length >= 3) {
+    const sq = w.squad(pl.squadIds[pl.squadIds.length - 1]!);
+    const men = sq.members.map((m) => w.soldier(m));
+    for (const m of men) w.vacate(m);
+    const toward = { x: layout.objective.x, y: Math.min(w.map.height - 1, layout.objective.y + 40) };
+    const spots = buildingPositions(w, men, hall, toward);
+    for (const m of men) {
+      const p = spots[m.id] ?? layout.objective;
+      placeAt(w, m, p);
+      m.posture = "crouch";
+    }
+    for (const el of ["A", "B"] as const) {
+      const keep: Record<number, Point> = {};
+      for (const m of men.filter((x) => x.element === el)) keep[m.id] = m.z > 0 ? { x: m.x, y: m.y, z: m.z } : { x: m.x, y: m.y };
+      sq.orders[el] = { kind: "hold", positions: keep, target: null, pace: "crouch", fire: "hold", issued: 0 };
+    }
+    sq.task = "keep";
+    sq.post = layout.objective;
+    sq.fallback = null;
+    sq.intent = `garrisoning ${hall.name} on the plaza: the last place to be given up`;
+    keepSquad = sq.id;
+    w.emit("garrison", [], { squad: sq.id, house: hall.id });
+  }
   // A machine gun up in the church tower, if it sees more of the enemy's way in than the gun does from the hedge.
   const church = w.buildings.find((b) => b.kind === "church");
   let belfrySquad = -1;
   if (church && rng.chance(0.6)) {
-    const bell = { x: church.x + Math.floor(church.w / 2), y: church.y + church.h - 2 };
+    let bell = { x: church.x + Math.floor(church.w / 2), y: church.y + church.h - 2 };
+    for (let y = church.y; y < church.y + church.h; y++) for (let x = church.x; x < church.x + church.w; x++) if (w.map.isTower(x, y)) bell = { x, y };
+    // The belfry is the top of the tower; the loader sits on the stair below.
+    const top = Math.max(1, w.map.levels[w.map.idx(bell.x, bell.y)]! - 1);
     const toward = w.platoons[enemyOf(side)].rearY > bell.y ? 1 : -1;
     const look = { x: bell.x, y: Math.max(0, Math.min(w.map.height - 1, bell.y + toward * 50)) };
-    if (w.map.passable(bell.x, bell.y, 2) && w.map.passable(bell.x, bell.y, 1)) {
+    if (w.map.passable(bell.x, bell.y, top) && w.map.passable(bell.x, bell.y, top - 1)) {
       const crews = pl.squadIds
         .map((id) => w.squad(id).members.map((m) => w.soldier(m)))
         .map((men) => ({ gunner: men.find((m) => m.role === "machine_gunner" || m.role === "auto_rifleman"), mate: men.find((m) => m.role === "asst_gunner") }))
-        .filter((c) => c.gunner && c.mate && cheb(c.gunner, bell) <= 40)
+        .filter((c) => c.gunner && c.mate && cheb(c.gunner, bell) <= 40 && c.gunner.squadId !== keepSquad)
         .sort((a, b) => cheb(a.gunner!, bell) - cheb(b.gunner!, bell));
       const crew = crews[0];
-      if (crew && vantage(w, { ...bell, z: 2 }, look) > vantage(w, crew.gunner!, look) + 0.1) {
-        for (const [m, z] of [[crew.gunner!, 2], [crew.mate!, 1]] as const) {
+      if (crew && vantage(w, { ...bell, z: top }, look) > vantage(w, crew.gunner!, look) + 0.1) {
+        for (const [m, z] of [[crew.gunner!, top], [crew.mate!, top - 1]] as const) {
           w.place(m, bell.x, bell.y, z);
           m.posture = "crouch";
           const o = w.squad(m.squadId).orders[m.element === "B" ? "B" : "A"];
@@ -673,7 +709,7 @@ function deployDefenders(w: World, side: Side, layout: Layout, rng: Rng): void {
   // never the one whose gun is up the tower.
   if (pl.squadIds.length >= 2 && rng.chance(w.config.ambush.chance)) {
     const site = ambushSite(w, side);
-    const free = pl.squadIds.filter((id) => id !== belfrySquad);
+    const free = pl.squadIds.filter((id) => id !== belfrySquad && id !== keepSquad);
     if (site && free.length > 0) {
       const sq = free.map((id) => w.squad(id)).sort((a, b) => cheb(a.post ?? site.at, site.at) - cheb(b.post ?? site.at, site.at) || a.id - b.id)[0]!;
       const men = sq.members.map((m) => w.soldier(m));

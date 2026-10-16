@@ -10,11 +10,14 @@ import { parseArgs } from "./args.ts";
 const args = parseArgs(process.argv.slice(2));
 let seed: number, ticks: number, expectedHash: string, decisions: DecisionRecord[];
 let interventions: ScheduledIntervention[] = [];
+let config = {};
 
 const readLines = <T>(file: string): T[] => readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as T);
 
 if (args.dir) {
-  const summary = JSON.parse(readFileSync(join(args.dir, "summary.json"), "utf8")) as RunSummary;
+  const summary = JSON.parse(readFileSync(join(args.dir, "summary.json"), "utf8")) as RunSummary & { mapChosen?: boolean };
+  // A run made with --map had its ground chosen, not rolled from the seed.
+  if (summary.mapChosen) config = { map: { kind: summary.map } };
   seed = summary.seed;
   ticks = summary.ticks;
   expectedHash = summary.hash;
@@ -29,7 +32,7 @@ if (args.dir) {
   decisions = engine.decisionLog;
 }
 
-const result = await replayRun(seed, ticks, decisions, { interventions });
+const result = await replayRun(seed, ticks, decisions, { interventions, config });
 console.log(`replay seed ${seed}, ${ticks} ticks, ${decisions.length} decisions, ${interventions.length} interventions`);
 console.log(`  recorded hash ${expectedHash}`);
 console.log(`  replayed hash ${result.hash}`);

@@ -13,6 +13,9 @@ const HIDING = new Set(["woods", "brush", "orchard", "deadfall"]);
 function hiding(w: World, x: number, y: number): number {
   const t = w.map.at(x, y);
   if (HIDING.has(t)) return t === "orchard" ? 0.5 : 1;
+  // A dark room by a window, or a heap of rubble.
+  if (t === "floor" && w.map.besideWindow(x, y)) return 0.9;
+  if (t === "rubble" || t === "debris" || t === "stall") return 0.75;
   if (w.map.passable(x, y) && t !== "road" && w.map.besideCover(x, y)) return 0.6;
   return 0;
 }

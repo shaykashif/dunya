@@ -7,10 +7,12 @@
 // up from the south.
 import { Rng } from "../engine/rng.ts";
 import type { SimConfig } from "../scenario/config.ts";
+import { generateCity } from "./city.ts";
+import { roadDefences } from "./defences.ts";
 import { GameMap } from "./map.ts";
 import type { MapKind, Point, Terrain } from "./types.ts";
 
-export type BuildingKind = "farmhouse" | "barn" | "cottage" | "church" | "house" | "shop";
+export type BuildingKind = "farmhouse" | "barn" | "cottage" | "church" | "house" | "shop" | "apartment" | "townhall" | "warehouse";
 
 export interface Building {
   id: number;
@@ -71,6 +73,8 @@ const KINDS: Record<MapKind, KindSpec> = {
   rural: { name: "open farmland on a ridge", objectiveName: "the farm", fieldWidth: [34, 52], fieldHeight: [17, 25], mergeChance: 0.32, crops: [0.4, 0.82, 0.9], copses: [3, 6], settlementRow: 24, lineGap: 22, area: { w: 18, n: 10, s: 10 } },
   road: { name: "a highway junction", objectiveName: "the road junction", fieldWidth: [26, 42], fieldHeight: [14, 20], mergeChance: 0.2, crops: [0.45, 0.75, 0.9], copses: [4, 8], settlementRow: 26, lineGap: 22, area: { w: 16, n: 16, s: 10 } },
   town: { name: "a market town", objectiveName: "the town square", fieldWidth: [24, 38], fieldHeight: [13, 18], mergeChance: 0.14, crops: [0.45, 0.7, 0.9], copses: [4, 7], settlementRow: 28, lineGap: 27, area: { w: 41, n: 19, s: 19 } },
+  // The city has its own generator (city.ts); these are unused.
+  urban: { name: "a shell-torn city", objectiveName: "the town hall", fieldWidth: [24, 38], fieldHeight: [13, 18], mergeChance: 0, crops: [1, 1, 1], copses: [0, 0], settlementRow: 28, lineGap: 27, area: { w: 41, n: 19, s: 19 } },
 };
 
 /** Stable per-tile noise, independent of draw order. */
@@ -116,6 +120,7 @@ export function startClearance(cfg: SimConfig): number {
 
 export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
   const kind = cfg.map.kind ?? pickKind(cfg, rng);
+  if (kind === "urban") return generateCity(cfg, rng);
   const spec = KINDS[kind];
   const W = cfg.map.width, H = cfg.map.height;
   const map = new GameMap(W, H, cfg.terrain);
@@ -606,6 +611,10 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
     nest(x, y);
   }
 
+  // ---- Sandbags and wire along the roads ----
+  const roadDef = roadDefences(map, new Rng(Math.floor(deco.next() * 2147483646) + 1, "defences"), { roadX, laneAt: hamRow, lineAt: rowAt.get(lineRow)!, lineRow, startRow, cx, cy, areaW: A.w });
+  hamletPositions.push(...roadDef.posts.filter((p) => p.y < lineRow - 2));
+
   // ---- Old shell holes ----
   for (let k = 0; k < 10 + rng.int(8); k++) {
     const x = 4 + rng.int(W - 8), y = 4 + rng.int(H - 8);
@@ -644,6 +653,7 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
   // (Only ones on or behind the line: forward pits are dressing, so no gun starts nearer the enemy than the hedge.)
   mgPositions.push(...extraMg.filter((p) => p.y <= lineRow && map.passable(p.x, p.y)));
   for (const p of trenchTiles) if (p.y <= lineRow + 1 && p.y >= lineRow - 9 && map.passable(p.x, p.y)) linePositions.push(p);
+  for (const p of roadDef.line) if (map.passable(p.x, p.y) && !linePositions.some((q) => q.x === p.x && q.y === p.y)) linePositions.push(p);
 
   // ---- Where scouts can lie up: concealed ground ahead of the line, beyond sight of the line of departure ----
   const scoutSpots: Point[] = [];
@@ -718,7 +728,7 @@ function clearFor(map: GameMap, x: number, y: number, w: number, h: number): voi
  * hedge along its crest, a railway embankment across the highway, a town on a
  * low rise. The stream sits in a shallow valley, and every house stands level.
  */
-function shapeGround(map: GameMap, kind: MapKind, rng: Rng, at: { lineRow: number; startRow: number; hamletY: number; streamAt: number[]; roadX: number[]; buildings: Building[]; objective: Point }): void {
+export function shapeGround(map: GameMap, kind: MapKind, rng: Rng, at: { lineRow: number; startRow: number; hamletY: number; streamAt: number[]; roadX: number[]; buildings: Building[]; objective: Point }): void {
   const W = map.width, H = map.height;
   const e = map.elev;
   const hill = (hx: number, hy: number, r: number, amp: number) => {
@@ -731,10 +741,11 @@ function shapeGround(map: GameMap, kind: MapKind, rng: Rng, at: { lineRow: numbe
     }
   };
   // Land rising gently toward the north, where the defenders are.
-  const tilt = kind === "town" ? 2 : kind === "rural" ? 1.5 : 3;
+  const town = kind === "town" || kind === "urban";
+  const tilt = town ? 2 : kind === "rural" ? 1.5 : 3;
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) e[y * W + x] = tilt * (1 - y / H);
-  const hills = kind === "rural" ? 2 : kind === "town" ? 2 : 4;
-  for (let k = 0; k < hills; k++) hill(rng.int(W), rng.int(H), 14 + rng.int(20), (rng.next() - 0.35) * (kind === "town" ? 3 : 7));
+  const hills = kind === "rural" ? 2 : town ? 2 : 4;
+  for (let k = 0; k < hills; k++) hill(rng.int(W), rng.int(H), 14 + rng.int(20), (rng.next() - 0.35) * (town ? 3 : 7));
   if (kind === "rural") {
     // A ridge, its crest just behind the defended hedge.
     const amp = 7 + rng.next() * 4, sigma = 9 + rng.next() * 5;
@@ -754,11 +765,11 @@ function shapeGround(map: GameMap, kind: MapKind, rng: Rng, at: { lineRow: numbe
         if (Math.abs(dy) === 2 && map.terrain[i] !== "road" && hashTile(x, y) < 0.5) map.terrain[i] = "brush";
       }
     }
-  } else if (kind === "town") {
+  } else if (town) {
     hill(at.objective.x, at.objective.y, 22, 2.5);
   }
-  // The stream's shallow valley.
-  for (let x = 0; x < W; x++) {
+  // The stream's shallow valley (a city has none).
+  for (let x = 0; x < at.streamAt.length; x++) {
     const sy = at.streamAt[x]!;
     for (let dy = -9; dy <= 9; dy++) {
       const y = sy + dy;

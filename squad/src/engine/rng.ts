@@ -110,7 +110,8 @@ export type StreamName =
   | "command"
   | "decision"
   | "aftermath"
-  | "armour";
+  | "armour"
+  | "movement";
 
 export class RngStreams {
   readonly seed: number;

@@ -59,6 +59,15 @@ const BASE: Record<Terrain, string> = {
   brush: "#58843a",
   ditch: "#4a6a30",
   deadfall: "#5a6a3a",
+  sandbags: "#5d8a3a",
+  wire: "#5d8a3a",
+  wreck: "#5d8a3a",
+  pothole: "#6e6a64",
+  paving: "#8e8a82",
+  fountain: "#8e8a82",
+  statue: "#8e8a82",
+  stall: "#8e8a82",
+  debris: "#8e8a82",
 };
 
 /** Tiles to a side of one grid square: lettered west to east, numbered north to south. */
@@ -70,7 +79,7 @@ export function gridSquare(x: number, y: number): string {
 }
 
 /** Colours for the minimap. */
-export const MINI: Record<Terrain, string> = { ...BASE, deadfall: "#4a4a30", hedge: "#24481e", woods: "#2a5022", orchard: "#4a7a30", building: "#4a4038", window: "#4a4038", crater: "#5a4630", foxhole: "#3a2e20", brush: "#3e6a2c", ditch: "#3a5426", marsh: "#4a6e5a" };
+export const MINI: Record<Terrain, string> = { ...BASE, deadfall: "#4a4a30", hedge: "#24481e", woods: "#2a5022", orchard: "#4a7a30", building: "#4a4038", window: "#4a4038", crater: "#5a4630", foxhole: "#3a2e20", brush: "#3e6a2c", ditch: "#3a5426", marsh: "#4a6e5a", sandbags: "#b09a68", wire: "#5a5a58", wreck: "#2e2620", pothole: "#4a4640", paving: "#8a8680", fountain: "#5a7a94", statue: "#c8c4b8", stall: "#b0503c", debris: "#6a5e50" };
 
 let flora: Flora | undefined;
 
@@ -90,9 +99,168 @@ function drawTile(g: CanvasRenderingContext2D, w: World, tx: number, ty: number)
   };
   const t = w.map.at(tx, ty);
   const x = tx * TILE, y = ty * TILE;
+  const city = w.layout.kind === "urban";
   px(x, y, BASE[t], TILE, TILE);
   const r = (k: number) => hash2(tx, ty, k);
+  // What lies under sandbags, wire and wrecks: the street in a city or on a road, else the field.
+  const under = (): void => {
+    const onRoad = city || [[0, -1], [1, 0], [0, 1], [-1, 0]].some(([dx, dy]) => w.map.inBounds(tx + dx!, ty + dy!) && w.map.at(tx + dx!, ty + dy!) === "road");
+    if (onRoad) paved(city);
+    else for (let k = 0; k < 6; k++) px(x + Math.floor(r(k) * 16), y + Math.floor(r(k + 9) * 16), r(k + 20) < 0.5 ? "#6a9a42" : "#507a32", 1, 2);
+  };
+  /** Cobbles or setts: a city street, or a pavement. */
+  const paved = (street: boolean): void => {
+    px(x, y, street ? "#6e6a64" : "#8e8a82", TILE, TILE);
+    const joint = street ? "#5a5752" : "#7a766e";
+    for (let row = 0; row < 16; row += 4) {
+      px(x, y + row, joint, 16, 1);
+      const off = ((ty * 4 + row) / 4) % 2 === 0 ? 0 : 3;
+      for (let k = off; k < 16; k += 6) px(x + k, y + row, joint, 1, 4);
+    }
+    for (let k = 0; k < 4; k++) px(x + Math.floor(r(k + 40) * 15), y + Math.floor(r(k + 44) * 15), street ? "#7e7a72" : "#a29e94", 2, 1);
+    // Oil stains and cracks.
+    if (r(48) < 0.2) px(x + 3 + Math.floor(r(49) * 8), y + 4 + Math.floor(r(50) * 8), street ? "#55524c" : "#6e6a62", 4, 2);
+  };
   switch (t) {
+    case "paving":
+      paved(false);
+      break;
+    case "pothole": {
+      if (city) paved(true);
+      else {
+        px(x, y, BASE.road, TILE, TILE);
+        px(x, y + 4, "#8a7048", 16, 1);
+        px(x, y + 11, "#8a7048", 16, 1);
+      }
+      // A ragged hole, its broken edge lighter than the dark water in the bottom.
+      for (let yy = -4; yy <= 4; yy++) {
+        const half = Math.round(5 * Math.sqrt(1 - (yy / 4.6) ** 2) + (r(60 + yy) - 0.5) * 2);
+        px(x + 8 - half, y + 8 + yy, yy < -2 ? "#8a8478" : "#3a3630", half * 2, 1);
+      }
+      px(x + 5, y + 8, "#2e3a44", 6, 2);
+      px(x + 6, y + 8, "#4a5a66", 2, 1);
+      break;
+    }
+    case "fountain": {
+      // A stone basin, round across its three tiles, water in it, a spout in the middle.
+      paved(false);
+      const same = (dx: number, dy: number) => w.map.inBounds(tx + dx, ty + dy) && w.map.at(tx + dx, ty + dy) === "fountain";
+      const cx = same(-1, 0) && !same(1, 0) ? -8 : !same(-1, 0) && same(1, 0) ? 24 : 8;
+      const cy = same(0, -1) && !same(0, 1) ? -8 : !same(0, -1) && same(0, 1) ? 24 : 8;
+      for (let yy = 0; yy < 16; yy++) {
+        for (let xx = 0; xx < 16; xx++) {
+          const d = Math.hypot(xx + 0.5 - cx, yy + 0.5 - cy);
+          if (d > 22) continue;
+          px(x + xx, y + yy, d > 19 ? "#b4ae9e" : d > 17 ? "#8a8476" : (xx + yy * 3 + tx + ty) % 9 === 0 ? "#8ab0c8" : "#4a6e8a");
+        }
+      }
+      if (!same(-1, 0) || !same(1, 0) || !same(0, -1) || !same(0, 1)) break;
+      // The centre tile: the column and its spray.
+      px(x + 6, y + 3, "#c8c2b2", 4, 9);
+      px(x + 6, y + 3, "#e4dece", 1, 9);
+      px(x + 4, y + 1, "#b8d4e4", 8, 2);
+      px(x + 7, y, "#e0f0f8", 2, 2);
+      break;
+    }
+    case "statue": {
+      // A figure on a plinth, its shadow thrown north-east.
+      paved(false);
+      px(x + 3, y + 9, "rgba(0,0,0,0.3)", 12, 6);
+      px(x + 2, y + 9, "#a8a294", 12, 6);
+      px(x + 2, y + 9, "#c8c2b4", 12, 1);
+      px(x + 2, y + 14, "#7a7466", 12, 1);
+      px(x + 6, y + 1, "#6a7a6e", 4, 8);
+      px(x + 7, y - 2, "#6a7a6e", 2, 3);
+      px(x + 5, y + 3, "#5a6a5e", 1, 4);
+      px(x + 10, y + 2, "#5a6a5e", 1, 3);
+      px(x + 6, y + 1, "#8a9c8e", 1, 7);
+      break;
+    }
+    case "stall": {
+      // A market stall: a striped awning over a trestle, crates and baskets underneath.
+      paved(false);
+      const stripe = ["#b0503c", "#2a6a8a", "#5a7a3a"][Math.floor(hash2(Math.floor(tx / 5), ty, 7) * 3)]!;
+      px(x + 1, y + 12, "rgba(0,0,0,0.3)", 15, 3);
+      px(x + 1, y + 8, "#6a4a2c", 14, 4);
+      for (let k = 0; k < 4; k++) px(x + 2 + k * 3, y + 8, ["#c8a040", "#a83a2a", "#7a9a40", "#d8c8a0"][(k + tx) % 4]!, 2, 2);
+      for (let xx = 0; xx < 16; xx++) px(x + xx, y + 2, Math.floor((xx + tx * 16) / 3) % 2 ? "#ece4d0" : stripe, 1, 5);
+      px(x, y + 7, "rgba(0,0,0,0.25)", 16, 1);
+      px(x + 1, y + 7, "#4a3020", 1, 6);
+      px(x + 14, y + 7, "#4a3020", 1, 6);
+      break;
+    }
+    case "debris": {
+      // Fallen masonry, burnt timbers, a smashed chair or a cart wheel, glass.
+      // On the cobbles of a street, or the flags of a pavement under a wall; out in the country, the dirt road.
+      if (city) paved(!w.map.neighbors4(tx, ty).some((q) => w.map.building[w.map.idx(q.x, q.y)]! >= 0));
+      else px(x, y, BASE.road, TILE, TILE);
+      for (let k = 0; k < 6; k++) px(x + Math.floor(r(k + 100) * 13), y + 2 + Math.floor(r(k + 110) * 11), r(k + 120) < 0.5 ? "#9a9288" : "#6a6258", 3, 2);
+      const kind = Math.floor(r(130) * 4);
+      if (kind === 0) {
+        px(x + 1, y + 6, "#2a1e16", 12, 2);
+        px(x + 3, y + 9, "#3a2a1c", 10, 2);
+        px(x + 12, y + 6, "#d06a20", 1, 1);
+      } else if (kind === 1) {
+        // A cart wheel.
+        for (let a = 0; a < 12; a++) px(x + 8 + Math.round(Math.cos(a * 0.52) * 4), y + 8 + Math.round(Math.sin(a * 0.52) * 4), "#4a3420");
+        px(x + 4, y + 8, "#5a4028", 9, 1);
+        px(x + 8, y + 4, "#5a4028", 1, 9);
+      } else if (kind === 2) {
+        // Furniture thrown from a window.
+        px(x + 4, y + 5, "#7a5030", 6, 5);
+        px(x + 4, y + 10, "#5a3820", 1, 3);
+        px(x + 9, y + 10, "#5a3820", 1, 3);
+        px(x + 11, y + 3, "#a8c0c8", 2, 1);
+      } else {
+        px(x + 2, y + 4, "#c4b8a0", 5, 3);
+        px(x + 8, y + 9, "#b0a48c", 6, 3);
+      }
+      break;
+    }
+    case "sandbags": {
+      under();
+      // Bags laid in courses, the seams staggered, a shadow at the foot.
+      px(x, y + 13, "rgba(0,0,0,0.3)", 16, 2);
+      for (let row = 0; row < 3; row++) {
+        const yy = y + 3 + row * 3;
+        const off = row % 2 === 0 ? 0 : 3;
+        for (let k = -off; k < 16; k += 6) {
+          const bx = x + Math.max(0, k), bw = Math.min(6, 16 - Math.max(0, k), k < 0 ? 6 + k : 6);
+          if (bw <= 0) continue;
+          px(bx, yy, row === 0 ? "#c8b07a" : "#b49a66", bw, 3);
+          px(bx, yy + 2, "#8a7448", bw, 1);
+          px(bx + bw - 1, yy, "#7a6640", 1, 3);
+        }
+      }
+      break;
+    }
+    case "wire": {
+      under();
+      // Coils of barbed wire on pickets.
+      px(x + 1, y + 4, "#5a4630", 1, 9);
+      px(x + 14, y + 3, "#5a4630", 1, 9);
+      for (let k = 0; k < 16; k++) {
+        const a = (k + tx * 3) * 0.9;
+        const yy = y + 8 + Math.round(Math.sin(a) * 3.5);
+        px(x + k, yy, "#2e2e2e");
+        px(x + k, y + 8 + Math.round(Math.cos(a * 1.3) * 3), "#3e3e3c");
+        if (k % 3 === 0) px(x + k, yy - 1, "#a8a8a0");
+      }
+      break;
+    }
+    case "wreck": {
+      under();
+      // A burnt-out vehicle, joined to the wreck tiles beside it: blackened, rusted, its tyres burnt off.
+      const same = (dx: number, dy: number) => w.map.inBounds(tx + dx, ty + dy) && w.map.at(tx + dx, ty + dy) === "wreck";
+      const l = same(-1, 0) ? 0 : 2, rr = same(1, 0) ? 16 : 14, tp = same(0, -1) ? 0 : 2, bt = same(0, 1) ? 16 : 14;
+      px(x + l, y + tp + 2, "rgba(0,0,0,0.35)", rr - l, bt - tp);
+      px(x + l, y + tp, "#3a2e26", rr - l, bt - tp - 2);
+      for (let k = 0; k < 7; k++) px(x + l + Math.floor(r(k + 70) * Math.max(1, rr - l - 3)), y + tp + Math.floor(r(k + 80) * Math.max(1, bt - tp - 4)), r(k + 90) < 0.5 ? "#7a4a2a" : "#1e1814", 3, 2);
+      px(x + l, y + tp, "#5a4a3e", rr - l, 1);
+      if (r(95) < 0.5) px(x + l + 3, y + tp + 3, "#141210", Math.max(2, rr - l - 6), 3);
+      if (!same(0, 1)) for (const wx of [l + 1, rr - 4]) px(x + wx, y + bt - 3, "#1a1612", 3, 3);
+      break;
+    }
     case "grass":
     case "orchard":
     case "hedge":
@@ -166,7 +334,8 @@ function drawTile(g: CanvasRenderingContext2D, w: World, tx: number, ty: number)
       break;
     case "road":
     case "bridge":
-      if (t === "road") {
+      if (t === "road" && city) paved(true);
+      else if (t === "road") {
         px(x, y + 4, "#8a7048", 16, 1);
         px(x, y + 11, "#8a7048", 16, 1);
         for (let k = 0; k < 3; k++) px(x + Math.floor(r(k) * 15), y + Math.floor(r(k + 5) * 15), "#b09a70", 2, 1);
@@ -274,10 +443,13 @@ function terrace(g: CanvasRenderingContext2D, w: World, tx: number, ty: number):
       // The face of the step above, hanging down over this tile.
       const h = Math.min(10, 3 * up + 1);
       const water = map.terrain[i - map.width] === "water";
-      px(x, y, water ? "#2e5478" : "#5e4c32", TILE, h);
-      for (let k = 2; k < h; k += 3) px(x, y + k, water ? "#284a6a" : "#4e3e28", TILE, 1);
-      for (let k = 0; k < 3; k++) px(x + Math.floor(hash2(tx, ty, k + 300) * 15), y + 1 + Math.floor(hash2(tx, ty, k + 310) * Math.max(1, h - 2)), "#7a6444", 2, 1);
-      px(x, y, water ? "#4a7aa8" : "#7aae4a", TILE, 1);
+      // In a city a step in the ground is a stone kerb or a flight of steps, not a grassy bank.
+      const above = map.terrain[i - map.width]!;
+      const stone = w.layout.kind === "urban" && above !== "grass" && above !== "woods" && above !== "brush";
+      px(x, y, water ? "#2e5478" : stone ? "#6a665e" : "#5e4c32", TILE, h);
+      for (let k = 2; k < h; k += 3) px(x, y + k, water ? "#284a6a" : stone ? "#57534c" : "#4e3e28", TILE, 1);
+      for (let k = 0; k < 3; k++) px(x + Math.floor(hash2(tx, ty, k + 300) * 15), y + 1 + Math.floor(hash2(tx, ty, k + 310) * Math.max(1, h - 2)), stone ? "#7e7a70" : "#7a6444", 2, 1);
+      px(x, y, water ? "#4a7aa8" : stone ? "#a8a498" : "#7aae4a", TILE, 1);
       px(x, y + h, "rgba(10,16,6,0.35)", TILE, 2);
     }
   }

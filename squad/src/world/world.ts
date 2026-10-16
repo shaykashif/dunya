@@ -208,23 +208,35 @@ export class World {
     return 0;
   }
 
-  path(s: Soldier, to: Point, exposureWeight = 0): number[] | null {
-    const ex = this.exposure[s.side];
+  /**
+   * Extra cost per cell for a man moving tactically: ground the enemy can see,
+   * and ground with no cover at hand, so routes run from wall to wall, through
+   * houses and along ditches. Null for a plain walk.
+   */
+  tacticalCost(side: Side, exposureWeight: number): ((c: number) => number) | undefined {
+    if (exposureWeight <= 0) return undefined;
+    const ex = this.exposure[side];
+    const open = this.map.open, oc = this.map.openCost;
     const n = this.map.tiles;
-    const wgt = exposureWeight;
+    return (c) => {
+      const t = c % n;
+      return ex[t]! * exposureWeight + (c < n && open[t] === 1 ? oc * (1 + ex[t]!) : 0);
+    };
+  }
+
+  path(s: Soldier, to: Point, exposureWeight = 0): number[] | null {
     return findPath(this.map, this.cellOf(s), this.map.cell(to.x, to.y, this.floorFor(s, to)), {
-      extra: wgt > 0 ? (c) => ex[c % n]! * wgt : undefined,
-      maxExpand: 30000,
+      extra: this.tacticalCost(s.side, exposureWeight),
+      // Routes that keep to cover search wider before giving up.
+      maxExpand: exposureWeight > 0 ? 90000 : 30000,
     });
   }
 
   /** A path that steps around anyone standing in the way. */
   detour(s: Soldier, to: Point, exposureWeight = 0): number[] | null {
-    const ex = this.exposure[s.side];
-    const n = this.map.tiles;
     return findPath(this.map, this.cellOf(s), this.map.cell(to.x, to.y, this.floorFor(s, to)), {
       blocked: (c) => this.occupancy[c] !== 0 && this.occupancy[c] !== s.id,
-      extra: exposureWeight > 0 ? (c) => ex[c % n]! * exposureWeight : undefined,
+      extra: this.tacticalCost(s.side, exposureWeight),
       maxExpand: 5000,
     });
   }

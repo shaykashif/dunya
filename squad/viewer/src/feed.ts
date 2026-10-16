@@ -285,6 +285,21 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
       const text = d.stage === "stack" ? `${sq.name} closes on ${b.name}: the assault team flattens itself against the walls by the doors and windows while the base of fire keeps the windows busy.` : d.stage === "grenades" ? `${sq.name}: grenades through the windows of ${b.name}!` : `${sq.name} storms into ${b.name}, room by room.`;
       return line(text, sq.side, [], d.stage !== "grenades");
     }
+    case "building_cleared": {
+      const sq = w.squads[d.squad as number]!;
+      const b = w.buildings[d.house as number]!;
+      return line(d.fought ? `${sq.name} has ${b.name}: they hold it floor by floor, the guns at the top windows.` : `${sq.name} clears ${b.name} room by room and takes its windows.`, sq.side, [], Boolean(d.fought));
+    }
+    case "garrison": {
+      const sq = w.squads[d.squad as number]!;
+      const b = w.buildings[d.house as number]!;
+      return line(`${sq.name} garrisons ${b.name} on the plaza, at the windows on every floor: it is to be held to the last.`, sq.side, [], false);
+    }
+    case "hold_floors": {
+      const sq = w.squads[d.squad as number]!;
+      const b = w.buildings[d.house as number]!;
+      return line(`The enemy is into ${b.name}: ${sq.name} goes up the stairs to hold the upper floors, dropping grenades on them.`, sq.side, [], true);
+    }
     case "building_collapse": {
       const hurt = d.hurt as number[];
       return line(`${(d.name as string).replace(/^./, (c) => c.toUpperCase())} falls in under the shelling${hurt.length ? `, burying ${hurt.map((id) => label(w.soldier(id))).join(", ")}` : ""}.`, "fire", hurt, true);

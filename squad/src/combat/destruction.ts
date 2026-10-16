@@ -11,7 +11,7 @@ import type { Building } from "../world/layout.ts";
 import type { Ordnance, Terrain } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 
-const OPEN_GROUND = new Set<Terrain>(["grass", "wheat", "orchard", "road", "brush", "marsh", "deadfall", "woods"]);
+const OPEN_GROUND = new Set<Terrain>(["grass", "wheat", "orchard", "road", "brush", "marsh", "deadfall", "woods", "paving", "pothole"]);
 
 /** A mortar bomb or shell has burst: knock down what it hits. Returns true if the map changed. */
 export function shellDamage(w: World, o: Ordnance): boolean {
@@ -68,6 +68,12 @@ export function shellDamage(w: World, o: Ordnance): boolean {
       const fall = 1 - d / (spec.reach + 1);
       if (t === "woods" || t === "orchard") {
         if (rng.chance((o.kind === "artillery" ? cfg.treeArtillery : cfg.treeMortar) * fall)) set(x, y, "deadfall");
+      } else if (t === "stall" && d <= 1.5) {
+        // Stalls are blown to matchwood.
+        set(x, y, "debris");
+      } else if (t === "wire" && d <= 1.5) {
+        // Wire is blown apart.
+        set(x, y, w.layout.kind === "urban" ? "rubble" : "crater");
       } else if (t === "hedge" && d <= (o.kind === "artillery" ? 1.5 : 1)) {
         if (rng.chance((o.kind === "artillery" ? cfg.hedgeArtillery : cfg.hedgeMortar) * fall)) set(x, y, "brush");
       }

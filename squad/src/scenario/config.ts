@@ -64,6 +64,15 @@ const moveCost: Record<Terrain, number> = {
   brush: 1.5,
   ditch: 1.4,
   deadfall: 1.9,
+  sandbags: 2.5,
+  wire: 7,
+  wreck: Infinity,
+  pothole: 1.3,
+  paving: 0.9,
+  fountain: Infinity,
+  statue: Infinity,
+  stall: 2.2,
+  debris: 1.7,
 };
 
 export const DEFAULT_CONFIG = {
@@ -94,20 +103,20 @@ export const DEFAULT_CONFIG = {
     /** The kind of ground to fight over; null lets the seed choose. */
     kind: null as MapKind | null,
     /** How often the seed chooses each kind. */
-    kindWeights: { hamlet: 0.3, rural: 0.25, road: 0.2, town: 0.25 } as Record<MapKind, number>,
+    kindWeights: { hamlet: 0.3, rural: 0.25, road: 0.2, town: 0.25, urban: 0.25 } as Record<MapKind, number>,
   },
   terrain: {
     moveCost,
     /** Line-of-sight left after passing through one tile of each kind. */
-    seeThrough: { woods: 0.78, orchard: 0.9, wheat: 0.97, hedge: 0, wall: 0.85, building: 0, rubble: 0.92, window: 0.75, door: 0.75, brush: 0.82, deadfall: 0.88 } as Partial<Record<Terrain, number>>,
+    seeThrough: { woods: 0.78, orchard: 0.9, wheat: 0.97, hedge: 0, wall: 0.85, building: 0, rubble: 0.92, window: 0.75, door: 0.75, brush: 0.82, deadfall: 0.88, sandbags: 0.35, wire: 0.95, wreck: 0, fountain: 0.5, statue: 0.3, stall: 0.55, debris: 0.9 } as Partial<Record<Terrain, number>>,
     /** Protection from a hedge, wall or window between a man and the shooter, right beside him. */
-    edgeCover: { hedge: 0.85, wall: 0.65, window: 0.8, door: 0.55, rubble: 0.45, woods: 0.3, orchard: 0.15, building: 0.95, brush: 0.2, deadfall: 0.35 } as Partial<Record<Terrain, number>>,
+    edgeCover: { hedge: 0.85, wall: 0.65, window: 0.8, door: 0.55, rubble: 0.45, woods: 0.3, orchard: 0.15, building: 0.95, brush: 0.2, deadfall: 0.35, sandbags: 0.8, wreck: 0.9, fountain: 0.75, statue: 0.85, stall: 0.3, debris: 0.3 } as Partial<Record<Terrain, number>>,
     /** Protection from the tile he lies in. */
-    ownCover: { foxhole: 0.75, crater: 0.5, rubble: 0.3, woods: 0.2, orchard: 0.1, ditch: 0.55, brush: 0.1, deadfall: 0.25 } as Partial<Record<Terrain, number>>,
+    ownCover: { foxhole: 0.75, crater: 0.5, rubble: 0.3, woods: 0.2, orchard: 0.1, ditch: 0.55, brush: 0.1, deadfall: 0.25, pothole: 0.35, debris: 0.15 } as Partial<Record<Terrain, number>>,
     /** Concealment: how much harder he is to spot on this ground. Foliage and dark rooms hide a man well. */
-    concealment: { woods: 0.35, orchard: 0.6, wheat: 0.6, rubble: 0.65, foxhole: 0.45, crater: 0.7, floor: 0.4, stairs: 0.4, door: 0.7, brush: 0.42, ditch: 0.5, marsh: 0.85, deadfall: 0.55 } as Partial<Record<Terrain, number>>,
+    concealment: { woods: 0.35, orchard: 0.6, wheat: 0.6, rubble: 0.65, foxhole: 0.45, crater: 0.7, floor: 0.4, stairs: 0.4, door: 0.7, brush: 0.42, ditch: 0.5, marsh: 0.85, deadfall: 0.55, pothole: 0.8, stall: 0.6, debris: 0.75 } as Partial<Record<Terrain, number>>,
     /** How tall what grows or stands on each kind of ground is, in metres. */
-    height: { hedge: 2.6, wall: 1.8, woods: 9, orchard: 4.5, wheat: 1.1, brush: 1.6, rubble: 1, deadfall: 1.5 } as Partial<Record<Terrain, number>>,
+    height: { hedge: 2.6, wall: 1.8, woods: 9, orchard: 4.5, wheat: 1.1, brush: 1.6, rubble: 1, deadfall: 1.5, sandbags: 1.1, wire: 0.9, wreck: 2.2, fountain: 1, statue: 3, stall: 1.8, debris: 0.8 } as Partial<Record<Terrain, number>>,
     floorHeight: 3,
     eye: 1.5,
     body: 1,
@@ -162,7 +171,7 @@ export const DEFAULT_CONFIG = {
   /** What shells do to what they hit. */
   destruction: {
     /** Hits a stretch of wall takes before it is a breach: stone, a window or door, a garden wall. */
-    wallHp: { building: 4, window: 2, door: 2, wall: 3 } as Partial<Record<Terrain, number>>,
+    wallHp: { building: 4, window: 2, door: 2, wall: 3, sandbags: 2, statue: 3, fountain: 4 } as Partial<Record<Terrain, number>>,
     /** Damage to walls at the burst and around it, and how far it reaches, in tiles. */
     mortar: { center: 2, ring: 1, reach: 1.5 },
     artillery: { center: 4, ring: 2, reach: 2.5 },
@@ -210,6 +219,26 @@ export const DEFAULT_CONFIG = {
     /** The clearing is given up after this long. */
     giveUp: 160,
   },
+  /** Fighting in a city. */
+  urban: {
+    /** Ticks the covering team fires before the movers go. */
+    coverFirst: 5,
+    /** A bound in a city goes no further than this: building to building. */
+    boundMax: 16,
+    /** How long a squad holds a building it has cleared, floor by floor, before the next bound. */
+    holdTicks: 25,
+    /** A man indoors throws a grenade into the next room or up or down the stairs at an enemy within this many tiles. */
+    roomGrenade: 7,
+    /** How close a flanking team gets to the position it is going for. */
+    flankRange: 10,
+    /** Within this many tiles a squad stops to deal with an enemy; further off, it keeps working forward house by house under covering fire. */
+    engage: 42,
+    /** The attackers bring this many more rifle squads to a city, and this many more mortar missions. */
+    attackerSquads: 1,
+    attackerMissions: 3,
+    /** An anti-tank gun is this much less likely among the houses. */
+    fieldGunFactor: 0.5,
+  },
   shelling: {
     /** A squad reacts to rounds landing within this many tiles of its men, for this many ticks. */
     radius: 13,
@@ -237,6 +266,16 @@ export const DEFAULT_CONFIG = {
     carrySpeed: 0.45,
     /** Exposure cost weight when routing past known enemies. */
     exposureWeight: 6,
+    /**
+     * Extra cost, moving tactically (anything but a walk), of a tile with no
+     * cover at hand: men run from wall to wall and through the houses rather
+     * than down the middle of a street. Heavier in a city.
+     */
+    openCost: { default: 0.15, urban: 0.7 },
+    /** Under fire, a man who dashes across open ground to cover stops there this long before the next dash. */
+    coverPause: 2,
+    /** Chance per tick a man working through barbed wire gets snagged and held a moment. */
+    wireSnag: 0.25,
   },
   posture: {
     /** How big a target each posture makes. */

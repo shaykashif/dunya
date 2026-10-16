@@ -10,7 +10,7 @@ import { cheb, dist } from "../world/map.ts";
 import type { Building } from "../world/layout.ts";
 import { enemyOf, type Contact, type ElementOrder, type FirePolicy, type Pace, type Platoon, type Point, type Side, type Soldier, type Squad, type SquadState } from "../world/types.ts";
 import type { World } from "../world/world.ts";
-import { boundsTo, canFireOn, centroid, facingFrom, flankPoint, pickPositions } from "./tactics.ts";
+import { boundsTo, buildingPositions, canFireOn, centroid, facingFrom, flankPoint, gapTo, houseAt, pickPositions, pickPositions as pickPositionsAt, urbanBoundsTo, urbanFlankPoint } from "./tactics.ts";
 
 const RANK_ORDER = ["Leutnant", "Second Lieutenant", "Oberfeldwebel", "Technical Sergeant", "Feldwebel", "Staff Sergeant", "Unteroffizier", "Sergeant", "Obergefreiter", "Corporal", "Gefreiter", "Technician Fifth Grade", "Private First Class", "Oberschütze", "Private", "Schütze"];
 
@@ -51,7 +51,7 @@ function setOrder(w: World, sq: Squad, el: "A" | "B", o: Omit<ElementOrder, "iss
   // Interrupt men carrying out a superseded order.
   for (const id of sq.members) {
     const s = w.soldier(id);
-    if (s.element === el && s.act?.cand.ordered) s.act = null;
+    if ((s.element === el || o.positions[s.id] !== undefined) && s.act?.cand.ordered) s.act = null;
   }
   w.emit("order", [], { squad: sq.id, element: el, kind: o.kind, pace: o.pace, fire: o.fire, target: o.target ? [o.target.x, o.target.y] : null });
 }
@@ -90,6 +90,71 @@ function ensureLeader(w: World, sq: Squad): Soldier | null {
   shout(w, next, next.side === "us" ? `I've got the squad! On me!` : "Ich übernehme! Mir nach!", null);
   note(w, next, `took command of ${sq.name}`);
   return next;
+}
+
+/** Fighting in a city: house to house, floor by floor. */
+function urban(w: World): boolean {
+  return w.layout.kind === "urban";
+}
+
+/** The route to a point in bounds: hedge to hedge in the country, building to building in a city. */
+function routeTo(w: World, side: Side, from: Point, to: Point): Point[] {
+  return urban(w) ? urbanBoundsTo(w, side, from, to) : boundsTo(w, side, from, to);
+}
+
+const FLOOR = ["ground-floor", "first-floor", "second-floor", "third-floor"];
+
+/** Every man of a squad into a building, at the windows facing `toward`, the guns at the top. */
+function occupy(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, b: Building, toward: Point, fire: FirePolicy = "free"): void {
+  const pos = buildingPositions(w, [...men.A, ...men.B], b, toward);
+  for (const el of ["A", "B"] as const) {
+    const mine: Record<number, Point> = {};
+    for (const m of men[el]) mine[m.id] = pos[m.id] ?? spotOf(m);
+    setOrder(w, sq, el, order("hold", mine, "crouch", fire));
+  }
+}
+
+/** The enemy a team should be putting fire on before the others move: the most dangerous position known lately, or where a sniper is thought to be. */
+function coverTarget(w: World, sq: Squad, at: Point): Point | null {
+  const cs = clusters(liveContacts(w, sq, 60), 6).filter((c) => dist(c.at, at) <= 70);
+  if (cs.length > 0) return cs[0]!.at;
+  const alert = sq.sniperAlert && w.tick - sq.sniperAlert.tick < 60 ? sq.sniperAlert : null;
+  return alert ? { x: alert.x, y: alert.y } : null;
+}
+
+/**
+ * Into the nearest building on contact, rather than a line abreast across a
+ * street: every man to a window facing the enemy, the guns upstairs. False if
+ * there is no building close enough.
+ */
+function urbanDeploy(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, target: Point, center: Point): boolean {
+  const theirs = w.map.inBounds(target.x, target.y) ? w.map.building[w.map.idx(target.x, target.y)]! : -1;
+  let best: Building | null = null, bd = Infinity;
+  for (const b of w.buildings) {
+    if (b.destroyed || b.id === theirs) continue;
+    const gap = gapTo(b, center);
+    if (gap > 9) continue;
+    // Not one nearer the enemy than they are already.
+    const score = gap + Math.max(0, dist(center, target) - dist({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, target)) * 0.3;
+    if (score < bd) {
+      bd = score;
+      best = b;
+    }
+  }
+  if (!best) return false;
+  const pos = buildingPositions(w, [...men.A, ...men.B], best, target);
+  for (const el of ["A", "B"] as const) {
+    const mine: Record<number, Point> = {};
+    for (const m of men[el]) mine[m.id] = pos[m.id] ?? spotOf(m);
+    setOrder(w, sq, el, order("suppress", mine, "rush", "free", target));
+  }
+  sq.intent = `into ${best.name}, getting to the windows and returning fire`;
+  return true;
+}
+
+/** A flanking position for a squad sent to help: round the side in the country, in dead ground under the windows in a city. */
+function flankFor(w: World, side: Side, from: Point, focus: Point): Point | null {
+  return urban(w) ? urbanFlankPoint(w, side, from, focus, w.config.urban.flankRange) : flankPoint(w, side, from, focus, 18);
 }
 
 function rearDir(w: World, side: Side): Point {
@@ -196,6 +261,7 @@ function holdHere(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, fire
 function deployLine(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, target: Point, center: Point, spacing = 3.5, shift = 0): void {
   const all = [...men.A, ...men.B];
   if (all.length === 0) return;
+  if (urban(w) && urbanDeploy(w, sq, men, target, center)) return;
   const f = facingFrom(center, target);
   const px = -f.y, py = f.x;
   const sorted = [...all].sort((a, b) => (a.x - center.x) * px + (a.y - center.y) * py - ((b.x - center.x) * px + (b.y - center.y) * py) || a.id - b.id);
@@ -315,11 +381,11 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
       // The reserve lets the line squads get ahead before following.
       if (sq.task === "reserve" && w.tick < 150) return;
       const lane = approachPoint(w, pos);
-      sq.route = lane ? [...boundsTo(w, sq.side, pos, lane), ...boundsTo(w, sq.side, lane, objective)] : boundsTo(w, sq.side, pos, objective);
+      sq.route = lane ? [...routeTo(w, sq.side, pos, lane), ...routeTo(w, sq.side, lane, objective)] : routeTo(w, sq.side, pos, objective);
       sq.routeIdx = 0;
         sq.boundWp = -1;
       sq.bounding = "A";
-      setState(w, sq, "advance", `advancing on ${w.layout.objectiveName}, hedge by hedge`);
+      setState(w, sq, "advance", `advancing on ${w.layout.objectiveName}, ${urban(w) ? "house by house" : "hedge by hedge"}`);
       return;
     }
     case "advance": {
@@ -329,7 +395,7 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
         holdHere(w, sq, men, "free", { x: sniped.x, y: sniped.y });
         return;
       }
-      if (focus && dist(pos, focus.at) <= 75) {
+      if (focus && dist(pos, focus.at) <= (urban(w) ? w.config.urban.engage : 75)) {
         setState(w, sq, "react", "contact! getting down and returning fire");
         shout(w, leader, leader.side === "us" ? (focus.automatic ? "MG! Get down!" : "Contact front!") : focus.automatic ? "MG! Deckung!" : "Feind voraus!", "contact", 40);
         // The drill: get down, spread out into a line, get into spots you can shoot from, return fire.
@@ -367,7 +433,7 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
       }
       if (!focus) {
         setState(w, sq, "advance", "no more fire; pressing on");
-        sq.route = boundsTo(w, sq.side, pos, objective);
+        sq.route = routeTo(w, sq.side, pos, objective);
         sq.routeIdx = 0;
         sq.boundWp = -1;
         return;
@@ -378,24 +444,32 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
     case "flank": {
       if (!focus || !sq.focus) {
         setState(w, sq, "advance", "the position has gone quiet; pressing on");
-        sq.route = boundsTo(w, sq.side, pos, objective);
+        sq.route = routeTo(w, sq.side, pos, objective);
         sq.routeIdx = 0;
         sq.boundWp = -1;
         return;
       }
       // Base of fire keeps their heads down, from spots that can see the position.
       setOrder(w, sq, "A", order("suppress", firingLine(w, men.A, sq.orders.A.positions, sq.focus), "crouch", "free", sq.focus));
-      if (!sq.flankPoint) sq.flankPoint = flankPoint(w, sq.side, centroid(men.B), sq.focus, 18);
+      if (!sq.flankPoint) sq.flankPoint = urban(w) ? urbanFlankPoint(w, sq.side, centroid(men.B), sq.focus, w.config.urban.flankRange) : flankPoint(w, sq.side, centroid(men.B), sq.focus, 18);
       if (!sq.flankPoint) {
         setState(w, sq, "fix", "no way round; pinning them and calling for help");
         return;
       }
       if (sq.orders.B.kind !== "move" || w.tick - sq.orders.B.issued > 200) {
         const facing = facingFrom(sq.flankPoint, sq.focus);
-        setOrder(w, sq, "B", order("move", pickPositions(w, men.B, sq.flankPoint, facing, 2, 4, sq.focus), "crouch", "return"));
+        if (!urban(w)) setOrder(w, sq, "B", order("move", pickPositions(w, men.B, sq.flankPoint, facing, 2, 4, sq.focus), "crouch", "return"));
+        else if (sq.coverTick < 0 || w.tick - sq.coverTick >= w.config.urban.coverFirst) {
+          // Suppress, then move: once the base of fire has the windows busy, the rifle team dashes for dead ground under them.
+          setOrder(w, sq, "B", order("move", pickPositions(w, men.B, sq.flankPoint, facing, 1, 3), "rush", "return"));
+          shout(w, leader, leader.side === "us" ? "They've got their heads down, go! Through the houses!" : "Sie liegen in Deckung, los, durch die Häuser!", "flank-go", 40);
+        } else {
+          sq.intent = "the base of fire opening up on the windows before the rifle team moves";
+          return;
+        }
       }
       const bPos = centroid(men.B);
-      const close = dist(bPos, sq.focus) <= 16;
+      const close = dist(bPos, sq.focus) <= (urban(w) ? 6 : 16);
       if (arrived(w, men.B, sq.orders.B, 2) || close) {
         setState(w, sq, "assault", "flank reached: assaulting while the base of fire covers");
         shout(w, leader, leader.side === "us" ? "Go! Go! Go!" : "Sprung auf! Marsch, marsch!", null);
@@ -410,9 +484,16 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
     case "fix": {
       if (!focus || !sq.focus) {
         setState(w, sq, "advance", "fire has died down; pressing on");
-        sq.route = boundsTo(w, sq.side, pos, objective);
+        sq.route = routeTo(w, sq.side, pos, objective);
         sq.routeIdx = 0;
         sq.boundWp = -1;
+        return;
+      }
+      if (urban(w) && dist(pos, sq.focus) > w.config.urban.engage + 10 && !(pl.plan && pl.plan.base.includes(sq.id))) {
+        sq.route = routeTo(w, sq.side, pos, objective);
+        sq.routeIdx = 0;
+        sq.boundWp = -1;
+        setState(w, sq, "advance", "too far to shoot it out from here: working closer house by house");
         return;
       }
       holdHere(w, sq, men, "free", sq.focus);
@@ -462,10 +543,20 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
         shout(w, leader, leader.side === "us" ? "Clear! Hold here, then we push on." : "Stellung genommen!", null);
         sq.focus = null;
         sq.flankPoint = null;
+        const taken = urban(w) ? houseAt(w, target) : null;
         if (dist(pos, objective) <= w.config.battle.objectiveRadius + 6) setState(w, sq, "consolidate", "on the objective, digging in");
-        else {
+        else if (taken) {
+          // A house taken in a city is held, floor by floor, with the guns at the top windows, before the next bound.
+          sq.route = routeTo(w, sq.side, pos, objective);
+          sq.routeIdx = 0;
+          sq.boundWp = -1;
+          sq.sweep = { house: taken.id, tick: w.tick, held: true };
+          occupy(w, sq, men, taken, objective);
+          setState(w, sq, "advance", `${taken.name} taken: holding it floor by floor, the guns at the top windows`);
+          w.emit("building_cleared", [leader.id], { squad: sq.id, house: taken.id, fought: true });
+        } else {
           setState(w, sq, "advance", "position cleared; pushing on");
-          sq.route = boundsTo(w, sq.side, pos, objective);
+          sq.route = routeTo(w, sq.side, pos, objective);
           sq.routeIdx = 0;
         sq.boundWp = -1;
         }
@@ -480,7 +571,7 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
       const j = pl.plan?.jump[sq.id];
       if (!pl.plan || !j) {
         setState(w, sq, "advance", "the attack was called off; pressing on");
-        sq.route = boundsTo(w, sq.side, pos, objective);
+        sq.route = routeTo(w, sq.side, pos, objective);
         sq.routeIdx = 0;
         sq.boundWp = -1;
         return;
@@ -533,6 +624,36 @@ function decideOnContact(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] 
     fallBack(w, sq, pos, leader);
     return;
   }
+  if (urban(w)) {
+    if (d > w.config.urban.engage) {
+      // Far up the street: no flanking that far through the houses. Keep bounding forward, the covering team on the windows.
+      sq.route = routeTo(w, sq.side, pos, objectiveFor(w, sq, w.platoons[sq.side]));
+      sq.routeIdx = 0;
+      sq.boundWp = -1;
+      setState(w, sq, "advance", `the enemy is ${Math.round(d * 3)} m up the street: working forward house by house under covering fire`);
+      return;
+    }
+    const house = houseAt(w, focus.at);
+    const z = focus.at.z ?? 0;
+    const what = focus.automatic ? "machine gun" : focus.n === 1 ? "rifleman" : "enemy";
+    const where = house ? ` in ${house.name}${z > 0 ? `, ${FLOOR[z] ?? "upper"} window` : ""}` : "";
+    if (d <= 10 || (d <= 20 && focus.n <= 2 && !focus.automatic)) {
+      setState(w, sq, "assault", `${what}${where} close by: grenades, then in`);
+      shout(w, leader, leader.side === "us" ? "Grenades! Then in, go!" : "Handgranaten! Dann rein!", null);
+      return;
+    }
+    if (men.B.length >= 2) {
+      sq.flankPoint = urbanFlankPoint(w, sq.side, centroid(men.B), focus.at, w.config.urban.flankRange);
+      if (sq.flankPoint) {
+        sq.coverTick = w.tick;
+        setState(w, sq, "flank", `${what}${where} at ${Math.round(d * 3)} m: the base of fire keeps the windows busy while the rifle team works round through the houses to grenade it`);
+        shout(w, leader, leader.side === "us" ? (z > 0 ? "BAR, hit that window! Keep it on him! Rifle team, with me through the buildings!" : "Base of fire! Rifle team, on me, through the buildings!") : "MG, Fenster bekämpfen! Gruppe, durch die Häuser!", null);
+        return;
+      }
+    }
+    setState(w, sq, "fix", `pinning the ${what}${where} with fire`);
+    return;
+  }
   const pl = w.platoons[sq.side];
   const others = pl.squadIds.map((id) => w.squad(id)).filter((o) => o !== sq && ableMen(w, o).length >= 4 && o.state !== "fall_back" && o.state !== "broken" && o.state !== "withdraw" && o.state !== "displace");
   const hardPos = focus.automatic || focus.n >= 3 || focus.tank === true;
@@ -579,6 +700,10 @@ function advanceByBounds(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] 
     if (arrived(w, men.A, sq.orders.A, 2)) sq.routeIdx++;
     return;
   }
+  if (urban(w)) {
+    urbanBound(w, sq, men, wp, face, w.maybe(sq.leaderId));
+    return;
+  }
   // Bounding overwatch: one team moves to the next hedge while the other watches, then it comes up.
   const mover = sq.bounding;
   const watcher = mover === "A" ? "B" : "A";
@@ -607,6 +732,94 @@ function advanceByBounds(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] 
   sq.bounding = watcher;
 }
 
+/**
+ * A bound in a city. The covering team puts fire on the windows the enemy has
+ * been seen at, and only once it has them busy does the moving team dash for
+ * the next house; it goes through it room by room and takes the windows on
+ * every floor, then covers the others up. A house taken is held a while,
+ * floor by floor, the guns at the top windows, before the next bound.
+ */
+function urbanBound(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, wp: Point, face: Point, leader: Soldier | null): void {
+  const cfg = w.config.urban;
+  const all = [...men.A, ...men.B];
+  const here = centroid(all);
+  const threat = coverTarget(w, sq, here);
+  const look = threat ?? { x: Math.round(here.x + face.x * 40), y: Math.round(here.y + face.y * 40) };
+  if (sq.sweep?.held) {
+    const hot = threat !== null || liveContacts(w, sq, 90).length > 0;
+    if (w.tick - sq.sweep.tick < (hot ? cfg.holdTicks : 6)) return;
+    sq.sweep = null;
+    if (sq.boundWp === sq.routeIdx) {
+      sq.routeIdx++;
+      sq.bounding = sq.bounding === "A" ? "B" : "A";
+    }
+    return;
+  }
+  const house = houseAt(w, wp);
+  const mover = sq.bounding, watcher = mover === "A" ? "B" : "A";
+  const team = (el: "A" | "B") => (el === "A" ? "the base team" : "the rifle team");
+  const keep = (ms: Soldier[]) => Object.fromEntries(ms.map((m) => [m.id, spotOf(m)])) as Record<number, Point>;
+  const cover = (el: "A" | "B") => {
+    if (threat && men[el].length > 0) {
+      setOrder(w, sq, el, order("suppress", firingLine(w, men[el], sq.orders[el].positions, threat), "crouch", "free", threat));
+      sq.coverTick = w.tick;
+      if (leader) shout(w, leader, leader.side === "us" ? "Covering fire! Hit those windows!" : "Feuerschutz! Die Fenster!", "cover", 25);
+    } else {
+      setOrder(w, sq, el, order("overwatch", keep(men[el]), "crouch", "free"));
+      sq.coverTick = -1;
+    }
+  };
+  const ready = () => sq.coverTick < 0 || w.tick - sq.coverTick >= cfg.coverFirst;
+  const sent = (el: "A" | "B") => sq.orders[el].kind === "move" && sq.orders[el].target?.x === wp.x && sq.orders[el].target?.y === wp.y;
+  const send = (el: "A" | "B", exclude: Point[]) => {
+    const positions = house ? buildingPositions(w, men[el], house, look, 0, exclude) : pickPositions(w, men[el], wp, face, 2, 4);
+    setOrder(w, sq, el, order("move", positions, threat ? "rush" : "crouch", "return", wp));
+  };
+  if (sq.boundWp !== sq.routeIdx) {
+    sq.boundWp = sq.routeIdx;
+    sq.boundStage = 0;
+    cover(watcher);
+    setOrder(w, sq, mover, order("hold", keep(men[mover]), "crouch", "free"));
+    sq.sweep = house ? { house: house.id, tick: w.tick, held: false } : null;
+  }
+  if (sq.boundStage === 0) {
+    if (!sent(mover)) {
+      if (!ready()) {
+        sq.intent = `${team(watcher)} opening up on the windows before ${team(mover)} moves`;
+        return;
+      }
+      send(mover, []);
+      sq.intent = house ? `${team(mover)} rushing ${house.name} to clear it room by room, ${team(watcher)} covering` : `${team(mover)} dashing for the next cover, ${team(watcher)} covering`;
+      if (house && leader) shout(w, leader, leader.side === "us" ? "Clear that building! Room by room!" : "Haus säubern! Raum für Raum!", "clear-house", 40);
+      return;
+    }
+    if (!arrived(w, men[mover], sq.orders[mover], 1.5)) return;
+    if (house && leader) {
+      w.emit("building_cleared", [leader.id], { squad: sq.id, house: house.id, fought: false });
+      shout(w, leader, leader.side === "us" ? "Clear! Bring them up!" : "Sauber! Nachkommen!", null);
+    }
+    sq.boundStage = 1;
+    cover(mover);
+    return;
+  }
+  if (!sent(watcher)) {
+    if (!ready()) return;
+    send(watcher, Object.values(sq.orders[mover].positions));
+    sq.intent = house ? `${team(watcher)} coming up into ${house.name}` : `${team(watcher)} coming up`;
+    return;
+  }
+  if (!arrived(w, men[watcher], sq.orders[watcher], 1.5)) return;
+  if (house && sq.sweep && !sq.sweep.held) {
+    sq.sweep = { house: house.id, tick: w.tick, held: true };
+    occupy(w, sq, men, house, look);
+    sq.intent = `holding ${house.name} floor by floor, the guns at the top windows`;
+    return;
+  }
+  sq.sweep = null;
+  sq.routeIdx++;
+  sq.bounding = watcher;
+}
+
 function fallBack(w: World, sq: Squad, pos: Point, leader: Soldier): void {
   // Just back from one retreat: dig in and trade fire rather than run again.
   if (w.tick - sq.fellBackTick < 150) {
@@ -628,6 +841,10 @@ function fallBack(w: World, sq: Squad, pos: Point, leader: Soldier): void {
 function fallBackStep(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, pos: Point, threat: Point | null, leader: Soldier, done: () => void): void {
   const to = sq.post ?? pos;
   const facing = threat ? facingFrom(to, threat) : { x: -rearDir(w, sq.side).x, y: -rearDir(w, sq.side).y };
+  // In a city, falling back into a house means taking its windows, floor by floor.
+  const house = urban(w) ? houseAt(w, to) : null;
+  const look = threat ?? { x: Math.round(to.x + facing.x * 30), y: Math.round(to.y + facing.y * 30) };
+  const pickPositions = (ww: World, ms: Soldier[], at: Point, f: Point, spacing: number, radius: number): Record<number, Point> => (house ? buildingPositions(ww, ms, house, look) : pickPositionsAt(ww, ms, at, f, spacing, radius));
   const mover = sq.bounding, cover = mover === "A" ? "B" : "A";
   const atTo = (o: ElementOrder) => o.kind === "withdraw" && o.target !== null && o.target.x === to.x && o.target.y === to.y;
   if (!atTo(sq.orders[mover])) {
@@ -699,20 +916,52 @@ function defendStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
         return a.x * sq.facing.x + a.y * sq.facing.y < 0.25;
       });
       const closeIn = live.filter((c) => dist(c, pos) <= 8).length >= 2;
+      // In a city, men whose house the enemy is getting into go up the stairs and hold the upper floors, dropping grenades on them.
+      if (urban(w) && closeIn && !sq.sweep?.held) {
+        const count = new Map<number, number>();
+        for (const m of all) {
+          const b = houseAt(w, m);
+          if (b && w.map.indoors(m.x, m.y, m.z)) count.set(b.id, (count.get(b.id) ?? 0) + 1);
+        }
+        const id = [...count.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0];
+        const house = id !== undefined ? w.buildings[id]! : null;
+        const near = live.reduce<Point | null>((best, c) => (best === null || dist(c, pos) < dist(best, pos) ? c : best), null);
+        if (house && house.floors >= 2 && near) {
+          const up = buildingPositions(w, all, house, near, 1);
+          for (const el of ["A", "B"] as const) {
+            const mine: Record<number, Point> = {};
+            for (const m of men[el]) mine[m.id] = up[m.id] ?? spotOf(m);
+            setOrder(w, sq, el, order("hold", mine, "rush", "free"));
+          }
+          sq.sweep = { house: house.id, tick: w.tick, held: true };
+          setState(w, sq, "hold", `they are into ${house.name}: up the stairs, holding the upper floors and dropping grenades on them`);
+          shout(w, leader, leader.side === "de" ? "Nach oben! Treppe halten! Handgranaten!" : "Upstairs! Hold the stairs! Grenades!", null);
+          w.emit("hold_floors", [leader.id], { squad: sq.id, house: house.id });
+          return;
+        }
+      }
+      const holdingUp = urban(w) && sq.sweep?.held === true;
+      if (holdingUp && strength(w, sq) >= 0.35 && avgMorale(all) >= 0.25) return;
       if ((strength(w, sq) < 0.5 || avgMorale(all) < 0.32 || flanked || closeIn) && sq.fallback) {
+        sq.sweep = null;
         sq.post = sq.fallback;
         sq.fallback = null;
         sq.bounding = "B";
         setState(w, sq, "fall_back", flanked ? "outflanked: falling back to the hamlet" : "too many hit: falling back to the hamlet");
         shout(w, leader, leader.side === "de" ? "Zurück zum Dorf! MG gibt Feuerschutz!" : "Back to the farm! Cover them!", null);
-      } else if (strength(w, sq) < 0.3 && !sq.fallback) {
+      } else if (strength(w, sq) < (sq.task === "keep" ? 0.2 : 0.3) && !sq.fallback) {
         setState(w, sq, "withdraw", "the position is lost; getting out");
       }
       return;
     }
     case "fall_back": {
       fallBackStep(w, sq, men, pos, focus?.at ?? null, leader, () => {
-        setState(w, sq, "hold", "holding the second line");
+        // In a city, the next time they are pushed it is back to the town hall, to hold it to the last.
+        if (urban(w) && sq.task !== "keep" && houseAt(w, pl.objective)) {
+          sq.task = "keep";
+          sq.fallback = pl.objective;
+        }
+        setState(w, sq, "hold", sq.task === "keep" && sq.post && houseAt(w, sq.post) === houseAt(w, pl.objective) ? `holding ${w.layout.objectiveName} to the last` : "holding the second line");
         for (const el of ["A", "B"] as const) {
           const keep: Record<number, Point> = {};
           for (const m of men[el]) keep[m.id] = sq.orders[el].positions[m.id] ?? spotOf(m);
@@ -880,7 +1129,7 @@ function answerCalls(w: World, pl: Platoon): void {
     const sent = free[0];
     if (sent && pl.role === "attack" && caller.focus) {
       sent.focus = caller.focus;
-      sent.flankPoint = flankPoint(w, pl.side, centroid(ableMen(w, sent)), caller.focus, 18);
+      sent.flankPoint = flankFor(w, pl.side, centroid(ableMen(w, sent)), caller.focus);
       if (sent.flankPoint) {
         sent.task = "helping";
         sent.helping = caller.id;
@@ -1075,9 +1324,12 @@ function hqStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
   const target = cur.target;
   if (!target || cheb(target, at) > 6 || w.tick - cur.issued > 240) {
     const facing = { x: -back.x, y: -back.y };
-    setOrder(w, sq, "A", order(pl.withdrawing ? "withdraw" : "move", pickPositions(w, men, w.freeTileNear(at, 6) ?? at, facing, 2, 4), pl.role === "attack" ? "crouch" : "rush", "return", at));
+    // Defending a city, headquarters sits in the town hall, at its windows.
+    const hall = urban(w) && pl.role === "defend" && !pl.withdrawing ? houseAt(w, at) : null;
+    const spots = hall ? buildingPositions(w, men, hall, { x: at.x + facing.x * 40, y: at.y + facing.y * 40 }) : pickPositions(w, men, w.freeTileNear(at, 6) ?? at, facing, 2, 4);
+    setOrder(w, sq, "A", order(pl.withdrawing ? "withdraw" : "move", spots, pl.role === "attack" ? "crouch" : "rush", "return", at));
   }
-  sq.intent = pl.withdrawing ? "withdrawing" : pl.role === "attack" ? "following the attack, directing fire" : "holding the hamlet";
+  sq.intent = pl.withdrawing ? "withdrawing" : pl.role === "attack" ? "following the attack, directing fire" : `holding ${w.layout.objectiveName}`;
 }
 
 // ---------- Platoon ----------
@@ -1129,7 +1381,7 @@ function stallCheck(w: World, pl: Platoon, leader: Soldier | undefined): void {
       }
     }
     if (!spot) return;
-    s.route = [...boundsTo(w, s.side, c, spot), ...boundsTo(w, s.side, spot, pl.objective)];
+    s.route = [...routeTo(w, s.side, c, spot), ...routeTo(w, s.side, spot, pl.objective)];
     s.routeIdx = 0;
     s.boundWp = -1;
     s.bounding = "A";
@@ -1347,8 +1599,10 @@ function platoonStep(w: World, pl: Platoon): void {
   if (!pl.withdrawing || pl.role === "defend") screenStep(w, pl);
   if (pl.role === "attack" && !pl.withdrawing) {
     platoonAlarm(w, pl);
-    stallCheck(w, pl, pltLeader ?? undefined);
-    coordinate(w, pl, pltLeader ?? undefined);
+    // In a city there is no swinging wide round the flanks: the squads keep working forward house by house.
+    if (!urban(w)) stallCheck(w, pl, pltLeader ?? undefined);
+    // In a city each squad takes its own houses; there is no open ground for a set-piece attack on both flanks.
+    if (!urban(w)) coordinate(w, pl, pltLeader ?? undefined);
   }
   // Support: an idle squad goes round to help one that is stuck.
   if (pl.role === "attack" && !pl.withdrawing) {
@@ -1356,7 +1610,7 @@ function platoonStep(w: World, pl: Platoon): void {
     const idle = pl.squadIds.map((id) => w.squad(id)).find((s) => s !== stuck && (s.state === "advance" || s.state === "consolidate") && ableMen(w, s).length >= 4);
     if (stuck && idle && stuck.focus && idle.task !== "helping") {
       idle.focus = stuck.focus;
-      idle.flankPoint = flankPoint(w, side, centroid(ableMen(w, idle)), stuck.focus, 18);
+      idle.flankPoint = flankFor(w, side, centroid(ableMen(w, idle)), stuck.focus);
       if (idle.flankPoint) {
         idle.task = "helping";
         setState(w, idle, "flank", `sent by the platoon leader to take the pressure off ${stuck.name}`);
@@ -1534,7 +1788,7 @@ function displaceStep(w: World, sq: Squad, pl: Platoon, men: readonly Soldier[],
     return;
   }
   if (resume === "advance" || resume === "deploy" || resume === "consolidate") {
-    sq.route = boundsTo(w, sq.side, centroid(men), objectiveFor(w, sq, pl));
+    sq.route = routeTo(w, sq.side, centroid(men), objectiveFor(w, sq, pl));
     sq.routeIdx = 0;
     sq.boundWp = -1;
     setState(w, sq, "advance", "clear of the shelling: pressing on");

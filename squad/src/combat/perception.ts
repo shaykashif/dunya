@@ -266,7 +266,7 @@ export function rebuildExposure(w: World, side: Side): void {
       for (let x = x0; x <= x1; x++) {
         const i = y * W + x;
         if (!Number.isFinite(w.map.cost(i))) continue;
-        const v = w.map.visibility(g.at.x, g.at.y, x, y, w.smoke);
+        const v = w.map.visibility(g.at.x, g.at.y, x, y, w.smoke, g.at.z ?? 0, 0);
         if (v <= 0.1) continue;
         const d = Math.hypot(x - g.at.x, y - g.at.y);
         grid[i]! += v * weight * (1 - d / (reach + 10));

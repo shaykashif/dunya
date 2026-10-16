@@ -135,6 +135,20 @@ export class Engine {
       s.posture = "prone";
       return false;
     }
+    // Cover to cover: having dashed across open ground, he stops in the cover he reached, looks, then makes the next dash.
+    if ((s.cooldowns["cover"] ?? 0) > w.tick) {
+      s.posture = "crouch";
+      return false;
+    }
+    // Barbed wire: picking a way through the coils, and now and then caught fast on the barbs.
+    if (w.map.at(s.x, s.y) === "wire" && s.z === 0 && w.rng.get("movement").chance(cfg.wireSnag)) {
+      s.posture = "stand";
+      if (!s.cooldowns["snagged"] || s.cooldowns["snagged"]! < w.tick - 20) {
+        s.cooldowns["snagged"] = w.tick;
+        w.emit("snagged", [s.id], { person: s.id, at: [s.x, s.y] });
+      }
+      return false;
+    }
     s.posture = postureFor(pace);
     act.moveAcc += speedOf(w, s, pace);
     const path = act.path;
@@ -174,7 +188,14 @@ export class Engine {
       const last = w.map.ptz(path[stopAt - 1]!);
       if (last.x !== s.x) s.dir = last.x < s.x ? -1 : 1;
       w.place(s, last.x, last.y, last.z);
-      if (w.map.at(s.x, s.y) === "hedge") s.posture = "stand";
+      if (w.map.at(s.x, s.y) === "hedge" || w.map.at(s.x, s.y) === "wire") s.posture = "stand";
+      if (threatened && (pace === "rush" || pace === "crouch") && s.z === 0) {
+        if (w.map.open[w.map.idx(s.x, s.y)] === 1) s.cooldowns["dash"] = 1;
+        else if (s.cooldowns["dash"] === 1 && stopAt < path.length) {
+          s.cooldowns["dash"] = 0;
+          s.cooldowns["cover"] = w.tick + cfg.coverPause;
+        }
+      }
       const carried = w.maybe(s.carryingId);
       if (carried) {
         carried.x = s.x;
@@ -242,7 +263,7 @@ export class Engine {
       case "grenade":
       case "smoke": {
         s.posture = w.map.besideCover(s.x, s.y) ? "crouch" : "crouch";
-        if ((c.kind === "grenade" && s.grenades > 0) || (c.kind === "smoke" && s.smokes > 0)) throwGrenade(w, s, c.at!, c.kind === "smoke");
+        if ((c.kind === "grenade" && s.grenades > 0) || (c.kind === "smoke" && s.smokes > 0)) throwGrenade(w, s, c.at!, c.kind === "smoke", c.key.startsWith("room:"));
         if (c.kind === "smoke") s.cooldowns["smoke"] = w.tick + 50;
         else s.cooldowns["grenade"] = w.tick + 12;
         return end();

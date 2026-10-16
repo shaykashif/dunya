@@ -32,7 +32,7 @@ function men(w: World): { us: Soldier; de: Soldier } {
 }
 
 describe("kinds of ground", () => {
-  for (const kind of ["hamlet", "rural", "road", "town"] as const) {
+  for (const kind of ["hamlet", "rural", "road", "town", "urban"] as const) {
     it(`a ${kind} map has its settlement, floors, stairs and a reachable objective`, () => {
       const w = world(11, kind);
       expect(w.layout.kind).toBe(kind);
@@ -43,7 +43,8 @@ describe("kinds of ground", () => {
       expect(w.map.reachable(attacker, obj)).toBe(true);
       expect(w.layout.hamletPositions.length).toBeGreaterThan(3);
       // Every house with an upper floor has stairs, and the upper floor can be reached from the ground.
-      for (const b of w.buildings.filter((x) => x.floors > 1)) {
+      // (A house that has already fallen in has no stairs left.)
+      for (const b of w.buildings.filter((x) => x.floors > 1 && !x.destroyed)) {
         let stairs: { x: number; y: number } | null = null;
         for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) if (w.map.at(x, y) === "stairs") stairs = { x, y };
         expect(stairs, b.name).not.toBeNull();
@@ -59,7 +60,7 @@ describe("kinds of ground", () => {
       kinds.add(w.layout.kind);
       skies.add(w.weather.kind);
     }
-    expect(kinds.size).toBe(4);
+    expect(kinds.size).toBe(5);
     expect(skies.size).toBeGreaterThanOrEqual(3);
     const a = world(17), b = world(17);
     expect(a.layout.kind).toBe(b.layout.kind);
@@ -179,8 +180,8 @@ describe("weather and snipers", () => {
   it("a sniper's hide is high up or well hidden, and away from his own men", () => {
     // Some snipers have nothing in view from where they start; those that do have a hide must pick a good one.
     let found = 0;
-    for (const seed of [1, 9, 12, 3, 4, 5, 6, 7, 8]) {
-      const w = world(seed);
+    for (const [seed, kind] of [1, 9, 12, 3, 4, 5, 6, 7, 8].flatMap((s) => [[s, null], [s, "urban"]] as const)) {
+      const w = world(seed, kind);
       const sniper = w.soldiers.find((s) => s.role === "sniper" && !w.squad(s.squadId).task.startsWith("scout"));
       if (!sniper) continue;
       const hide = chooseHide(w, sniper);

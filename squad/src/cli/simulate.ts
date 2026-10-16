@@ -1,9 +1,10 @@
-// npm run simulate -- --seed 42 [--ticks 1800] [--out runs/seed42]
+// npm run simulate -- --seed 42 [--map urban] [--ticks 1800] [--out runs/seed42]
 import { createWriteStream, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventLog } from "../log/events.ts";
 import { firstBlood, verdict } from "../battle/verdict.ts";
 import { createSimulation, summarize, type SideSummary } from "../sim.ts";
+import type { MapKind } from "../world/types.ts";
 import { parseArgs } from "./args.ts";
 
 const args = parseArgs(process.argv.slice(2));
@@ -20,11 +21,13 @@ if (out) {
   });
 }
 
-const engine = createSimulation({ seed, log });
+// --map picks the kind of ground instead of letting the seed choose (hamlet, rural, road, town, urban).
+const map = args.map as MapKind | undefined;
+const engine = createSimulation({ seed, log, config: map ? { map: { kind: map } } : {} });
 const t0 = performance.now();
 if (args.ticks) await engine.runTicks(Number(args.ticks));
 else await engine.runBattle();
-const summary = summarize(engine.world);
+const summary = { ...summarize(engine.world), ...(map ? { mapChosen: true } : {}) };
 const ms = Math.round(performance.now() - t0);
 
 if (out) {

@@ -249,6 +249,9 @@ const LOOKS: Record<Building["kind"], Look> = {
   church: { wallH: 21, wall: "#b0aca0", wallDark: "#8e8a80", trim: "#3a3a3e", roof: ["#6a6a76", "#54545e", "#42424a", "#26262c"], hip: true },
   house: { wallH: 16, wall: "#c8bca4", wallDark: "#a69a82", trim: "#3a3028", roof: ["#6e7078", "#585a62", "#46484e", "#2a2c30"], hip: false },
   shop: { wallH: 17, wall: "#d8cfb8", wallDark: "#b2a890", trim: "#2e4a5a", roof: ["#a85a44", "#8e4632", "#723626", "#46201a"], hip: false },
+  apartment: { wallH: 16, wall: "#c6b8a0", wallDark: "#a09078", trim: "#34343a", roof: ["#5e626a", "#4c5058", "#3c4046", "#24262a"], hip: false },
+  townhall: { wallH: 20, wall: "#dcd4c0", wallDark: "#b4ac96", trim: "#2a3a56", roof: ["#56606e", "#46505c", "#383f4a", "#1e242c"], hip: true },
+  warehouse: { wallH: 22, wall: "#8e5c44", wallDark: "#6c4434", trim: "#3a2a20", roof: ["#7e7e76", "#6a6a64", "#56564f", "#363631"], hip: false },
 };
 
 /** Pixels each storey above the ground floor adds to a front wall. */
@@ -301,7 +304,7 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
         // Norman half-timbering.
         const yy = y % STOREY;
         if (yy === 1 || x % 8 === 0 || (x % 8 === yy % 8 && yy > 1 && yy < STOREY - 2)) px(X, Y, "#5a3a22");
-      } else if (b.kind === "house" || b.kind === "shop") {
+      } else if (b.kind === "house" || b.kind === "shop" || b.kind === "apartment" || b.kind === "townhall") {
         // Rendered stone, dressed quoins at the corners.
         if ((x < 3 || x >= FW - 3) && Math.floor(y / 3) % 2 === 0) px(X, Y, L.wallDark);
         else if (hash2(x, y, b.id + 5) < 0.05) px(X, Y, L.wallDark);
@@ -354,12 +357,13 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
       window(bandTop(0) + Math.max(2, Math.floor(L.wallH / 2) - 4));
       for (let f = 1; f < storeys; f++) window(bandTop(f) + 3);
     } else if (t === "door") {
-      const dw = b.kind === "barn" ? 14 : 8, dh = Math.min(L.wallH - 2, b.kind === "barn" ? 15 : 11);
+      const big = b.kind === "barn" || b.kind === "warehouse";
+      const dw = big ? 14 : 8, dh = Math.min(L.wallH - 2, big ? 15 : 11);
       const dx = X + Math.floor((TILE - dw) / 2), dy = wallTop + WH - 2 - dh;
       px(dx - 1, dy - 1, L.trim, dw + 2, dh + 1);
-      px(dx, dy, b.kind === "barn" ? "#5a3a20" : "#6a4426", dw, dh);
+      px(dx, dy, big ? "#5a3a20" : "#6a4426", dw, dh);
       for (let k = 2; k < dw; k += 3) px(dx + k, dy, "#4a2e18", 1, dh);
-      if (b.kind === "barn") {
+      if (big) {
         px(dx + dw / 2, dy, "#2a1a10", 1, dh);
         for (let k = 0; k < dw; k++) px(dx + k, dy + Math.floor((k * dh) / dw), "#3a2414");
       } else px(dx + dw - 2, dy + Math.floor(dh / 2), "#c8a050");

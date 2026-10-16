@@ -20,7 +20,13 @@ function cand(kind: Candidate["kind"], key: string, description: string, fields:
 
 export function orderFor(w: World, s: Soldier): ElementOrder {
   const sq = w.squad(s.squadId);
-  return sq.orders[s.element === "B" ? "B" : "A"];
+  const own = sq.orders[s.element === "B" ? "B" : "A"];
+  // A man lent to the other team, when its own men are all down, takes that team's orders.
+  if (own.positions[s.id] === undefined) {
+    const other = sq.orders[s.element === "B" ? "A" : "B"];
+    if (other.positions[s.id] !== undefined) return other;
+  }
+  return own;
 }
 
 function exposureAt(w: World, s: Soldier, p: Point): number {
@@ -407,13 +413,54 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
       break;
     }
   }
+  // ---- Room to room: a grenade through the doorway into the next room, or up or down the stairs, before going in ----
+  if (s.grenades > 0 && !(s.cooldowns["grenade"] !== undefined && w.tick < s.cooldowns["grenade"]!) && w.map.indoors(s.x, s.y, s.z)) {
+    const house = w.map.building[w.map.idx(s.x, s.y)]!;
+    const reach = cfg.urban.roomGrenade;
+    const near = (pred: (x: number, y: number) => boolean): Point | null => {
+      let best: Point | null = null;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const x = s.x + dx, y = s.y + dy;
+          if (!w.map.inBounds(x, y) || w.map.building[w.map.idx(x, y)] !== house || !pred(x, y)) continue;
+          if (!best || cheb(s, { x, y }) < cheb(s, best)) best = { x, y };
+        }
+      }
+      return best;
+    };
+    for (const c of contacts.slice(0, 6)) {
+      if (w.tick - c.tick > 12 || cheb(s, c) > reach || cheb(s, c) < 1) continue;
+      if (w.map.building[w.map.idx(c.x, c.y)] !== house || !w.map.indoors(c.x, c.y, c.z)) continue;
+      let aim: Point | null = null, how = "";
+      if (c.z === s.z) {
+        // In the next room: out of sight, with a doorway at hand to throw through.
+        if (w.map.visibility(s.x, s.y, c.x, c.y, null, s.z, c.z) >= 0.3) continue;
+        const door = near((x, y) => w.map.at(x, y) === "door" && w.map.passable(x, y, s.z) && Math.hypot(x - c.x, y - c.y) < Math.hypot(s.x - c.x, s.y - c.y));
+        if (!door) continue;
+        aim = c.z > 0 ? { x: c.x, y: c.y, z: c.z } : { x: c.x, y: c.y };
+        how = "toss a grenade through the doorway into the next room";
+      } else if (Math.abs(c.z - s.z) === 1) {
+        const st = near((x, y) => w.map.at(x, y) === "stairs" && w.map.passable(x, y, s.z) && w.map.passable(x, y, c.z));
+        if (!st) continue;
+        aim = c.z > 0 ? { x: st.x, y: st.y, z: c.z } : { x: st.x, y: st.y };
+        how = c.z > s.z ? "lob a grenade up the stairs" : "drop a grenade down the stairwell";
+      } else continue;
+      const az = aim.z ?? 0;
+      // Not where it would get his own men, nor himself.
+      if (w.soldiers.some((f) => f.side === s.side && f.id !== s.id && w.onField(f) && f.z === az && cheb(f, aim!) <= 3 && w.map.visibility(aim!.x, aim!.y, f.x, f.y, null, az, f.z) > 0)) continue;
+      if (s.z === az && cheb(s, aim) <= 3 && w.map.visibility(aim.x, aim.y, s.x, s.y, null, az, s.z) > 0) continue;
+      out.push(cand("grenade", `room:${aim.x},${aim.y},${az}`, how, { at: aim, duration: 1, value: 1.3 + (c.automatic ? 0.2 : 0), ordered: true, danger: 0.15, offense: 1 }));
+      break;
+    }
+  }
   if (s.rifleGrenades > 0 && !reloading) {
     const [lo, hi] = cfg.explosives.rifleGrenadeRange;
     for (const c of contacts.slice(0, 3)) {
       const d = dist(s, c);
       if (d < lo || d > hi || w.tick - c.tick > 15 || (!c.visible && !canFireOn(w, s, c))) continue;
       if (w.friendsNear({ x: c.x, y: c.y, side: s.side, id: s.id }, 5).some((f) => w.onField(f))) continue;
-      out.push(cand("rifle_grenade", `rgren:${c.x},${c.y}`, "fire a rifle grenade", { at: { x: c.x, y: c.y }, duration: 2, value: 0.55 + (c.automatic ? 0.45 : 0), ordered: fire === "free", danger: 0.2 + 0.2 * exHere, offense: 0.8 }));
+      // Through an upper window, if that is where he is.
+      out.push(cand("rifle_grenade", `rgren:${c.x},${c.y}`, c.z > 0 ? "fire a rifle grenade through the window" : "fire a rifle grenade", { at: c.z > 0 ? { x: c.x, y: c.y, z: c.z } : { x: c.x, y: c.y }, duration: 2, value: 0.55 + (c.automatic ? 0.45 : 0), ordered: fire === "free", danger: 0.2 + 0.2 * exHere, offense: 0.8 }));
       break;
     }
   }
@@ -426,7 +473,9 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
     const pinnedMen = mates.filter((m) => m.pinned || m.suppression > 0.5).length;
     const pinnedDown = mates.length > 0 && pinnedMen >= Math.max(2, Math.ceil(mates.length * 0.3)) && (s.pinned || s.suppression > 0.2 || underFire);
     const assaulting = sq.state === "assault" && w.tick - sq.stateTick < 25;
-    const moving = sq.state === "fall_back" || sq.state === "flank";
+    // In a city, a team about to dash across a street the enemy is watching throws smoke into it first.
+    const crossing = w.layout.kind === "urban" && sq.state === "advance" && orderFor(w, s).kind === "move" && dist(s, orderFor(w, s).positions[s.id] ?? s) > 4;
+    const moving = sq.state === "fall_back" || sq.state === "flank" || crossing;
     const exposedMen = mates.filter((m) => exposureAt(w, m, m) > 0.6);
     const squadSmoke = w.clouds.some((c) => c.until > w.tick && dist(c, s) < 14);
     // A set-piece attack: smoke goes down as the mortars land and the assault steps off.

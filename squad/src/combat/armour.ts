@@ -16,7 +16,7 @@ import { hearShot, sideContacts, updateContact } from "./perception.ts";
 
 // ---------- Ground ----------
 
-const BLOCKED = new Set<Terrain>(["hedge", "woods", "wall", "building", "window", "door", "floor", "water", "foxhole", "deadfall", "stairs"]);
+const BLOCKED = new Set<Terrain>(["hedge", "woods", "wall", "building", "window", "door", "floor", "water", "foxhole", "deadfall", "stairs", "wreck", "fountain", "statue"]);
 
 /** Cost to a tank of crossing a tile: roads best; trees, hedges, houses and water stop it. */
 function groundCost(t: Terrain): number {
@@ -24,7 +24,14 @@ function groundCost(t: Terrain): number {
   switch (t) {
     case "road":
     case "bridge":
+    case "paving":
       return 1;
+    case "pothole":
+    case "sandbags":
+    case "wire":
+    case "stall":
+    case "debris":
+      return 3;
     case "grass":
       return 2;
     case "wheat":

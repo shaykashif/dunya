@@ -58,11 +58,12 @@ function landing(w: World, from: Point, aim: Point, scatter: number): Point {
   return p;
 }
 
-export function throwGrenade(w: World, s: Soldier, aim: Point, smoke = false): void {
+/** With `exact`, it is posted from close by (through a doorway, up the stairs) and lands where it was aimed. */
+export function throwGrenade(w: World, s: Soldier, aim: Point, smoke = false, exact = false): void {
   const kind: OrdnanceKind = smoke ? "smoke_grenade" : s.side === "us" ? "frag" : "stick";
   if (smoke) s.smokes--;
   else s.grenades--;
-  const at = landing(w, s, aim, w.config.explosives.throwScatter * (1.6 - 0.6 * s.traits.fitness) * (aim.z ? 1.5 : 1));
+  const at = exact ? clampToMap(w, aim) : landing(w, s, aim, w.config.explosives.throwScatter * (1.6 - 0.6 * s.traits.fitness) * (aim.z ? 1.5 : 1));
   const o: Ordnance = { id: w.nextId("ordnance"), kind, side: s.side, byId: s.id, from: { x: s.x, y: s.y }, x: at.x, y: at.y, z: smoke ? 0 : burstFloor(w, at, aim.z ?? 0, false), burstTick: w.tick + 1 + (smoke ? 1 : w.config.explosives.fuseTicks), thrownTick: w.tick, spotting: false };
   w.ordnance.push(o);
   s.dir = aim.x < s.x ? -1 : aim.x > s.x ? 1 : s.dir;

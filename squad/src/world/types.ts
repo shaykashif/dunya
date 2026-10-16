@@ -9,7 +9,7 @@ export interface Point {
 }
 
 /** Most floors any building has. Upper floors exist only inside buildings. */
-export const MAX_FLOORS = 3;
+export const MAX_FLOORS = 4;
 
 /** The weather on the day. */
 export type WeatherKind = "clear" | "overcast" | "rain" | "fog";
@@ -28,7 +28,7 @@ export interface Weather {
 }
 
 /** The kinds of ground a battle can be fought over. */
-export type MapKind = "hamlet" | "rural" | "road" | "town";
+export type MapKind = "hamlet" | "rural" | "road" | "town" | "urban";
 
 /** The two armies. "us" is a US Army rifle platoon, "de" a German infantry Zug. */
 export type Side = "us" | "de";
@@ -65,7 +65,25 @@ export type Terrain =
   /** A roadside ditch: a ready-made trench. */
   | "ditch"
   /** Trees smashed by shellfire: stumps, splintered trunks and fallen limbs. */
-  | "deadfall";
+  | "deadfall"
+  /** A low wall of sandbags: a fighting position, chest high. */
+  | "sandbags"
+  /** Coils of barbed wire: no cover, and slow, careful work to get through. */
+  | "wire"
+  /** A burnt-out vehicle: solid cover, and nobody walks through it. */
+  | "wreck"
+  /** A hole blown in a street or yard: a little cover for a man lying in it. */
+  | "pothole"
+  /** Pavements, cobbled squares and yards in a city. */
+  | "paving"
+  /** A stone fountain basin in a plaza: waist-high cover, and in the way. */
+  | "fountain"
+  /** A statue on its plinth. */
+  | "statue"
+  /** A market stall: trestles and an awning, something to hide behind but not stop a bullet. */
+  | "stall"
+  /** Junk in the road: fallen masonry, burnt timbers, smashed furniture, an abandoned cart. Slow going, a little cover. */
+  | "debris";
 
 // ---------- Bodies and wounds (kept from the village simulation) ----------
 
@@ -445,6 +463,10 @@ export interface Squad {
   breach: { house: number; stage: "stack" | "grenades" | "enter"; tick: number } | null;
   /** When it last fell back: a squad that has just done so holds rather than running again. */
   fellBackTick: number;
+  /** In a city: when the covering team opened up for the current bound, so the movers go only once fire is on the enemy (-1 if no cover is being given). */
+  coverTick: number;
+  /** In a city: the building the moving team is sweeping room by room, or holding floor by floor, and since when. */
+  sweep: { house: number; tick: number; held: boolean } | null;
   /** A sniper is working on the squad: where they think he is, and when he last fired. */
   sniperAlert: { x: number; y: number; tick: number } | null;
 }

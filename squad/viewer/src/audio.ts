@@ -18,6 +18,8 @@ export interface PlayOptions {
   /** Where it happens, in tiles; omit for a sound with no place (UI, ambience). */
   x?: number;
   y?: number;
+  /** The space it is made in, looked up from x and y: indoors it rings off the walls. */
+  space?: Acoustic;
   /** Base loudness in [0, 1]. */
   gain?: number;
   /** How far it carries, in view half-widths. */
@@ -67,6 +69,15 @@ const SURFACE: Record<Terrain, string> = {
   brush: "leaves",
   ditch: "dirt",
   deadfall: "leaves",
+  sandbags: "dirt",
+  wire: "gravel",
+  wreck: "rock",
+  pothole: "gravel",
+  paving: "rock",
+  fountain: "rock",
+  statue: "rock",
+  stall: "wood",
+  debris: "rock",
 };
 
 export function surfaceOf(t: Terrain): string {
@@ -79,7 +90,14 @@ export function impactOf(t: Terrain): string {
     case "wall":
     case "building":
     case "rubble":
+    case "paving":
+    case "wreck":
+    case "fountain":
+    case "statue":
+    case "debris":
       return "stone";
+    case "stall":
+      return "wood";
     case "woods":
     case "hedge":
     case "brush":
@@ -95,6 +113,37 @@ export function impactOf(t: Terrain): string {
     default:
       return "dirt";
   }
+}
+
+/** Where a sound is made: out in the open, in a room of a house, or in a big echoing hall (a church, a warehouse). */
+export type Acoustic = "open" | "room" | "hall";
+
+/**
+ * A synthetic impulse response: a few early reflections off near walls, then
+ * a tail of decaying noise, darker as it dies (plaster and furniture soak up
+ * the highs). Stereo, decorrelated, so the echo opens out around the sound.
+ */
+function impulse(ctx: AudioContext, seconds: number, reflections: number[], brightness: number): AudioBuffer {
+  const rate = ctx.sampleRate;
+  const len = Math.max(1, Math.floor(seconds * rate));
+  const buf = ctx.createBuffer(2, len, rate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch);
+    let lp = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / len;
+      const env = Math.pow(1 - t, 2.4) * Math.exp(-t * 3);
+      // One-pole low-pass whose cut-off falls as the tail decays.
+      const a = brightness * (1 - 0.85 * t);
+      lp += a * ((Math.random() * 2 - 1) - lp);
+      d[i] = lp * env * 0.6;
+    }
+    for (const [k, ms] of reflections.entries()) {
+      const at = Math.floor(((ms + (ch === 0 ? 0 : 1.7 * (k + 1))) / 1000) * rate);
+      if (at < len) d[at]! += (0.55 - k * 0.07) * (k % 2 === 0 ? 1 : -1);
+    }
+  }
+  return buf;
 }
 
 interface Bed {
@@ -122,6 +171,10 @@ export class Sfx {
   private lastGunfire = -1e9;
   enabled = true;
   volume = 0.7;
+  /** Room and hall reverbs, fed by a send from every sound made indoors. */
+  private verbs: Partial<Record<Acoustic, ConvolverNode>> = {};
+  /** Set by the page: what kind of space a point on the map is. */
+  acousticAt: ((x: number, y: number) => Acoustic) | null = null;
 
   constructor() {
     try {
@@ -227,6 +280,18 @@ export class Sfx {
     this.master = ctx.createGain();
     this.master.gain.value = this.enabled ? this.volume : 0;
     this.master.connect(comp).connect(ctx.destination);
+    // Indoors: a small room's slap and short tail, and a church or warehouse's long boom.
+    for (const [kind, ir, level] of [
+      ["room", impulse(ctx, 0.75, [7, 13, 19, 29], 0.35), 0.9],
+      ["hall", impulse(ctx, 2.4, [23, 41, 67, 89], 0.22), 0.75],
+    ] as const) {
+      const conv = ctx.createConvolver();
+      conv.buffer = ir;
+      const out = ctx.createGain();
+      out.gain.value = level;
+      conv.connect(out).connect(this.master);
+      this.verbs[kind] = conv;
+    }
     this.ctx = ctx;
     for (const key of ["wind", "forest", "birds", "rain", "downpour", "river", "cicadas"]) {
       const buf = this.buffers.get(`amb.${key}`);
@@ -321,6 +386,9 @@ export class Sfx {
     }
     if (this.voices >= MAX_VOICES && !o.priority) return false;
     const rate = (o.rate ?? 1) * (0.95 + Math.random() * 0.1);
+    // Indoors the walls ring with it.
+    const space: Acoustic = o.x !== undefined && o.y !== undefined && this.acousticAt ? this.acousticAt(o.x, o.y) : "open";
+    if (space !== "open") o = { ...o, space };
     if (tier < 0) {
       const list = this.groups[group];
       if (!list || list.length === 0) return false;
@@ -366,6 +434,15 @@ export class Sfx {
       p.pan.value = pan;
       node.connect(p);
       node = p;
+    }
+    const verb = o.space ? this.verbs[o.space] : undefined;
+    if (verb) {
+      // The wet send rides on the dry level, and the dry is pulled back a touch: inside, more of what you hear is the room.
+      const send = ctx.createGain();
+      send.gain.value = o.space === "hall" ? 0.85 : 0.65;
+      node.connect(send).connect(verb);
+      g.gain.value = gain * 0.8;
+      src.addEventListener("ended", () => setTimeout(() => send.disconnect(), 3000));
     }
     node.connect(this.master);
     this.voices++;

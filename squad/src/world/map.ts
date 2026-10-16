@@ -26,10 +26,13 @@ export interface TerrainRules {
 }
 
 /** Hedges, walls and openings in walls can be seen and shot through by a man right beside them. */
-const PORT: Partial<Record<Terrain, number>> = { hedge: 0.5, wall: 1, window: 0.85, door: 0.85, building: 0 };
+const PORT: Partial<Record<Terrain, number>> = { hedge: 0.5, wall: 1, window: 0.85, door: 0.85, building: 0, sandbags: 1, wreck: 0.7, fountain: 1, statue: 0.7 };
+
+/** Things a man can get down behind: right beside one, he is in cover. */
+const SHELTER = new Set<Terrain>(["hedge", "wall", "building", "window", "sandbags", "wreck", "fountain", "statue"]);
 
 const WALLS = new Set<Terrain>(["building", "window", "door"]);
-/** Ground that turns to mud in the rain. */
+/** Ground that turns to mud in the rain (not paving, a city's streets, nor its debris). */
 const MUDDY = new Set<Terrain>(["grass", "wheat", "orchard", "marsh", "crater", "foxhole", "ditch", "brush", "woods", "deadfall"]);
 
 export class GameMap {
@@ -67,6 +70,10 @@ export class GameMap {
   readonly holes: Uint8Array;
   /** Bumped when a wall's bullet holes reach a new step, so viewers redraw it. */
   scars = 0;
+  /** 1 for ground with no cover at hand: out in the open, away from any wall, bank, pile or hole. Kept by finalize(). */
+  readonly open: Uint8Array;
+  /** What open ground costs a man moving tactically, on top of its going: men run from cover to cover. */
+  openCost = 0.15;
 
   constructor(width: number, height: number, rules: TerrainRules) {
     this.width = width;
@@ -85,6 +92,7 @@ export class GameMap {
     this.storey = new Float32Array(width * height).fill(rules.floorHeight);
     this.seeAt = new Float32Array(width * height).fill(1);
     this.portAt = new Float32Array(width * height).fill(-1);
+    this.open = new Uint8Array(width * height);
   }
 
   /** Tiles on one floor. */
@@ -270,8 +278,7 @@ export class GameMap {
     for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
       const nx = x + dx, ny = y + dy;
       if (!this.inBounds(nx, ny)) continue;
-      const t = this.at(nx, ny);
-      if (t === "hedge" || t === "wall" || t === "building" || t === "window") return true;
+      if (SHELTER.has(this.at(nx, ny))) return true;
     }
     return false;
   }
@@ -347,11 +354,30 @@ export class GameMap {
         if (t === "floor" || t === "stairs") up = 1;
         else if (t === "door") {
           // An inner doorway, between rooms, is there on every floor; the front door is not.
+          // Nor is a doorway knocked through the party wall between two terraced houses, on every floor they share.
           const x = i % this.width, y = (i - x) / this.width;
-          up = this.neighbors4(x, y).every((p) => this.building[this.idx(p.x, p.y)] === b) ? 1 : 0;
+          up = this.neighbors4(x, y).every((p) => this.building[this.idx(p.x, p.y)]! >= 0) ? 1 : 0;
         }
       }
       this.upper[i] = up;
+    }
+    // Open ground: nothing to get behind or into within a step.
+    const W = this.width, H = this.height;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        const t = this.terrain[i]!;
+        let open = this.building[i]! < 0 && (this.rules.ownCover[t] ?? 0) === 0 ? 1 : 0;
+        for (let dy = -1; dy <= 1 && open; dy++) {
+          for (let dx = -1; dx <= 1 && open; dx++) {
+            const xx = x + dx, yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+            const u = this.terrain[yy * W + xx]!;
+            if (SHELTER.has(u) || u === "rubble" || u === "door" || (this.rules.edgeCover[u] ?? 0) >= 0.45) open = 0;
+          }
+        }
+        this.open[i] = open;
+      }
     }
     const N = n * MAX_FLOORS;
     this.region = new Int32Array(N).fill(-1);

@@ -41,6 +41,16 @@ const gridref = $("gridref");
 let hover: { sx: number; sy: number } | null = null;
 const renderer = new Renderer(canvas);
 const sfx = new Sfx();
+// Shots and blasts inside a house ring off its walls; a church or warehouse booms. A house fallen in has no roof to ring.
+sfx.acousticAt = (x, y) => {
+  const tx = Math.round(x), ty = Math.round(y);
+  if (!world || !world.map.inBounds(tx, ty)) return "open";
+  const id = world.map.building[world.map.idx(tx, ty)]!;
+  if (id < 0) return "open";
+  const b = world.buildings[id]!;
+  if (b.destroyed || !world.map.indoors(tx, ty)) return "open";
+  return b.kind === "church" || b.kind === "warehouse" || b.kind === "barn" ? "hall" : "room";
+};
 const miniBase: { img: ImageData | null; version: number; world: World | null } = { img: null, version: -1, world: null };
 
 let engine: Engine;
@@ -1232,7 +1242,11 @@ function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: fal
   $("toasts").innerHTML = "";
   log.addSink((e) => onEvent(e));
   world = undefined as unknown as World;
-  engine = createSimulation({ seed, log, config: { checkInvariants: false } });
+  // ?map=urban (or hamlet, rural, road, town) picks the ground instead of the seed.
+  const mapKind = new URLSearchParams(location.search).get("map");
+  const kinds = ["hamlet", "rural", "road", "town", "urban"] as const;
+  const kind = kinds.find((k) => k === mapKind) ?? null;
+  engine = createSimulation({ seed, log, config: { checkInvariants: false, map: { kind } } });
   world = engine.world;
   // The opening event fired before the sink saw the world; describe it now.
   const start = describe({ seq: 0, tick: 0, type: "battle_start", actors: [], data: {} }, world);
@@ -1270,7 +1284,7 @@ function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: fal
   }
   track("battle_start", { seed, n: battlesRun, cinematic, phone: isPhone(), daily: dailyBattle });
   try {
-    history.replaceState(null, "", `?seed=${seed}`);
+    history.replaceState(null, "", `?seed=${seed}${kind ? `&map=${kind}` : ""}`);
   } catch {
     // Not important.
   }
@@ -1645,7 +1659,7 @@ function describeBody(s: Soldier): string {
   return parts.join("");
 }
 
-const FLOOR_NAMES = ["ground floor", "first floor", "second floor"];
+const FLOOR_NAMES = ["ground floor", "first floor", "second floor", "third floor"];
 
 /** Where a man is: indoors and on which floor, or on what ground, and how high. */
 function whereText(s: Soldier): string {
@@ -1653,7 +1667,7 @@ function whereText(s: Soldier): string {
   const up = Math.round(world.map.heightAt(s.x, s.y, s.z));
   if (b >= 0 && world.map.indoors(s.x, s.y, s.z)) return `In ${world.buildings[b]!.name}, ${FLOOR_NAMES[s.z] ?? `floor ${s.z}`}${s.role === "sniper" && s.hide && s.hide.x === s.x && s.hide.y === s.y ? " (his hide)" : ""} · ${up} m above the stream`;
   const t = world.map.at(s.x, s.y);
-  const ground: Record<string, string> = { deadfall: "among shattered trees", grass: "in a pasture", wheat: "in the wheat", road: "on the road", orchard: "in an orchard", woods: "in the woods", hedge: "in a hedgerow", wall: "at a wall", water: "in the stream", bridge: "on the bridge", rubble: "in rubble", crater: "in a shell hole", foxhole: "in a foxhole", marsh: "in wet meadow", brush: "in the brambles", ditch: "in a ditch", floor: "indoors", door: "in a doorway", stairs: "on the stairs" };
+  const ground: Record<string, string> = { deadfall: "among shattered trees", grass: "in a pasture", wheat: "in the wheat", road: "on the road", orchard: "in an orchard", woods: "in the woods", hedge: "in a hedgerow", wall: "at a wall", water: "in the stream", bridge: "on the bridge", rubble: "in rubble", crater: "in a shell hole", foxhole: "in a foxhole", marsh: "in wet meadow", brush: "in the brambles", ditch: "in a ditch", floor: "indoors", door: "in a doorway", stairs: "on the stairs", sandbags: "behind sandbags", wire: "caught in the wire", wreck: "by a burnt-out wreck", pothole: "in a pothole", paving: "on the pavement", fountain: "at the fountain", statue: "by a statue", stall: "among the market stalls", debris: "in the debris" };
   return `${(ground[t] ?? t).replace(/^./, (c) => c.toUpperCase())} · ${up} m above the stream`;
 }
 
