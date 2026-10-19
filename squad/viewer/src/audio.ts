@@ -188,8 +188,13 @@ export class Sfx {
     }
   }
 
+  /** The audio engine is actually running (not still loading, suspended or interrupted), whether or not sound is switched on. */
+  get running(): boolean {
+    return this.ctx !== null && this.ctx.state === "running";
+  }
+
   get ready(): boolean {
-    return this.ctx !== null && this.buffers.size > 0 && this.enabled;
+    return this.running && this.buffers.size > 0 && this.enabled;
   }
 
   /** Browsers only let audio start after a gesture; call this from the first one. */

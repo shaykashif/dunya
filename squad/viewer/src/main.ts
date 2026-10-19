@@ -2386,8 +2386,10 @@ window.addEventListener("keydown", (ev) => {
   if (cine && ev.key.toLowerCase() !== "m") endCine(true);
 }, { capture: true });
 $("sound").addEventListener("click", () => {
+  // Sound is switched on but the browser has not let it start yet (the "tap for sound" prompt): this tap is the unlock, not a mute.
+  const pending = sfx.enabled && !sfx.running;
   sfx.unlock();
-  sfx.setEnabled(!sfx.enabled);
+  if (!pending) sfx.setEnabled(!sfx.enabled);
   syncSound();
 });
 $<HTMLInputElement>("vol").addEventListener("input", (ev) => {
