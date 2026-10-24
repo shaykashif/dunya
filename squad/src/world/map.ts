@@ -259,7 +259,13 @@ export class GameMap {
    * Fire plunging from higher up comes in over the bank or wall in front of him.
    */
   cover(at: Point, from: Point, posture: Posture): number {
-    if (at.x === from.x && at.y === from.y) return 0;
+    const c = this.coverParts(at, from, posture);
+    return 1 - (1 - c.edge) * (1 - c.own);
+  }
+
+  /** Cover in two parts: what stands beside him toward the shooter (and which tile it is), and the ground he lies in. */
+  coverParts(at: Point, from: Point, posture: Posture): { edge: number; own: number; front: Point | null } {
+    if (at.x === from.x && at.y === from.y) return { edge: 0, own: 0, front: null };
     const step = this.stepToward(at, from);
     const front = this.inBounds(step.x, step.y) ? this.at(step.x, step.y) : "grass";
     let edge = this.rules.edgeCover[front] ?? 0;
@@ -275,7 +281,7 @@ export class GameMap {
     let own = az > 0 ? 0 : this.rules.ownCover[here] ?? 0;
     if ((here === "foxhole" || here === "crater" || here === "ditch") && posture === "stand") own *= 0.35;
     if (here === "crater" && posture === "crouch") own *= 0.6;
-    return 1 - (1 - edge) * (1 - own);
+    return { edge, own, front: edge > 0 ? step : null };
   }
 
   /** True if a hedge, wall or building lies right beside the point. */

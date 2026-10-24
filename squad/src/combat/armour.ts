@@ -9,7 +9,7 @@ import { kill } from "../entities/death.ts";
 import { injure, impactHealth } from "../entities/injuries.ts";
 import { label, note, shout } from "../entities/soldier.ts";
 import { cheb, dist } from "../world/map.ts";
-import { enemyOf, type BodyPart, type Ordnance, type OrdnanceKind, type Point, type Soldier, type Tank, type Terrain } from "../world/types.ts";
+import { enemyOf, type BodyPart, type Ordnance, type OrdnanceKind, type Point, type Soldier, type Tank, type Terrain, isMachineGun } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { fireTick } from "./fire.ts";
 import { hearShot, sideContacts, updateContact } from "./perception.ts";
@@ -371,7 +371,7 @@ const ENEMY_SCORE = (e: Soldier): number => {
   if (e.role === "tank") return 100;
   if (e.role === "field_gun") return 90;
   if (e.role === "at_gunner" && e.rockets > 0) return 70;
-  if (e.weapon === "mg42" || e.weapon === "bar" || e.role === "machine_gunner") return 55;
+  if (isMachineGun(e.weapon) || e.weapon === "bar" || e.role === "machine_gunner") return 55;
   if (e.role === "sniper") return 45;
   if (e.role === "gun_crew" || e.role.startsWith("tank_")) return 40;
   return 20;

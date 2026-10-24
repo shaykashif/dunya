@@ -31,7 +31,7 @@ export interface Weather {
 }
 
 /** The kinds of ground a battle can be fought over. */
-export type MapKind = "hamlet" | "rural" | "road" | "town" | "urban";
+export type MapKind = "hamlet" | "rural" | "road" | "town" | "urban" | "forest";
 
 /** The two armies. "us" is a US Army rifle platoon, "de" a German infantry Zug. */
 export type Side = "us" | "de";
@@ -86,7 +86,9 @@ export type Terrain =
   /** A market stall: trestles and an awning, something to hide behind but not stop a bullet. */
   | "stall"
   /** Junk in the road: fallen masonry, burnt timbers, smashed furniture, an abandoned cart. Slow going, a little cover. */
-  | "debris";
+  | "debris"
+  /** A boulder or an outcrop of rock in the forest: solid cover, and nobody walks through it. */
+  | "rock";
 
 // ---------- Bodies and wounds (kept from the village simulation) ----------
 
@@ -188,7 +190,13 @@ export interface Traits {
   leadership: number;
 }
 
-export type WeaponId = "m1_garand" | "m1_carbine" | "thompson" | "bar" | "kar98k" | "kar98k_scoped" | "m1903_scoped" | "mp40" | "mg42" | "pistol" | "tank_mg";
+export type WeaponId = "m1_garand" | "m1_carbine" | "thompson" | "bar" | "kar98k" | "kar98k_scoped" | "m1903_scoped" | "mp40" | "mg42" | "pistol" | "tank_mg" | "m1919" | "m2hb";
+
+/** Belt-fed machine guns: the MG 42, and the American Browning .30 and .50 on their tripods. */
+const MACHINE_GUNS: ReadonlySet<string> = new Set<WeaponId>(["mg42", "m1919", "m2hb"]);
+export function isMachineGun(weapon: string | null | undefined): boolean {
+  return weapon !== null && weapon !== undefined && MACHINE_GUNS.has(weapon);
+}
 
 export type Pace = "walk" | "crouch" | "rush" | "crawl";
 
@@ -521,6 +529,8 @@ export interface Platoon {
   missions: FireMission[];
   /** Forward observation teams (an NCO, a sniper and a radioman) who report what they see back to headquarters. */
   scoutIds: number[];
+  /** Machine-gun teams attached from the weapons platoon: a Browning .30 or .50 on its tripod and its crew. */
+  mgIds: number[];
   /** The set-piece attack under way, and when the last one ended. */
   plan: AssaultPlan | null;
   planTick: number;
@@ -545,7 +555,17 @@ export interface Platoon {
    * then the whole platoon opens at once. When it opened (-1 not yet), the most
    * enemies seen at once, and the most in the killing ground and since when.
    */
-  killZone: { sprung: number; peak: number; best: number; bestTick: number };
+  killZone: {
+    sprung: number;
+    peak: number;
+    best: number;
+    bestTick: number;
+    /** Seconds until the word, as the platoon reckons it from the enemy it can see coming; -1 while none is in sight. */
+    eta: number;
+    /** Enemies in the killing ground now, and how many it is waiting for. */
+    inZone: number;
+    need: number;
+  };
 }
 
 // ---------- Ordnance and smoke ----------
@@ -631,12 +651,14 @@ export interface Impact {
   spotting: boolean;
 }
 
-/** A messenger on foot, carrying a squad's call for help back to the platoon leader. */
+/** A messenger on foot, carrying a squad's call for help back to the platoon leader: one of the squad's own men. */
 export interface Runner {
   id: number;
   side: Side;
   /** The squad that sent him. */
   squadId: number;
+  /** The man himself. He is a soldier like any other: he can be shot, and lies where he falls. */
+  soldierId: number;
   x: number;
   y: number;
   /** Where he was a tick ago, for smooth drawing. */

@@ -1,4 +1,4 @@
-// npm run simulate -- --seed 42 [--map urban] [--season winter] [--ticks 1800] [--out runs/seed42]
+// npm run simulate -- --seed 42 [--map urban|forest|...] [--season winter] [--ticks 1800] [--out runs/seed42]
 import { createWriteStream, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventLog } from "../log/events.ts";
@@ -21,7 +21,7 @@ if (out) {
   });
 }
 
-// --map picks the kind of ground instead of letting the seed choose (hamlet, rural, road, town, urban).
+// --map picks the kind of ground instead of letting the seed choose (hamlet, rural, road, town, urban, forest).
 const map = args.map as MapKind | undefined;
 // --season picks summer (Normandy) or winter (the Ardennes, in snow) instead of letting the seed choose.
 const season = args.season as Season | undefined;

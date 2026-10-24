@@ -60,7 +60,8 @@ describe("kinds of ground", () => {
       kinds.add(w.layout.kind);
       skies.add(w.weather.kind);
     }
-    expect(kinds.size).toBe(5);
+    // The five kinds of place, and the forest line in winter.
+    expect(kinds.size).toBe(6);
     expect(skies.size).toBeGreaterThanOrEqual(3);
     const a = world(17), b = world(17);
     expect(a.layout.kind).toBe(b.layout.kind);

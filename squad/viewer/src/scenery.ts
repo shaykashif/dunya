@@ -270,6 +270,8 @@ const LOOKS: Record<Building["kind"], Look> = {
   apartment: { wallH: 16, wall: "#c6b8a0", wallDark: "#a09078", trim: "#34343a", roof: ["#5e626a", "#4c5058", "#3c4046", "#24262a"], hip: false },
   townhall: { wallH: 20, wall: "#dcd4c0", wallDark: "#b4ac96", trim: "#2a3a56", roof: ["#56606e", "#46505c", "#383f4a", "#1e242c"], hip: true },
   warehouse: { wallH: 22, wall: "#8e5c44", wallDark: "#6c4434", trim: "#3a2a20", roof: ["#7e7e76", "#6a6a64", "#56564f", "#363631"], hip: false },
+  // Log walls and a shingle roof: the forester's lodge and the woodcutters' huts.
+  cabin: { wallH: 16, wall: "#7a5634", wallDark: "#5a3e24", trim: "#2e2014", roof: ["#5e4a36", "#4c3a2a", "#3a2c20", "#221a12"], hip: false },
 };
 
 /** Pixels each storey above the ground floor adds to a front wall. */

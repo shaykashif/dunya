@@ -9,9 +9,9 @@ import { incoming } from "../combat/ordnance.ts";
 import { shakeMorale, suppress } from "../entities/morale.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { Building } from "../world/layout.ts";
-import { enemyOf, type Contact, type ElementOrder, type FirePolicy, type Pace, type Platoon, type Point, type Side, type Soldier, type Squad, type SquadState } from "../world/types.ts";
+import { enemyOf, isMachineGun, type Contact, type ElementOrder, type FirePolicy, type Pace, type Platoon, type Point, type Side, type Soldier, type Squad, type SquadState } from "../world/types.ts";
 import type { World } from "../world/world.ts";
-import { boundsTo, buildingPositions, canFireOn, centroid, facingFrom, flankPoint, gapTo, houseAt, pickPositions, pickPositions as pickPositionsAt, urbanBoundsTo, urbanFlankPoint } from "./tactics.ts";
+import { boundsTo, buildingPositions, canFireOn, centroid, facingFrom, flankPoint, gapTo, houseAt, pickPositions, pickPositions as pickPositionsAt, urbanBoundsTo, urbanFlankPoint, vantage } from "./tactics.ts";
 
 const RANK_ORDER = ["Leutnant", "Second Lieutenant", "Oberfeldwebel", "Technical Sergeant", "Feldwebel", "Staff Sergeant", "Unteroffizier", "Sergeant", "Obergefreiter", "Corporal", "Gefreiter", "Technician Fifth Grade", "Private First Class", "Oberschütze", "Private", "Schütze"];
 
@@ -386,7 +386,7 @@ function attackStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
       sq.routeIdx = 0;
         sq.boundWp = -1;
       sq.bounding = "A";
-      setState(w, sq, "advance", `advancing on ${w.layout.objectiveName}, ${urban(w) ? "house by house" : "hedge by hedge"}`);
+      setState(w, sq, "advance", `advancing on ${w.layout.objectiveName}, ${urban(w) ? "house by house" : w.layout.kind === "forest" ? "from tree to tree" : "hedge by hedge"}`);
       return;
     }
     case "advance": {
@@ -917,6 +917,9 @@ function defendStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
         return a.x * sq.facing.x + a.y * sq.facing.y < 0.25;
       });
       const closeIn = live.filter((c) => dist(c, pos) <= 8).length >= 2;
+      // An ambush party that has just sprung its trap has the enemy close and all round it on purpose: it fights it out
+      // where it lies for a while, and goes back only if it is badly hurt or shaken.
+      const fighting = sq.task === "ambush" && pl.killZone.sprung >= 0 && w.tick - pl.killZone.sprung < w.config.ambush.holdAfter;
       // In a city, men whose house the enemy is getting into go up the stairs and hold the upper floors, dropping grenades on them.
       if (urban(w) && closeIn && !sq.sweep?.held) {
         const count = new Map<number, number>();
@@ -943,7 +946,7 @@ function defendStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
       }
       const holdingUp = urban(w) && sq.sweep?.held === true;
       if (holdingUp && strength(w, sq) >= 0.35 && avgMorale(all) >= 0.25) return;
-      if ((strength(w, sq) < 0.5 || avgMorale(all) < 0.32 || flanked || closeIn) && sq.fallback) {
+      if ((strength(w, sq) < 0.5 || avgMorale(all) < 0.32 || ((flanked || closeIn) && !fighting)) && sq.fallback) {
         sq.sweep = null;
         sq.post = sq.fallback;
         sq.fallback = null;
@@ -1024,6 +1027,8 @@ function springAmbush(w: World, sq: Squad, leader: Soldier, found: boolean): voi
   const all = [...men.A, ...men.B];
   const pos = all.length > 0 ? centroid(all) : { x: leader.x, y: leader.y };
   const close = liveContacts(w, sq, 6).filter((c) => c.visible && dist(c, pos) <= w.config.ambush.trigger);
+  // Face the killing ground: the enemy in it are in front now, not on the flank.
+  if (close.length > 0) sq.facing = facingFrom(pos, centroid(close));
   setState(w, sq, "hold", found && close.length === 0 ? "the ambush is found: opening fire" : close.length === 0 ? "the platoon has opened fire: the ambush joins in" : `ambush sprung: ${close.length > 1 ? `${close.length} of them` : "the enemy"} at ${Math.round(Math.min(...close.map((c) => dist(c, pos))) * 3)} m, every rifle opens up at once`);
   shout(w, leader, leader.side === "de" ? "Feuer!" : "Fire! Fire!", null);
   w.emit("ambush_sprung", [leader.id], { squad: sq.id, enemies: close.length, found });
@@ -1055,12 +1060,15 @@ function openUp(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }): void 
 function fireControl(w: World, pl: Platoon): void {
   const kz = pl.killZone;
   const cfg = w.config.ambush;
-  const waiting = pl.squadIds.map((id) => w.squad(id)).filter((sq) => sq.state === "ambush" || ((sq.state === "hold" || sq.state === "deploy") && sq.orders.A.fire === "hold"));
+  const waiting = [...pl.squadIds, ...pl.mgIds].map((id) => w.squad(id)).filter((sq) => sq.state === "ambush" || ((sq.state === "hold" || sq.state === "deploy") && sq.orders.A.fire === "hold"));
   if (waiting.length === 0) return;
   const seen = new Map<number, Contact>();
   const inZone = new Map<number, Contact>();
   const hidden = new Set<number>();
   let danger = false;
+  // Tiles each enemy in sight still has to come to be in the killing ground, and to be on top of a hidden man.
+  const toZone = new Map<number, number>();
+  let toDanger = Infinity;
   for (const sq of waiting) {
     const men = ableMen(w, sq).filter((m) => m.role !== "sniper");
     if (men.length === 0) continue;
@@ -1073,6 +1081,12 @@ function fireControl(w: World, pl: Platoon): void {
       for (const m of men) near = Math.min(near, dist(m, c));
       if (near <= (ambush ? cfg.trigger : cfg.lineRange)) inZone.set(c.id, c);
       if (near <= (ambush ? cfg.danger : cfg.lineDanger)) danger = true;
+      const e = w.maybe(c.id);
+      // How fast he is coming: a walk, slowed by the going where he is and by the pauses of a bound.
+      const pace = e ? (w.config.movement.speed.walk * 0.7) / Math.max(1, w.map.cost(w.map.idx(e.x, e.y))) : 0.3;
+      const left = Math.max(0, near - (ambush ? cfg.trigger : cfg.lineRange)) / pace;
+      toZone.set(c.id, Math.min(toZone.get(c.id) ?? Infinity, left));
+      toDanger = Math.min(toDanger, Math.max(0, near - (ambush ? cfg.danger : cfg.lineDanger)) / pace);
     }
   }
   // Found: a hidden man is shot at by an enemy inside the killing ground who can see him. An observer
@@ -1090,11 +1104,23 @@ function fireControl(w: World, pl: Platoon): void {
     kz.best = n;
     kz.bestTick = w.tick;
   }
-  const full = n >= Math.max(cfg.minVictims, Math.ceil(cfg.share * kz.peak));
+  kz.inZone = n;
+  kz.need = Math.max(cfg.minVictims, Math.ceil(cfg.share * kz.peak));
+  const full = n >= kz.need;
   // As many as are coming: the count has not grown for a while, and most of the best are still in it.
   const stalled = n >= Math.max(Math.ceil(cfg.minVictims * 0.6), Math.ceil(kz.best * 0.6)) && w.tick - kz.bestTick >= cfg.patience;
-  if (!found && !danger && !full && !stalled) return;
+  if (!found && !danger && !full && !stalled) {
+    // The countdown: whichever comes first of the killing ground filling, the stall running out, and the lead man reaching them.
+    const need = kz.need;
+    const coming = [...toZone.entries()].filter(([id]) => !inZone.has(id)).map(([, t]) => t).sort((a, b) => a - b);
+    const filled = n >= need ? 0 : (coming[need - n - 1] ?? Infinity);
+    const stall = n >= Math.max(Math.ceil(cfg.minVictims * 0.6), Math.ceil(kz.best * 0.6)) ? kz.bestTick + cfg.patience - w.tick : Infinity;
+    const eta = Math.min(filled, stall, toDanger);
+    kz.eta = seen.size === 0 || !Number.isFinite(eta) ? -1 : Math.max(1, Math.round(eta));
+    return;
+  }
   kz.sprung = w.tick;
+  kz.eta = 0;
   const why = found ? "found" : danger ? "danger" : full ? "full" : "stalled";
   const boss = w.maybe(w.squad(pl.hqSquadId).leaderId);
   w.emit("kill_zone", boss ? [boss.id] : [], { side: pl.side, enemies: n, seen: kz.peak, why });
@@ -1156,6 +1182,176 @@ function registeredFire(w: World, pl: Platoon, inZone: readonly Contact[], seen:
   note(w, caller, "brought the mortars down on the registered target");
 }
 
+// ---------- Machine-gun teams ----------
+
+/**
+ * A Browning team from the weapons platoon. It does not bound or assault: it
+ * is a base of fire. Attacking, it follows the rifle squads up at a distance;
+ * once the platoon has the enemy located it finds a spot with a line of fire
+ * on them, cover and some height, carries the gun there, sets it up, and puts
+ * long bursts on the position while the rifle squads move. If the gun has had
+ * nothing to fire at for a while it moves to a better spot. Defending, it is
+ * dug in on the line and holds for the platoon's word like everyone else.
+ * Either way, enemy coming in close is the signal to pick up the gun and go:
+ * a crew working a gun on a tripod cannot fight off men rushing it.
+ */
+function mgTeamStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
+  const cfg = w.config.mgTeam;
+  const men = elements(w, sq);
+  const all = [...men.A, ...men.B];
+  if (all.length === 0) return;
+  const gunner = all.find((m) => isMachineGun(m.weapon)) ?? null;
+  const pos: Point = gunner ? { x: gunner.x, y: gunner.y } : centroid(all);
+  const back = rearDir(w, sq.side);
+  if (pl.withdrawing) {
+    if (sq.state !== "withdraw") setState(w, sq, "withdraw", "pulling the gun out to the rear");
+    withdrawStep(w, sq, men);
+    return;
+  }
+  // What the platoon knows of the enemy, by radio and runner as well as by eye.
+  const known = sideContacts(w, sq.side, 25).filter((c) => c.identified || w.tick - c.tick < 8);
+  const near = known.filter((c) => dist(c, pos) < cfg.tooClose);
+  if (near.length > 0 && sq.state !== "fall_back") {
+    const to = w.freeTileNear({ x: Math.round(pos.x + back.x * 16), y: Math.round(pos.y + back.y * 16) }, 6) ?? { x: pos.x, y: pos.y + back.y * 16 };
+    const keep: Record<number, Point> = {};
+    all.forEach((m, i) => (keep[m.id] = w.freeTileNear({ x: to.x + (i % 3) - 1, y: to.y + Math.floor(i / 3) }, 4, m.id) ?? to));
+    setOrder(w, sq, "A", order("withdraw", keep, "rush", "free"));
+    setState(w, sq, "fall_back", `the enemy is on the gun at ${Math.round(Math.min(...near.map((c) => dist(c, pos))) * 3)} m: picking it up and pulling back`);
+    shout(w, leader, "Grab the gun! Fall back!", null);
+    sq.post = to;
+    return;
+  }
+  if (sq.state === "fall_back") {
+    if (!arrived(w, all, sq.orders.A, 2) && w.tick - sq.stateTick < 60) return;
+    setState(w, sq, "hold", "back in a new spot, setting the gun up again");
+  }
+  // The target: the strongest position known within the gun's reach, a machine gun first.
+  const reachOf = gunner?.weapon ? w.config.weapons[gunner.weapon].maxRange : 120;
+  const groups = clusters(known, 6)
+    .filter((g) => dist(g.at, pos) <= reachOf + 30)
+    .sort((a, b) => (b.automatic ? 3 : 0) + b.n - ((a.automatic ? 3 : 0) + a.n) || dist(a.at, pos) - dist(b.at, pos));
+  const target = groups[0]?.at ?? null;
+  if (pl.role === "defend") {
+    const fire: FirePolicy = pl.killZone.sprung >= 0 ? "free" : "hold";
+    const cur = sq.orders.A;
+    // The word has gone and the gun cannot reach the enemy from where it is: shift along the line to where it can.
+    const idle = gunner !== null && w.tick - Math.max(gunner.lastFiredTick, pl.killZone.sprung, sq.stateTick) > cfg.relocate;
+    if (fire === "free" && target && idle && !canFireOn(w, pos, target)) {
+      const spots = [...w.layout.mgPositions, ...w.layout.linePositions, ...w.layout.hamletPositions]
+        .filter((p) => cheb(p, pos) <= 45 && dist(p, target) >= cfg.overwatch[0] * 0.7 && dist(p, target) <= reachOf && w.isFree(p.x, p.y, gunner.id, p.z ?? 0) && canFireOn(w, p, target))
+        .sort((a, b) => cheb(a, pos) - cheb(b, pos) || a.x - b.x);
+      const to = spots[0];
+      if (to) {
+        const keep: Record<number, Point> = {};
+        all.forEach((m, i) => (keep[m.id] = i === 0 && m === gunner ? to : (w.freeTileNear({ x: to.x + ((i % 3) - 1), y: to.y - 1 }, 3, m.id) ?? to)));
+        if (gunner && all[0] !== gunner) keep[gunner.id] = to;
+        setOrder(w, sq, "A", order("suppress", keep, "rush", "free", target));
+        setState(w, sq, "hold", `no line of fire from here: carrying the gun along the line to bear on the enemy at ${Math.round(dist(to, target) * 3)} m`);
+        sq.post = to;
+        return;
+      }
+    }
+    if (cur.fire !== fire || (target && (!cur.target || cheb(cur.target, target) > 4))) {
+      const keep: Record<number, Point> = {};
+      for (const m of all) keep[m.id] = cur.positions[m.id] ?? spotOf(m);
+      setOrder(w, sq, "A", order(target && fire === "free" ? "suppress" : "hold", keep, "crouch", fire, fire === "free" ? target : null));
+      if (fire === "free") sq.intent = target ? `the gun on the enemy at ${Math.round(dist(target, pos) * 3)} m` : "the gun laid on the ground in front";
+    }
+    if (sq.state !== "hold") setState(w, sq, "hold", sq.intent);
+    return;
+  }
+  // Attacking, nothing located yet: follow the rifle squads up, a little behind them.
+  if (!target) {
+    const line = pl.squadIds.map((id) => w.squad(id)).filter((q) => q.task !== "reserve").flatMap((q) => ableMen(w, q));
+    if (line.length === 0) return;
+    const c = centroid(line);
+    const want = { x: Math.round(c.x + back.x * cfg.trail), y: Math.round(c.y + back.y * cfg.trail) };
+    if (dist(pos, want) > 10 || sq.state === "deploy") {
+      const to = w.freeTileNear(want, 6) ?? want;
+      const keep: Record<number, Point> = {};
+      all.forEach((m, i) => (keep[m.id] = w.freeTileNear({ x: to.x + (i % 3) - 1, y: to.y + Math.floor(i / 3) }, 4, m.id) ?? to));
+      setOrder(w, sq, "A", order("move", keep, "walk", "return"));
+      setState(w, sq, "advance", "following the rifle squads up with the gun, ready to set it up");
+    }
+    return;
+  }
+  // A position to fire from: in range, a line of fire onto the target, cover beside it, some height; not far to carry the gun.
+  const firing = gunner !== null && w.tick - gunner.lastFiredTick < cfg.relocate;
+  if (sq.state === "support" && sq.post !== null) {
+    // On the way there: keep going.
+    if (!arrived(w, all, sq.orders.A, 2) && w.tick - sq.stateTick < 90) return;
+    // There, with a line of fire on what matters now: stay, and swing the gun onto it.
+    if ((canFireOn(w, sq.post, target) && dist(sq.post, target) <= reachOf) || firing || w.tick - sq.stateTick < cfg.relocate) {
+      if (!sq.orders.A.target || cheb(sq.orders.A.target, target) > 4) {
+        const cur = sq.orders.A;
+        setOrder(w, sq, "A", order("suppress", cur.positions, "crouch", "free", target));
+        sq.focus = target;
+      }
+      return;
+    }
+  }
+  // Closing up behind the squads: let them get there before looking again.
+  if (sq.state === "advance" && sq.intent.startsWith("no line of fire") && !arrived(w, all, sq.orders.A, 3) && w.tick - sq.stateTick < 40) return;
+  let best: Point | null = null, bs = -Infinity;
+  const R = cfg.search;
+  for (let dy = -R; dy <= R; dy += 2) {
+    for (let dx = -R; dx <= R; dx += 2) {
+      const x = Math.round(pos.x) + dx, y = Math.round(pos.y) + dy;
+      if (!w.map.inBounds(x, y) || !w.map.passable(x, y) || !w.isFree(x, y, gunner?.id ?? 0, 0)) continue;
+      const d = dist({ x, y }, target);
+      if (d < cfg.overwatch[0] || d > Math.min(cfg.overwatch[1], reachOf)) continue;
+      if (!canFireOn(w, { x, y }, target)) continue;
+      // Not with friends in the way.
+      if (w.soldiers.some((f) => f.side === sq.side && w.able(f) && f.squadId !== sq.id && dist(f, target) < d - 3 && segDist(f, { x, y }, target) < 2)) continue;
+      const t = w.map.at(x, y);
+      const cover = w.map.cover({ x, y }, target, "crouch") + (t === "foxhole" || t === "ditch" || t === "crater" ? 0.3 : 0);
+      const score = cover + vantage(w, { x, y }, target) * 0.6 - Math.hypot(dx, dy) * 0.03 - (w.exposure[sq.side][w.map.idx(x, y)] ?? 0) * 0.2;
+      if (score > bs) {
+        bs = score;
+        best = { x, y };
+      }
+    }
+  }
+  if (!best) {
+    // Nowhere from here: close up behind the squad nearest the enemy, and look again from there.
+    const lead = pl.squadIds.map((id) => w.squad(id)).filter((q) => ableMen(w, q).length > 0).sort((a, b) => dist(centroid(ableMen(w, a)), target) - dist(centroid(ableMen(w, b)), target))[0];
+    if (!lead) return;
+    const c = centroid(ableMen(w, lead));
+    const want = { x: Math.round(c.x + back.x * 8), y: Math.round(c.y + back.y * 8) };
+    if (dist(pos, want) > 6 && (sq.state !== "advance" || w.tick - sq.stateTick > 20)) {
+      const to = w.freeTileNear(want, 6) ?? want;
+      const keep: Record<number, Point> = {};
+      all.forEach((m, i) => (keep[m.id] = w.freeTileNear({ x: to.x + (i % 3) - 1, y: to.y + Math.floor(i / 3) }, 4, m.id) ?? to));
+      setOrder(w, sq, "A", order("move", keep, "crouch", "return"));
+      setState(w, sq, "advance", `no line of fire on the enemy from here: closing up behind ${lead.name} with the gun`);
+    }
+    return;
+  }
+  const keep: Record<number, Point> = {};
+  const crew = [gunner, ...all.filter((m) => m !== gunner)].filter((m): m is Soldier => m !== null);
+  const side = { x: -back.y, y: back.x };
+  crew.forEach((m, i) => {
+    // The gun, the assistant beside it feeding the belt, the bearers and the sergeant a few paces back.
+    const off = i === 0 ? { x: 0, y: 0 } : i === 1 ? side : { x: Math.round(back.x * 2 + side.x * (i - 3)), y: Math.round(back.y * 2 + side.y * (i - 3)) };
+    keep[m.id] = w.freeTileNear({ x: best!.x + off.x, y: best!.y + off.y }, 3, m.id) ?? best!;
+  });
+  setOrder(w, sq, "A", order("suppress", keep, "crouch", "free", target));
+  sq.focus = target;
+  sq.post = best;
+  const cal = gunner?.weapon === "m2hb" ? "the .50" : "the .30";
+  setState(w, sq, "support", `carrying ${cal} to a spot ${Math.round(dist(best, target) * 3)} m from the enemy, to set it up and put fire on them`);
+  shout(w, leader, gunner?.weapon === "m2hb" ? "Fifty up! Set it up here!" : "Gun up! Set it up over there!", null);
+}
+
+/** Distance from a point to the segment a–b, in tiles. */
+function segDist(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+
 // ---------- Calling for help ----------
 
 /**
@@ -1179,18 +1375,29 @@ function maybeCallForHelp(w: World, sq: Squad, pl: Platoon, leader: Soldier): vo
   if (!pinned && !stuck && !weak && !outnumbered) return;
   const radio = sq.side === "us";
   const why = pinned ? "pinned down" : weak ? "taking casualties" : outnumbered ? "outnumbered" : "stuck";
+  // A runner is one of the riflemen, the scouts or the ammunition bearer, whoever is nearest the platoon leader;
+  // never the leader, a gunner or his mate. With nobody to send, there is no call.
+  const boss = w.maybe(w.squad(pl.hqSquadId).leaderId);
+  const messenger = radio ? null : men.filter((m) => m.id !== leader.id && ["rifleman", "scout", "ammo_bearer", "grenadier"].includes(m.role) && !m.pinned).sort((a, b) => (boss ? dist(a, boss) - dist(b, boss) : 0) || a.id - b.id)[0];
+  if (!radio && !messenger) return;
   // A radio call is heard at once; a runner is a man who has to get there, and the call is heard when he does.
   sq.help = { tick: w.tick, arrives: radio ? w.tick : Number.MAX_SAFE_INTEGER, by: radio ? "radio" : "runner", answered: false };
-  if (!radio) {
-    const boss = w.maybe(w.squad(pl.hqSquadId).leaderId);
-    w.runners.push({ id: w.nextId("runner"), side: sq.side, squadId: sq.id, x: leader.x, y: leader.y, px: leader.x, py: leader.y, born: w.tick, dest: boss ? { x: boss.x, y: boss.y } : { x: pl.aidPost.x, y: pl.aidPost.y } });
+  if (messenger) {
+    w.runners.push({ id: w.nextId("runner"), side: sq.side, squadId: sq.id, soldierId: messenger.id, x: messenger.x, y: messenger.y, px: messenger.x, py: messenger.y, born: w.tick, dest: boss ? { x: boss.x, y: boss.y } : { x: pl.aidPost.x, y: pl.aidPost.y } });
+    messenger.act = null;
+    note(w, messenger, "sent running to the Zugführer with a call for help");
   }
   w.emit("help_call", [leader.id], { squad: sq.id, by: sq.help.by, why, at: [pos.x, pos.y] });
   shout(w, leader, radio ? `${sq.name} to Six: we're ${why}, need support, over!` : "Melder! Zum Zugführer: wir brauchen Verstärkung!", null);
   note(w, leader, `${radio ? "radioed" : "sent a runner"} for help`);
 }
 
-/** Runners cross the ground to the platoon leader; the call is heard when one arrives, or is given up on. */
+/**
+ * Runners cross the ground to the platoon leader; the call is heard when one
+ * arrives, or is given up on. The runner is a man of the squad, running under
+ * whatever fire there is like anyone else (his own candidates send him on), so
+ * one who is hit, or breaks, never gets there.
+ */
 function runnersStep(w: World, pl: Platoon, boss: Soldier | undefined | null): void {
   const cfg = w.config.help;
   if (w.runners.length === 0) return;
@@ -1201,39 +1408,36 @@ function runnersStep(w: World, pl: Platoon, boss: Soldier | undefined | null): v
       continue;
     }
     const sq = w.squad(r.squadId);
-    // A man alone in the open: rifle fire from anyone who can see him, and any shell that lands close.
-    const fate = w.rng.get("runners");
-    let risk = 0;
-    for (const e of w.soldiers) {
-      if (e.side === r.side || !w.able(e) || e.role === "tank" || e.role === "field_gun") continue;
-      const d = dist(e, r);
-      if (d > cfg.runnerRange) continue;
-      const vis = w.map.visibility(e.x, e.y, Math.round(r.x), Math.round(r.y), w.smoke, e.z, 0);
-      if (vis < 0.3) continue;
-      risk += cfg.runnerRisk * (1 - d / cfg.runnerRange) * vis * (e.suppression > 0.5 ? 0.4 : 1);
-    }
-    const shelled = w.impacts.some((i) => w.tick - i.tick <= 1 && i.side !== r.side && dist(i, r) <= 4);
-    if (shelled || fate.chance(Math.min(0.5, risk))) {
+    const m = w.soldier(r.soldierId);
+    if (!w.able(m) || m.broken) {
       sq.help = sq.help ? { ...sq.help, answered: true } : sq.help;
-      w.emit("runner_killed", [], { squad: sq.id, at: [Math.round(r.x), Math.round(r.y)], by: shelled ? "shell" : "fire" });
+      const shelled = w.impacts.some((i) => w.tick - i.tick <= 2 && i.side !== r.side && dist(i, m) <= 5);
+      w.emit("runner_killed", [m.id], { squad: sq.id, at: [m.x, m.y], by: shelled ? "shell" : m.broken && w.able(m) ? "broke" : "fire", person: m.id });
       continue;
     }
-    const goal: Point = boss && w.able(boss) ? { x: boss.x, y: boss.y } : r.dest;
     r.px = r.x;
     r.py = r.y;
-    const d = dist(r, goal);
-    if (d > 1.5 && w.tick - r.born < cfg.runnerGiveUp) {
-      const step = Math.min(cfg.runnerSpeed, d - 1);
-      r.x += ((goal.x - r.x) / d) * step;
-      r.y += ((goal.y - r.y) / d) * step;
+    r.x = m.x;
+    r.y = m.y;
+    const goal: Point = boss && w.able(boss) ? { x: boss.x, y: boss.y } : r.dest;
+    if (dist(m, goal) > 2.5 && w.tick - r.born < cfg.runnerGiveUp) {
       keep.push(r);
       continue;
     }
-    // He has arrived (or the trip has taken too long): the call is heard now.
+    // He has arrived (or the trip has taken too long): the call is heard now, and he goes back to his squad.
     if (sq.help && !sq.help.answered) sq.help.arrives = w.tick;
-    w.emit("runner_arrives", boss ? [boss.id] : [], { squad: sq.id, at: [Math.round(r.x), Math.round(r.y)] });
+    m.act = null;
+    w.emit("runner_arrives", boss ? [boss.id, m.id] : [m.id], { squad: sq.id, at: [m.x, m.y], person: m.id });
   }
   w.runners = keep;
+}
+
+/** Where a runner is going, if this man is one: the platoon leader, or where he was last seen. */
+export function runnerGoal(w: World, s: Soldier): Point | null {
+  const r = w.runners.find((q) => q.soldierId === s.id);
+  if (!r) return null;
+  const boss = w.maybe(w.squad(w.platoons[s.side].hqSquadId).leaderId);
+  return boss && w.able(boss) ? { x: boss.x, y: boss.y } : r.dest;
 }
 
 /** The platoon leader answers: the best free squad goes, or else the mortars are told where. */
@@ -1934,6 +2138,12 @@ export function commandStep(w: World): void {
     const pl = w.platoons[side];
     if (w.tick % 10 === (side === "us" ? 0 : 5)) platoonStep(w, pl);
     if (pl.role === "defend" && !pl.withdrawing && pl.killZone.sprung < 0) fireControl(w, pl);
+    for (const id of pl.mgIds) {
+      const sq = w.squad(id);
+      if ((w.tick + sq.id) % 2 !== 0) continue;
+      const leader = ensureLeader(w, sq);
+      if (leader && w.tick >= leader.confusedUntil) mgTeamStep(w, sq, pl, leader);
+    }
     for (const id of [pl.hqSquadId, ...pl.squadIds]) {
       const sq = w.squad(id);
       if ((w.tick + sq.id) % 2 !== 0) continue;

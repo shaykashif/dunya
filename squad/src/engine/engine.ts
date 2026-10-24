@@ -15,7 +15,7 @@ import type { DecisionRecord } from "../decision/sources.ts";
 import type { Decision, DecisionContext, DecisionSource } from "../decision/types.ts";
 import { r3 } from "../log/events.ts";
 import { cheb, dist } from "../world/map.ts";
-import { enemyOf, type Activity, type Candidate, type Pace, type Point, type Side, type Soldier } from "../world/types.ts";
+import { enemyOf, type Activity, type Candidate, type Pace, type Point, type Side, type Soldier, isMachineGun } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { applyIntervention, type Intervention, type ScheduledIntervention } from "./interventions.ts";
 import { checkInvariants } from "./invariants.ts";
@@ -183,6 +183,8 @@ export class Engine {
       }
       act.moveAcc = Math.max(0, act.moveAcc);
       w.trails.set(s.id, trail);
+      // A gun on a tripod carried anywhere has to be set up again before it fires.
+      if (s.weapon && w.config.weapons[s.weapon].setup) s.cooldowns["movedAt"] = w.tick;
       act.pathIdx = stopAt;
       act.blocked = 0;
       const last = w.map.ptz(path[stopAt - 1]!);
@@ -393,7 +395,7 @@ export class Engine {
         if (cheb(s, g) > 1) return end();
         s.posture = "prone";
         if (act.ticks >= 2) {
-          const give = Math.min(s.teamAmmo, g.weapon === "mg42" ? 250 : 120);
+          const give = Math.min(s.teamAmmo, isMachineGun(g.weapon) ? 250 : 120);
           s.teamAmmo -= give;
           g.ammo += give;
           w.emit("ammo_passed", [s.id, g.id], { by: s.id, to: g.id, rounds: give });
@@ -576,7 +578,7 @@ function workFor(s: Soldier, c: Candidate): number {
 
 /** Gets down appropriately: crouched behind a bank or in a hole, prone in the open when there is fire about. */
 function restPosture(w: World, s: Soldier, firing: boolean): void {
-  if (s.pinned || w.squad(s.squadId).state === "ambush") {
+  if (s.pinned || (w.squad(s.squadId).state === "ambush" && !w.map.indoors(s.x, s.y, s.z))) {
     s.posture = "prone";
     return;
   }

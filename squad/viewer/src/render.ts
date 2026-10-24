@@ -68,6 +68,7 @@ const BASE: Record<Terrain, string> = {
   statue: "#8e8a82",
   stall: "#8e8a82",
   debris: "#8e8a82",
+  rock: "#4a7a32",
 };
 
 /** Tiles to a side of one grid square: lettered west to east, numbered north to south. */
@@ -79,10 +80,10 @@ export function gridSquare(x: number, y: number): string {
 }
 
 /** Colours for the minimap. */
-export const MINI: Record<Terrain, string> = { ...BASE, deadfall: "#4a4a30", hedge: "#24481e", woods: "#2a5022", orchard: "#4a7a30", building: "#4a4038", window: "#4a4038", crater: "#5a4630", foxhole: "#3a2e20", brush: "#3e6a2c", ditch: "#3a5426", marsh: "#4a6e5a", sandbags: "#b09a68", wire: "#5a5a58", wreck: "#2e2620", pothole: "#4a4640", paving: "#8a8680", fountain: "#5a7a94", statue: "#c8c4b8", stall: "#b0503c", debris: "#6a5e50" };
+export const MINI: Record<Terrain, string> = { ...BASE, deadfall: "#4a4a30", hedge: "#24481e", woods: "#2a5022", orchard: "#4a7a30", building: "#4a4038", window: "#4a4038", crater: "#5a4630", foxhole: "#3a2e20", brush: "#3e6a2c", ditch: "#3a5426", marsh: "#4a6e5a", sandbags: "#b09a68", wire: "#5a5a58", wreck: "#2e2620", pothole: "#4a4640", paving: "#8a8680", fountain: "#5a7a94", statue: "#c8c4b8", stall: "#b0503c", debris: "#6a5e50", rock: "#7a7a74" };
 
 /** The minimap in winter: snowfields, dark forest, iced water and trodden roads. */
-const MINI_WINTER: Record<Terrain, string> = { ...MINI, grass: "#dfe6ea", wheat: "#dfe6ea", orchard: "#c8d2d6", hedge: "#4a5a46", woods: "#4e6050", brush: "#a8b4b0", deadfall: "#7a7c70", marsh: "#b8c8cc", crater: "#8a8478", foxhole: "#5a5248", ditch: "#8a9088", road: "#a89c88", bridge: "#a89c88", water: "#8aa8bc", wire: "#b8bcbc", sandbags: "#c8bca0" };
+const MINI_WINTER: Record<Terrain, string> = { ...MINI, grass: "#dfe6ea", wheat: "#dfe6ea", orchard: "#c8d2d6", hedge: "#4a5a46", woods: "#4e6050", brush: "#a8b4b0", deadfall: "#7a7c70", marsh: "#b8c8cc", crater: "#8a8478", foxhole: "#5a5248", ditch: "#8a9088", road: "#a89c88", bridge: "#a89c88", water: "#8aa8bc", wire: "#b8bcbc", sandbags: "#c8bca0", rock: "#5e605c" };
 
 let flora: Flora | undefined;
 let winterFlora: Flora | undefined;
@@ -408,6 +409,7 @@ function drawTile(g: CanvasRenderingContext2D, w: World, tx: number, ty: number)
     for (let k = 0; k < 3; k++) px(x + Math.floor(hash2(tx, ty, k + 70) * 15), y + 4 + Math.floor(hash2(tx, ty, k + 80) * 8), "#806a48", 2, 1);
   }
   if (w.season === "winter") snowOn(g, t, tx, ty);
+  if (t === "rock") boulder(g, tx, ty, w.season === "winter");
   terrace(g, w, tx, ty);
   // Bullet holes pocking a wall.
   const holes = holeStep(w.map.holes[w.map.idx(tx, ty)]!);
@@ -453,6 +455,34 @@ function snowOn(g: CanvasRenderingContext2D, t: Terrain, tx: number, ty: number)
   for (let k = 0; k < 4; k++) px(x + Math.floor(r(k + 40) * 16), y + Math.floor(r(k + 50) * 16), "#fbfdff");
   // Ruts down the roads, where carts and boots have churned it.
   if (t === "road" || t === "bridge") for (const rx of [4, 11]) px(x + rx, y, "rgba(120,110,96,0.35)", 1, TILE);
+}
+
+/** A boulder on the forest floor: grey stone lit from the north-west, mossy in summer, capped with snow in winter. */
+function boulder(g: CanvasRenderingContext2D, tx: number, ty: number, winter: boolean): void {
+  const x = tx * TILE, y = ty * TILE;
+  const r = (k: number) => hash2(tx, ty, k + 700);
+  const w = 11 + Math.floor(r(1) * 4), h = 8 + Math.floor(r(2) * 4);
+  const x0 = x + Math.floor((TILE - w) / 2), y0 = y + TILE - h - 1;
+  g.fillStyle = "rgba(10,14,10,0.35)";
+  g.fillRect(x0 + 2, y0 + h - 1, w, 2);
+  for (let yy = 0; yy < h; yy++) {
+    // Rounded: each row a little narrower toward the top.
+    const inset = Math.max(0, Math.round((1 - yy / (h * 0.55)) * 3));
+    const row = y0 + yy;
+    g.fillStyle = yy === 0 ? "#2c2e2c" : yy < h * 0.4 ? "#8e908a" : yy < h * 0.75 ? "#74766f" : "#5a5c56";
+    g.fillRect(x0 + inset, row, w - inset * 2, 1);
+    g.fillStyle = "#2c2e2c";
+    g.fillRect(x0 + inset - 1, row, 1, 1);
+    g.fillRect(x0 + w - inset, row, 1, 1);
+  }
+  g.fillStyle = "#2c2e2c";
+  g.fillRect(x0, y0 + h, w, 1);
+  // A crack, and moss or a cap of snow on top.
+  g.fillStyle = "#4a4c48";
+  g.fillRect(x0 + 3 + Math.floor(r(3) * (w - 6)), y0 + 3, 1, h - 4);
+  g.fillStyle = winter ? "#f2f6fa" : "#5e7a3a";
+  g.fillRect(x0 + 3, y0 + 1, w - 6, winter ? 2 : 1);
+  if (winter) g.fillRect(x0 + 2, y0 + 3, 3, 1);
 }
 
 /** Height in steps, for the terraced look. */
@@ -667,7 +697,7 @@ function figureBox(spr: HTMLCanvasElement, p: { x: number; y: number }, bob: num
 /** The weapon in a man's hands, by posture and facing, and the muzzle at its far end. */
 function weaponShape(s: Soldier, sx: number, sy: number, iw: number, prone: boolean): { x: number; y: number; w: number; h: number; muzzle: { x: number; y: number }; bipod: { x: number; y: number } | null } | null {
   if (!s.weapon || s.status !== "active") return null;
-  const big = s.weapon === "mg42" || s.weapon === "bar";
+  const big = s.weapon === "mg42" || s.weapon === "bar" || s.weapon === "m1919" || s.weapon === "m2hb";
   const len = big ? 7 : s.weapon === "thompson" || s.weapon === "mp40" ? 4 : 6;
   const left = s.dir < 0;
   if (prone) {
@@ -816,7 +846,7 @@ export class Renderer {
     }
 
     this.drawSmoke(w, time);
-    this.drawRunners(w, time);
+    this.drawRunners(w, time, prev);
     this.drawBadges(w, prev, time);
     this.drawEffects(time, w, cam, prev);
     if (opts.orders) this.drawOrders(w, prev);
@@ -827,6 +857,8 @@ export class Renderer {
       this.drawSquadBanners(w, cam, prev, time);
       g.globalAlpha = 1;
     }
+    // The ambush countdown shows in the wide view, where the trap and the enemy walking into it can both be seen.
+    if (cam.zoom < SQUAD_BANNER_ZOOM + SQUAD_BANNER_FADE) this.drawAmbushTimers(w, cam, prev, time);
 
     // Screen space from here: the weather over everything, and the floor buttons.
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -947,18 +979,13 @@ export class Renderer {
     g.fillRect(b.x * TILE + TILE, b.y * TILE + TILE, 3, (b.h - 2) * TILE);
   }
 
-  /** Messengers on foot: a running man of his side, with a small bobbing envelope over his head. */
-  private drawRunners(w: World, time: number): void {
+  /** Messengers on foot: the man himself is drawn with everyone else; over his head, a small bobbing envelope. */
+  private drawRunners(w: World, time: number, prev: Map<number, { x: number; y: number }>): void {
     const g = this.g;
     for (const r of w.runners) {
-      const x = (r.px + (r.x - r.px) * Math.min(1, Math.max(0, this.alpha))) * TILE + 8;
-      const y = (r.py + (r.y - r.py) * Math.min(1, Math.max(0, this.alpha))) * TILE + 8;
-      const step = Math.floor(time * 9 + r.id) % 2 === 0;
-      const spr = soldierSprite({ side: r.side, posture: "stand", walking: true, medic: false, surrendered: false, flip: r.x < r.px, dead: false, id: r.id, winter: w.season === "winter" });
-      g.fillStyle = "rgba(0,0,0,0.3)";
-      g.fillRect(Math.round(x) - 4, Math.round(y) + 5, 8, 2);
-      const { sx, sy } = figureBox(spr, { x, y }, step ? -1 : 0);
-      g.drawImage(spr, sx - 1, sy - 1);
+      const m = w.maybe(r.soldierId);
+      if (!m || !w.onField(m)) continue;
+      const { x, y } = this.worldPos(m, prev, this.alpha);
       // The message he carries.
       const bob = Math.round(Math.sin(time * 8 + r.id) * 1);
       g.fillStyle = "#000000";
@@ -1894,6 +1921,87 @@ export class Renderer {
       if (sub) {
         g.fillStyle = "#ffe070";
         g.fillText(sub, tx, y + pad * 0.6 + fs * 1.85 + pad * 0.4);
+      }
+    }
+  }
+
+  /** The countdown shown, per squad, steadied so it ticks down a second at a time instead of jumping as men come into view. */
+  private ambushClock = new Map<number, { tick: number; shown: number; world: World }>();
+
+  /**
+   * Over each ambush party: the killing ground as a faint ring, and a box
+   * counting down to the word (when the platoon reckons it will come), with how
+   * many of the enemy are in the killing ground against how many it is waiting
+   * for. When the word is given the box flashes FIRE! for a few seconds.
+   */
+  private drawAmbushTimers(w: World, cam: Camera, prev: Map<number, { x: number; y: number }>, time: number): void {
+    const g = this.g;
+    const k = 1 / cam.zoom;
+    for (const side of ["us", "de"] as const) {
+      const pl = w.platoons[side];
+      if (pl.role !== "defend") continue;
+      const kz = pl.killZone;
+      const since = kz.sprung >= 0 ? w.tick - kz.sprung : -1;
+      if (since > 6) continue;
+      for (const id of pl.squadIds) {
+        const sq = w.squad(id);
+        if (sq.task !== "ambush") continue;
+        let n = 0, cx = 0, cy = 0, top = Infinity;
+        for (const mid of sq.members) {
+          const s = w.maybe(mid);
+          if (!s || !w.able(s)) continue;
+          const p = this.worldPos(s, prev, this.alpha);
+          cx += p.x;
+          cy += p.y;
+          top = Math.min(top, p.y);
+          n++;
+        }
+        if (n === 0) continue;
+        cx /= n;
+        cy /= n;
+        // The killing ground.
+        g.strokeStyle = since >= 0 ? "rgba(255,90,50,0.6)" : "rgba(255,170,60,0.35)";
+        g.lineWidth = 2 * k;
+        g.setLineDash([6 * k, 5 * k]);
+        g.beginPath();
+        g.arc(cx, cy, w.config.ambush.trigger * TILE, 0, Math.PI * 2);
+        g.stroke();
+        g.setLineDash([]);
+        // Steady the countdown: a second off each tick, unless the reckoning moves a lot.
+        let clock = this.ambushClock.get(sq.id);
+        if (!clock || clock.world !== w) clock = { tick: -1, shown: -1, world: w };
+        if (clock.tick !== w.tick) {
+          const next = kz.eta;
+          if (next < 0) clock.shown = -1;
+          else if (clock.shown < 0 || next > clock.shown + 4 || next < clock.shown - 1) clock.shown = next;
+          else clock.shown = Math.max(1, clock.shown - (w.tick - Math.max(0, clock.tick)));
+          clock.tick = w.tick;
+          this.ambushClock.set(sq.id, clock);
+        }
+        const fs = 15 * k;
+        const head = since >= 0 ? "FIRE!" : clock.shown >= 0 ? `AMBUSH · FIRE IN ${Math.floor(clock.shown / 60)}:${String(clock.shown % 60).padStart(2, "0")}` : "AMBUSH · LYING IN WAIT";
+        const sub = since >= 0 ? `${sq.name} and the whole platoon open up` : kz.need > 0 ? `${kz.inZone} of ${kz.need} in the killing ground` : "holding fire, no enemy in sight";
+        g.font = `${fs}px "VT323", monospace`;
+        const tw = g.measureText(head).width;
+        g.font = `${fs * 0.8}px "VT323", monospace`;
+        const sw = g.measureText(sub).width;
+        const pad = 5 * k;
+        const wBox = Math.max(tw, sw) + pad * 2, h = fs * 1.85 + pad * 1.6;
+        // Above the squad's own banner.
+        const x = Math.round(cx - wBox / 2), y = Math.round(top - 40 * k - h);
+        const urgent = since >= 0 || (clock.shown >= 0 && clock.shown <= 5);
+        const blink = urgent && Math.floor(time * 4) % 2 === 0;
+        g.fillStyle = since >= 0 ? (blink ? "rgba(200,40,24,0.95)" : "rgba(120,20,12,0.95)") : "rgba(26,18,10,0.9)";
+        g.fillRect(x, y, wBox, h);
+        g.strokeStyle = urgent ? (blink ? "#ffd070" : "#ff7040") : "#e89a40";
+        g.lineWidth = 1.5 * k;
+        g.strokeRect(x, y, wBox, h);
+        g.font = `${fs}px "VT323", monospace`;
+        g.fillStyle = since >= 0 ? "#fff4d8" : urgent ? "#ffb070" : "#ffd28a";
+        g.fillText(head, x + (wBox - tw) / 2, y + pad + fs * 0.8);
+        g.font = `${fs * 0.8}px "VT323", monospace`;
+        g.fillStyle = "#e8dcc0";
+        g.fillText(sub, x + (wBox - sw) / 2, y + pad * 1.2 + fs * 1.65);
       }
     }
   }

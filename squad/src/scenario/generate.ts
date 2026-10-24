@@ -11,7 +11,7 @@ import { Rng } from "../engine/rng.ts";
 import type { EventLog } from "../log/events.ts";
 import { generateLayout, type Layout } from "../world/layout.ts";
 import { cheb } from "../world/map.ts";
-import { enemyOf, type Experience, type Point, type Role, type Season, type Side, type Soldier, type Squad, type Tank, type Traits, type WeaponId, type WeatherKind } from "../world/types.ts";
+import { enemyOf, isMachineGun, type Experience, type Point, type Role, type Season, type Side, type Soldier, type Squad, type Tank, type Traits, type WeaponId, type WeatherKind } from "../world/types.ts";
 import { World } from "../world/world.ts";
 import type { SimConfig } from "./config.ts";
 
@@ -377,6 +377,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       fireMissionsLeft: cfg.mortars.missions[role] + (city && role === "attack" ? cfg.urban.attackerMissions : 0) + (role === "defend" ? cfg.ambush.reserveMissions : 0),
       missions: [],
       scoutIds,
+      mgIds: [],
       plan: null,
       planTick: -1000,
       smokeAt: -1000,
@@ -389,7 +390,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       startStrength: 0,
       withdrawing: false,
       withdrawTick: -1,
-      killZone: { sprung: -1, peak: 0, best: 0, bestTick: 0 },
+      killZone: { sprung: -1, peak: 0, best: 0, bestTick: 0, eta: -1, inZone: 0, need: 0 },
     };
   }
 
@@ -462,9 +463,27 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
   if (tankFor[defender]) makeVehicle(defender, "tank");
   if (gunFor) makeVehicle(defender, "field_gun");
 
+  // ---- Machine-gun teams from the weapons platoon, with the Americans, attacking or defending ----
+  const mgRng = new Rng(seed, "mgteam");
+  if (mgRng.chance(cfg.forces.usMgTeamChance)) {
+    const heavy = mgRng.chance(cfg.forces.m2Chance);
+    const r = US_RANKS;
+    const gun: WeaponId = heavy ? "m2hb" : "m1919";
+    const slots: Slot[] = [
+      { role: "squad_leader", element: "A", rank: r.sgt!, weapon: "m1_carbine", ammo: 60, grenades: 2 },
+      { role: "machine_gunner", element: "A", rank: r.cpl!, weapon: gun, ammo: heavy ? 210 : 250, grenades: 0 },
+      { role: "asst_gunner", element: "A", rank: r.pfc!, weapon: "m1_carbine", ammo: 45, team: heavy ? 210 : 500, grenades: 1 },
+      { role: "ammo_bearer", element: "A", rank: r.pvt!, weapon: "m1_garand", ammo: 64, team: heavy ? 210 : 500, grenades: 1 },
+      { role: "ammo_bearer", element: "A", rank: r.pvt!, weapon: "m1_garand", ammo: 64, team: heavy ? 210 : 500, grenades: 1 },
+    ];
+    const sq = makeSquad("us", heavy ? "MG Section (.50)" : "MG Section (.30)", "#e0d0a0", false, slots, "mg");
+    w.platoons.us.mgIds.push(sq.id);
+  }
+
   // ---- Deployment ----
   deployAttackers(w, attacker, rng);
   deployDefenders(w, defender, layout, rng);
+  deployMgTeams(w, layout);
   for (const side of ["us", "de"] as const) w.platoons[side].startStrength = w.side(side).length;
   w.map.finalize();
 
@@ -496,6 +515,50 @@ function findStand(w: World, near: Point, radius: number, self: number): Point |
     }
   }
   return null;
+}
+
+/**
+ * The machine-gun team starts with its platoon: behind the attackers' start
+ * line, beside the headquarters; or, defending, dug in on the line at the
+ * position with the longest view over the ground in front, away from the
+ * squads' own guns, its crew round it.
+ */
+function deployMgTeams(w: World, layout: Layout): void {
+  for (const side of ["us", "de"] as const) {
+    const pl = w.platoons[side];
+    pl.mgIds.forEach((id, k) => {
+      const sq = w.squad(id);
+      const men = sq.members.map((m) => w.soldier(m));
+      let at: Point;
+      if (pl.role === "attack") {
+        const H = w.map.height;
+        at = { x: Math.max(6, Math.min(w.map.width - 7, pl.objective.x + (k % 2 === 0 ? 12 : -12))), y: H - 5 };
+      } else {
+        const guns = w.soldiers.filter((s) => s.side === side && isMachineGun(s.weapon) && s.squadId !== id);
+        const view = (p: Point) => vantage(w, p, { x: p.x, y: Math.min(w.map.height - 1, p.y + 45) });
+        const pool = [...layout.mgPositions, ...layout.linePositions].filter((p) => guns.every((g) => cheb(g, p) >= 10) && w.isFree(p.x, p.y, 0, p.z ?? 0));
+        // Where the enemy will come: toward the middle, by the road, not out on a flank.
+        const road = layout.roadX[layout.line.y] ?? Math.round(w.map.width / 2);
+        at = pool.map((p) => ({ p, v: view(p) - Math.abs(p.x - road) * 0.02 })).sort((a, b) => b.v - a.v || a.p.x - b.p.x)[0]?.p ?? { x: layout.objective.x, y: layout.line.y - 2 };
+      }
+      const gunner = men.find((m) => isMachineGun(m.weapon));
+      const order = [gunner, ...men.filter((m) => m !== gunner)].filter((m): m is Soldier => m !== undefined);
+      order.forEach((m, i) => {
+        const p = i === 0 ? at : { x: at.x + [0, 1, -1, 2, -2][i % 5]!, y: at.y - (i === 0 ? 0 : i <= 2 ? 1 : 2), z: at.z };
+        placeAt(w, m, p);
+        m.posture = "crouch";
+      });
+      if (pl.role === "defend" && w.map.at(at.x, at.y) !== "foxhole" && ["grass", "wheat", "orchard", "crater", "woods"].includes(w.map.at(at.x, at.y)) && (at.z ?? 0) === 0) w.map.set(at.x, at.y, "foxhole");
+      const keep: Record<number, Point> = {};
+      for (const m of men) keep[m.id] = m.z > 0 ? { x: m.x, y: m.y, z: m.z } : { x: m.x, y: m.y };
+      sq.orders.A = { kind: "hold", positions: keep, target: null, pace: "crouch", fire: "hold", issued: 0 };
+      sq.orders.B = { kind: "hold", positions: {}, target: null, pace: "crouch", fire: "hold", issued: 0 };
+      sq.state = pl.role === "defend" ? "hold" : "deploy";
+      sq.post = at;
+      sq.facing = { x: 0, y: pl.role === "defend" ? 1 : -1 };
+      sq.intent = pl.role === "defend" ? "dug in on the line with the gun laid on the ground in front, holding fire" : "behind the start line with the gun, ready to follow the rifle squads up";
+    });
+  }
 }
 
 function placeAt(w: World, s: Soldier, p: Point): void {
@@ -722,18 +785,21 @@ function deployDefenders(w: World, side: Side, layout: Layout, rng: Rng): void {
       const sq = free.map((id) => w.squad(id)).sort((a, b) => cheb(a.post ?? site.at, site.at) - cheb(b.post ?? site.at, site.at) || a.id - b.id)[0]!;
       const men = sq.members.map((m) => w.soldier(m));
       const spots = ambushSpots(w, men, site);
+      for (const m of men) w.vacate(m);
       for (const m of men) {
         const p = spots[m.id]!;
         placeAt(w, m, p);
-        m.posture = "prone";
+        // Flat in the woods; back from the window in the dark of a room in a house.
+        m.posture = w.map.indoors(m.x, m.y, m.z) ? "crouch" : "prone";
       }
       for (const el of ["A", "B"] as const) {
         const keep: Record<number, Point> = {};
-        for (const m of men.filter((x) => x.element === el)) keep[m.id] = { x: m.x, y: m.y };
+        for (const m of men.filter((x) => x.element === el)) keep[m.id] = m.z > 0 ? { x: m.x, y: m.y, z: m.z } : { x: m.x, y: m.y };
         sq.orders[el] = { kind: "hold", positions: keep, target: null, pace: "crawl", fire: "hold", issued: 0 };
       }
       sq.state = "ambush";
-      sq.intent = "lying in ambush in cover beside the enemy's way in, holding fire";
+      sq.task = "ambush";
+      sq.intent = layout.kind === "urban" ? "split between two houses over the street the enemy must come along, at the windows, holding fire" : "lying in ambush in cover beside the enemy's way in, holding fire";
       sq.post = site.at;
       sq.facing = { x: Math.sign(site.look.x - site.at.x), y: Math.sign(site.look.y - site.at.y) };
       w.emit("ambush_laid", [], { squad: sq.id, at: [site.at.x, site.at.y] });

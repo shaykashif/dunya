@@ -41,9 +41,35 @@ export interface PlayOptions {
   close?: boolean;
   /** Pick the near / mid / far recording by distance and zoom (groups named `name.near` etc.). */
   byDistance?: boolean;
+  /** Reshape the recording: more weight in the low end, and some grit, for a heavier gun than the one recorded. */
+  voicing?: Voicing;
+}
+
+/** How a gun's recording is reshaped: a low shelf and a low peak (dB), saturation in [0, 1], and a top cut (Hz, 0 for none). */
+export interface Voicing {
+  shelf: number;
+  thump: number;
+  drive: number;
+  top: number;
 }
 
 const MAX_VOICES = 36;
+
+/** Soft-clipping curves, made once per amount of drive. */
+const curves = new Map<number, Float32Array<ArrayBuffer>>();
+function driveCurve(drive: number): Float32Array<ArrayBuffer> {
+  let c = curves.get(drive);
+  if (!c) {
+    c = new Float32Array(1024);
+    const k = 1 + drive * 12;
+    for (let i = 0; i < c.length; i++) {
+      const x = (i / (c.length - 1)) * 2 - 1;
+      c[i] = Math.tanh(k * x) / Math.tanh(k);
+    }
+    curves.set(drive, c);
+  }
+  return c;
+}
 const STORE = "squad.sound";
 
 /** Which footstep set each kind of ground uses. */
@@ -78,6 +104,7 @@ const SURFACE: Record<Terrain, string> = {
   statue: "rock",
   stall: "wood",
   debris: "rock",
+  rock: "rock",
 };
 
 export function surfaceOf(t: Terrain): string {
@@ -430,6 +457,7 @@ export class Sfx {
       node.connect(f);
       node = f;
     }
+    if (o.voicing) node = this.voiced(node, o.voicing);
     const g = ctx.createGain();
     g.gain.value = gain;
     node.connect(g);
@@ -459,6 +487,41 @@ export class Sfx {
     src.start(ctx.currentTime + Math.max(0, o.delay ?? 0), offset);
     if (o.x !== undefined && gain > 0.2) this.intensity = Math.min(1, this.intensity + 0.012 * gain);
     return true;
+  }
+
+  /** Heavier: a low shelf for body, a peak low down for the thump in the chest, soft clipping for the bark, and the fizz taken off the top. */
+  private voiced(input: AudioNode, v: Voicing): AudioNode {
+    const ctx = this.ctx!;
+    let node = input;
+    const shelf = ctx.createBiquadFilter();
+    shelf.type = "lowshelf";
+    shelf.frequency.value = 220;
+    shelf.gain.value = v.shelf;
+    node.connect(shelf);
+    node = shelf;
+    if (v.thump !== 0) {
+      const peak = ctx.createBiquadFilter();
+      peak.type = "peaking";
+      peak.frequency.value = 75;
+      peak.Q.value = 1.1;
+      peak.gain.value = v.thump;
+      node.connect(peak);
+      node = peak;
+    }
+    if (v.drive > 0) {
+      const shaper = ctx.createWaveShaper();
+      shaper.curve = driveCurve(v.drive);
+      node.connect(shaper);
+      node = shaper;
+    }
+    if (v.top > 0) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = v.top;
+      node.connect(lp);
+      node = lp;
+    }
+    return node;
   }
 
   /**

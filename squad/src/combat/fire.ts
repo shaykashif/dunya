@@ -11,12 +11,21 @@ import { r3 } from "../log/events.ts";
 import type { WeaponSpec } from "../scenario/config.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { Point, Soldier } from "../world/types.ts";
+import { isMachineGun } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { smallArmsOnVehicle } from "./armour.ts";
 import { concealment, hearShot } from "./perception.ts";
+import { lineResist, reach, through, throughCover } from "./penetration.ts";
 
 export function weaponOf(w: World, s: Soldier): WeaponSpec | null {
   return s.weapon ? w.config.weapons[s.weapon] : null;
+}
+
+/** Of a hit on this man, the chance it came through his cover rather than over or round it. */
+function throughShare(w: World, shooter: Soldier, target: Soldier, spec: WeaponSpec): number {
+  const c = throughCover(w, shooter, target, spec);
+  const clean = (1 - c.edge) * (1 - c.own), thru = c.edge * (1 - c.own) * c.pass;
+  return clean + thru > 0 ? thru / (clean + thru) : 0;
 }
 
 /** True if the man moved this tick (spoils his aim, and makes him easier to spot). */
@@ -34,19 +43,30 @@ export function hitChance(w: World, shooter: Soldier, target: Soldier, spec: Wea
   if (d > spec.maxRange) return 0;
   const cfg = w.config;
   const skill = (0.6 + 0.8 * shooter.traits.marksmanship) * (shooter.experience === "veteran" ? 1.12 : shooter.experience === "green" ? 0.85 : 1);
-  const cover = w.map.cover(target, shooter, target.posture);
+  const parts = throughCover(w, shooter, target, spec);
+  const cover = 1 - (1 - parts.edge) * (1 - parts.own);
   // Falls away quickly with range, but never to nothing within the weapon's reach: wild long-range fire still hits now and then.
   const floor = cfg.fire.longRangeFloor;
   let p = spec.accuracy * (floor + (1 - floor) * Math.exp(-d / spec.rangeScale)) * skill;
   p *= cfg.posture.steadiness[shooter.posture] * (1 - cfg.suppression.accuracyLoss * shooter.suppression) * aimFactor(shooter);
   // Blown from running, a man's aim wavers; rain and fog spoil everyone's.
   p *= (1 - cfg.fatigue.aimLoss * shooter.fatigue) * w.weather.aim;
+  // An ambush's opening volley: every gun laid on the killing ground beforehand, at men who do not yet know it is there.
+  const own = w.platoons[shooter.side];
+  if (own.role === "defend" && own.killZone.sprung >= 0 && w.tick - own.killZone.sprung < cfg.ambush.volleyTicks) p *= cfg.ambush.volleyAim;
   // Firing down from higher ground is a little easier, and up at a man on a crest a little harder.
   const above = w.map.heightAt(shooter.x, shooter.y, shooter.z) - w.map.heightAt(target.x, target.y, target.z);
   p *= 1 + Math.max(-cfg.highGround.max, Math.min(cfg.highGround.max, above * cfg.highGround.perMetre));
-  p *= Math.pow(vis, 0.7) * cfg.posture.size[target.posture] * (1 - cover);
+  p *= Math.pow(vis, 0.7) * cfg.posture.size[target.posture];
+  // A gunner sitting up behind his gun on its tripod while it fires is a big, still target.
+  if (target.weapon && cfg.weapons[target.weapon].setup && w.tick - target.lastFiredTick <= 2) p *= cfg.mgTeam.sittingDuck;
+  // Over or round his cover; or through it, if the round has the punch for what it is made of.
+  p *= 1 - cover + parts.edge * (1 - parts.own) * parts.pass;
   if (movedThisTick(w, shooter)) p *= cfg.fire.movingShooter;
   if (movedThisTick(w, target)) p *= cfg.fire.movingTarget;
+  // Point blank: a few paces off he hardly misses, flat on the ground or not, unless the man is behind something
+  // or the shooter is shaking with fear.
+  if (d < cfg.fire.pointBlank) p += (1 - p) * cfg.fire.pointBlankBonus * (1 - d / cfg.fire.pointBlank) * (1 - 0.5 * cover) * Math.sqrt(vis) * (1 - 0.4 * shooter.suppression);
   // A friendly tank or gun shield between him and the shooter takes most of it.
   if (w.tanks.size > 0) {
     const dx = target.x - shooter.x, dy = target.y - shooter.y;
@@ -105,7 +125,7 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
   const cfg = w.config;
   const rng = w.rng.get("fire");
   let rate = spec.rate;
-  if (shooter.weapon === "mg42") {
+  if (isMachineGun(shooter.weapon)) {
     // Someone has to feed the belt.
     const fed = w.friendsNear(shooter, 2).some((f) => w.able(f) && (f.role === "asst_gunner" || f.role === "ammo_bearer"));
     if (!fed) rate *= cfg.fire.unfedFactor;
@@ -131,17 +151,32 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
   const wall = struckWall(w, at, shooter);
   for (let r = 0; r < rounds; r++) {
     let victim: Soldier | null = null;
+    let thru = false;
     if (target && w.onField(target) && purpose === "aimed") {
       const vis = w.map.visibility(shooter.x, shooter.y, target.x, target.y, smoke, shooter.z, target.z);
-      if (vis > 0 && rng.chance(hitChance(w, shooter, target, spec, vis))) victim = target;
+      const p = vis > 0 ? hitChance(w, shooter, target, spec, vis) : 0;
+      if (p > 0 && rng.chance(p)) {
+        victim = target;
+        thru = rng.chance(throughShare(w, shooter, target, spec));
+      }
     } else {
-      // Fire at a hedge line or window: anyone right there may be hit, at long odds.
+      // Fire at a hedge line or window: anyone right there may be hit, at long odds; through the hedge or the
+      // planks too, if the round has the punch for it.
       for (const o of near) {
         if (o.side === shooter.side || cheb(o, at) > 1 || (at.z !== undefined && o.z !== at.z)) continue;
         const vis = w.map.visibility(shooter.x, shooter.y, o.x, o.y, smoke, shooter.z, o.z);
         if (vis > 0 && rng.chance(hitChance(w, shooter, o, spec, vis) * cfg.fire.blindFactor)) {
           victim = o;
+          thru = rng.chance(throughShare(w, shooter, o, spec));
           break;
+        }
+        if (vis <= 0 && o.z === shooter.z) {
+          const pass = through(spec, lineResist(w, shooter, o).resist) * reach(w, dist(shooter, o));
+          if (pass > 0 && rng.chance(hitChance(w, shooter, o, spec, 0.5) * cfg.fire.blindFactor * pass)) {
+            victim = o;
+            thru = true;
+            break;
+          }
         }
       }
     }
@@ -159,7 +194,9 @@ export function fireTick(w: World, shooter: Soldier, at: Point, targetId: number
     if (victim && victim.status !== "dead") {
       hits.push(victim.id);
       shooter.hits++;
-      bulletWound(w, rng, shooter, victim, spec, range, `${label(shooter)}'s ${spec.name}`);
+      // A round that came through the planks or the bank has spent most of itself.
+      const k = w.config.penetration.damage;
+      bulletWound(w, rng, shooter, victim, thru ? { ...spec, severity: [spec.severity[0] * k, spec.severity[1] * k] } : spec, range, `${label(shooter)}'s ${spec.name}${thru ? ", through cover" : ""}`);
     } else if (wall && rng.chance(0.55)) w.map.scar(wall.x, wall.y);
   }
 

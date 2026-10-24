@@ -4,13 +4,16 @@
 // men, give up. The engine judges each option tactically; the decision source
 // weighs it against the man's own nerve, aggression and sense of duty.
 import { hasAmmo, hitChance, weaponOf } from "../combat/fire.ts";
+import { lineResist, through, THROUGH_NAME } from "../combat/penetration.ts";
 import { liveContacts } from "../combat/perception.ts";
 import { armFactor, bleedingOf, cannotWalk } from "../entities/body.ts";
 import { needsAid, needsCarrying } from "../entities/injuries.ts";
 import { isGunner, isLeader } from "../entities/soldier.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { Candidate, ElementOrder, Ordnance, Point, Soldier } from "../world/types.ts";
+import { isMachineGun } from "../world/types.ts";
 import type { World } from "../world/world.ts";
+import { runnerGoal } from "./command.ts";
 import { chooseHide, compromised, isSniper, needsHide, sniperPriority, watchingWounded } from "./sniper.ts";
 import { canFireOn, findCover } from "./tactics.ts";
 
@@ -140,6 +143,15 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
   const fire = order.fire;
   const myPos = isSniper(s) ? undefined : order.positions[s.id];
 
+  // ---- A runner with a message: he runs, dodging into cover only from a grenade or a shell (above) ----
+  const errand = runnerGoal(w, s);
+  if (errand) {
+    const goal = w.freeTileNear(errand, 3, s.id) ?? errand;
+    out.push(cand("move", `runner:${goal.x},${goal.y}`, "run with the message to the platoon leader", { dest: goal, pace: s.fatigue < cfg.fatigue.winded ? "rush" : "walk", value: 1.2, ordered: true, danger: 0.3 * exHere }));
+    if (s.pinned) out.push(cand("hug", "hug", "hug the ground", { duration: 2, value: 0.5 + s.suppression * 0.4, safety: 0.9 }));
+    return out;
+  }
+
   // ---- Snipers work alone ----
   if (isSniper(s)) {
     sniperCandidates(w, s, out, enemiesSeen, exHere, underFire);
@@ -224,8 +236,14 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
   }
 
   // ---- Fire at men he can see ----
-  const waiting = fire === "hold" && w.platoons[s.side].role === "defend" && w.platoons[s.side].killZone.sprung < 0;
-  if (spec && !reloading && s.loaded > 0) {
+  const kz = w.platoons[s.side].role === "defend" ? w.platoons[s.side].killZone : null;
+  const waiting = fire === "hold" && kz !== null && kz.sprung < 0;
+  // The first seconds after the word: every man who can shoot shoots, the guns most of all; ducking can wait.
+  const opening = kz !== null && kz.sprung >= 0 && w.tick - kz.sprung < cfg.ambush.volleyTicks;
+  // A gun on a tripod fires only once it is set up, a while after it was last carried.
+  const settingUp = spec?.setup !== undefined && w.tick - (s.cooldowns["movedAt"] ?? -1e9) < spec.setup;
+  if (settingUp && (contacts.length > 0 || order.kind === "suppress")) out.push(cand("hold", "setup", "set the gun up on its tripod", { duration: 2, value: 0.7, ordered: true, safety: 0.1 }));
+  if (spec && !reloading && s.loaded > 0 && !settingUp) {
     const scored = enemiesSeen
       .map((e) => {
         const d = dist(s, e);
@@ -233,7 +251,7 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
         const p = d <= spec.maxRange ? hitChance(w, s, e, spec, vis) * Math.max(1, spec.rate) : 0;
         const firing = w.tick - e.lastFiredTick <= 3;
         const atMe = e.id === s.underFire?.by && underFire;
-        let threat = (e.weapon === "mg42" || e.weapon === "bar" ? 0.4 : 0) + (e.role === "sniper" ? 0.5 : 0) + (e.role === "at_gunner" && e.rockets > 0 ? 0.55 : 0) + (e.role.startsWith("tank_") || e.role === "gun_crew" ? 0.35 : 0) + (firing ? 0.2 : 0) + (atMe ? 0.25 : 0) + 0.3 * Math.max(0, 1 - d / 60) + (isLeader(e) ? 0.08 : 0);
+        let threat = (isMachineGun(e.weapon) || e.weapon === "bar" ? 0.4 : 0) + (e.role === "sniper" ? 0.5 : 0) + (e.role === "at_gunner" && e.rockets > 0 ? 0.55 : 0) + (e.role.startsWith("tank_") || e.role === "gun_crew" ? 0.35 : 0) + (firing ? 0.2 : 0) + (atMe ? 0.25 : 0) + 0.3 * Math.max(0, 1 - d / 60) + (isLeader(e) ? 0.08 : 0);
         // A medic with a red cross is spared by most men who see it.
         if (e.role === "medic") threat -= 0.6;
         return { e, d, p, threat, firing };
@@ -250,8 +268,8 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
           targetId: t.e.id,
           at: { x: t.e.x, y: t.e.y },
           duration: spec.automatic ? 3 : 2,
-          value: 0.5 + t.threat * 0.6 + Math.min(0.45, t.p * 3),
-          ordered: fire === "free" || order.kind === "suppress" || order.kind === "overwatch",
+          value: 0.5 + t.threat * 0.6 + Math.min(0.45, t.p * 3) + (opening ? 0.6 + (spec.automatic ? 0.3 : 0) : 0),
+          ordered: fire === "free" || order.kind === "suppress" || order.kind === "overwatch" || opening,
           danger: 0.12 + 0.2 * exHere,
           offense: 0.6,
         }),
@@ -263,6 +281,43 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
     if (underFire && !waiting && s.underFire && !s.sees.includes(s.underFire.by)) points.push({ x: s.underFire.x, y: s.underFire.y });
     if (fire === "free" && contacts.length > 0 && !contacts[0]!.visible) points.push(contacts[0]!.z > 0 ? { x: contacts[0]!.x, y: contacts[0]!.y, z: contacts[0]!.z } : { x: contacts[0]!.x, y: contacts[0]!.y });
     if (alert) points.push({ x: alert.x, y: alert.y });
+    // Once a defending platoon has opened up, a man who cannot see the enemy himself fires where his squad
+    // has them, if he has a line of fire there: the whole killing ground is swept, not only by those who spotted.
+    const shared: Point[] = [];
+    if (kz !== null && kz.sprung >= 0 && fire === "free" && (s.sees.length === 0 || opening)) {
+      for (const c of contacts) {
+        if (shared.length >= 2) break;
+        if (w.tick - c.tick > 4) continue;
+        const p = c.z > 0 ? { x: c.x, y: c.y, z: c.z } : { x: c.x, y: c.y };
+        shared.push(p);
+        points.push(p);
+      }
+    }
+    // An enemy known to be behind something a round goes through: put fire through it. A machine gun or a .50
+    // knows it best.
+    if (fire !== "hold") {
+      for (const c of contacts.slice(0, 3)) {
+        if (c.visible && s.sees.includes(c.id)) continue;
+        if (w.tick - c.tick > 15 || c.z !== s.z || dist(s, c) > Math.min(spec.maxRange, cfg.penetration.range * 2.5)) continue;
+        const p = { x: c.x, y: c.y };
+        if (canFireOn(w, s, p)) continue;
+        const line = lineResist(w, s, p);
+        const pass = through(spec, line.resist);
+        if (line.resist <= 0 || pass < cfg.penetration.minThrough) continue;
+        if (w.friendsNear({ ...p, side: s.side, id: s.id }, 3).some((f) => w.able(f))) continue;
+        out.push(
+          cand("suppress", `through:${p.x},${p.y}`, `fire through ${THROUGH_NAME[line.what ?? "hedge"] ?? "the cover"} at where the enemy is`, {
+            at: p,
+            duration: spec.automatic ? 4 : 3,
+            value: 0.3 + 0.6 * pass + (spec.automatic ? 0.25 : 0) + (opening ? 0.4 : 0),
+            ordered: opening,
+            danger: 0.1 + 0.15 * exHere,
+            offense: 0.5,
+          }),
+        );
+        break;
+      }
+    }
     const seen = new Set<string>();
     for (const p of points) {
       const key = `${p.x},${p.y}`;
@@ -276,8 +331,8 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
         cand("suppress", `suppress:${key}`, `put fire on ${ordered ? "the enemy position" : atSniper ? "where the sniper might be" : "where the fire came from"}`, {
           at: p,
           duration: spec.automatic ? 4 : 3,
-          value: (ordered ? 0.8 : atSniper ? 0.5 : 0.35) + (spec.automatic ? 0.3 : 0) + (underFire ? 0.15 : 0),
-          ordered,
+          value: (ordered ? 0.8 : atSniper ? 0.5 : shared.includes(p) ? 0.5 : 0.35) + (spec.automatic ? 0.3 : 0) + (underFire ? 0.15 : 0) + (opening ? 0.5 : 0),
+          ordered: ordered || opening,
           danger: 0.12 + 0.2 * exHere,
           offense: 0.4,
         }),
@@ -323,12 +378,21 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
   // ---- Cover ----
   const here3 = s.z > 0 ? { x: s.x, y: s.y, z: s.z } : here;
   const coverHere = threats.length > 0 ? threats.reduce((a, t) => a + w.map.cover(here3, t, "crouch"), 0) / threats.length : 0;
+  // Caught in the open under fire: lying flat in a field or a road is no cover at all. He wants a wall, a bank,
+  // a hole or a house, and will run a good way for one; the more frightened he is, the more he wants it.
+  const groundHere = w.map.at(s.x, s.y);
+  const inHole = groundHere === "foxhole" || groundHere === "ditch" || groundHere === "crater" || w.map.indoors(s.x, s.y, s.z);
+  const exposed = coverHere < 0.3 && !inHole;
   if (threats.length > 0 && coverHere < 0.55 && (underFire || alert || exHere > 0.3 || s.suppression > 0.25)) {
     const fireAt = threats[0] && spec && hasAmmo(s) ? threats[0] : null;
-    const spot = findCover(w, s, threats, s.pinned ? 2 : 5, fireAt);
+    let spot = findCover(w, s, threats, s.pinned ? 3 : exposed ? 6 : 5, fireAt);
+    // Nothing near: a longer dash, if he is not pinned flat (or is, and is more afraid of staying than of going).
+    if (!spot && exposed && (!s.pinned || s.suppression < 0.85)) spot = findCover(w, s, threats, cfg.fear.coverSearch, null);
     if (spot) {
       const urgency = underFire ? 1 : alert ? 0.8 : 0.5;
-      out.push(cand("take_cover", `cover:${spot.x},${spot.y}`, alert && !underFire ? "get into cover from the sniper" : "get into cover", { dest: spot, pace: s.pinned ? "crawl" : "rush", value: 0.25 + 0.5 * (1 - coverHere) * urgency, safety: 0.85, danger: 0.15 * exHere }));
+      const fear = 1 + cfg.fear.suppression * s.suppression + (exposed ? cfg.fear.open : 0);
+      const far = dist(s, spot) > 3;
+      out.push(cand("take_cover", `cover:${spot.x},${spot.y}`, alert && !underFire ? "get into cover from the sniper" : exposed ? "run for cover" : "get into cover", { dest: spot, pace: s.pinned && !far ? "crawl" : "rush", value: (0.3 + 0.6 * (1 - coverHere) * urgency) * fear * (opening && !s.pinned ? 0.4 : 1), safety: exposed ? 1 : 0.85, danger: 0.15 * exHere }));
     }
   }
 
@@ -367,10 +431,12 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
   }
 
   // ---- Hold where he is ----
-  out.push(cand("hold", "hold", contacts.length ? "keep watch from cover" : "wait", { duration: 2, value: 0.18 + (atPosition(s, order) ? 0.12 : 0), ordered: atPosition(s, order) && (order.kind === "hold" || order.kind === "overwatch" || order.kind === "suppress"), safety: coverHere * 0.6 }));
+  // Standing about in the open while the rounds come in is no way to stay alive.
+  const sitting = exposed && (underFire || s.suppression > 0.25) ? cfg.fear.openDanger * Math.max(0.4, exHere) : 0;
+  out.push(cand("hold", "hold", contacts.length ? "keep watch from cover" : "wait", { duration: 2, value: 0.18 + (atPosition(s, order) ? 0.12 : 0), ordered: atPosition(s, order) && (order.kind === "hold" || order.kind === "overwatch" || order.kind === "suppress"), safety: coverHere * 0.6, danger: sitting }));
 
-  // ---- Pinned: hug the dirt ----
-  if (s.pinned || s.suppression > 0.45) out.push(cand("hug", "hug", "press himself into the dirt", { duration: 2, value: 0.15 + s.suppression * 0.55, safety: 1 }));
+  // ---- Pinned: hug the dirt (in a hole or behind a bank that saves him; in the open, only when he cannot move) ----
+  if (s.pinned || s.suppression > 0.45) out.push(cand("hug", "hug", exposed ? "throw himself flat in the open" : "press himself into the dirt", { duration: 2, value: 0.15 + s.suppression * 0.55, safety: exposed ? 0.35 : 1, danger: sitting * 0.6 }));
 
   // ---- Clearing a house: on the word, a grenade through the nearest door or window ----
   const br = sq.breach;
@@ -506,7 +572,7 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
   // ---- Crew-served weapons: pick up a fallen gunner's weapon, bring him ammunition ----
   const team = sq.members.map((id) => w.soldier(id)).filter((m) => m.id !== s.id);
   if (s.role === "asst_gunner" || s.role === "ammo_bearer") {
-    const gunner = team.find((m) => isGunner(m) && m.weapon !== null && (m.weapon === "mg42" || m.weapon === "bar"));
+    const gunner = team.find((m) => isGunner(m) && m.weapon !== null && (isMachineGun(m.weapon) || m.weapon === "bar"));
     if (gunner && !w.able(gunner) && cheb(gunner, s) <= 12 && !team.some((m) => m.act?.cand.kind === "take_weapon")) {
       out.push(cand("take_weapon", `take:${gunner.id}`, `take over the ${w.config.weapons[gunner.weapon!].name}`, { targetId: gunner.id, dest: { x: gunner.x, y: gunner.y }, pace: "crawl", value: 1.05, ordered: true, danger: 0.3 * exposureAt(w, s, gunner), offense: 0.4 }));
     } else if (gunner && w.able(gunner) && s.teamAmmo > 0 && cheb(gunner, s) <= 15 && gunner.ammo < w.config.weapons[gunner.weapon!].capacity * 2) {
@@ -558,7 +624,7 @@ function sniperCandidates(w: World, s: Soldier, out: Candidate[], enemiesSeen: S
       .sort((a, b) => b.pr + b.p * 2 - (a.pr + a.p * 2) || a.e.id - b.e.id)
       .slice(0, 3);
     for (const t of shots) {
-      const what = t.e.role === "sniper" ? "the enemy sniper" : t.e.weapon === "mg42" || t.e.weapon === "bar" ? "the machine gunner" : t.e.act?.cand.kind === "aid" || t.e.act?.cand.kind === "carry" ? "the man going to the wounded" : `${t.e.abbr} ${t.e.last}`;
+      const what = t.e.role === "sniper" ? "the enemy sniper" : isMachineGun(t.e.weapon) || t.e.weapon === "bar" ? "the machine gunner" : t.e.act?.cand.kind === "aid" || t.e.act?.cand.kind === "carry" ? "the man going to the wounded" : `${t.e.abbr} ${t.e.last}`;
       out.push(cand("fire", `fire:${t.e.id}`, `take a shot at ${what}`, { targetId: t.e.id, at: { x: t.e.x, y: t.e.y }, duration: 2, value: 0.55 + t.pr * 0.55 + Math.min(0.4, t.p * 2), ordered: true, danger: 0.1 + 0.1 * exHere, offense: 0.7 }));
     }
   }

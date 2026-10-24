@@ -26,20 +26,26 @@ export interface WeaponSpec {
   automatic: boolean;
   /** Barrel heat per round (machine guns only). */
   heat: number;
+  /** What it goes through: against each material's `penetration.resist`. A .30 rifle round is 8; a .50 is 18. */
+  pen: number;
+  /** A gun on a tripod: ticks it takes to set up after it has been carried anywhere, before it can fire. */
+  setup?: number;
 }
 
 const weapons: Record<WeaponId, WeaponSpec> = {
-  m1_garand: { name: "M1 Garand", capacity: 8, reload: 3, rate: 0.55, accuracy: 0.5, rangeScale: 35, maxRange: 110, severity: [0.45, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
-  m1_carbine: { name: "M1 carbine", capacity: 15, reload: 3, rate: 0.6, accuracy: 0.45, rangeScale: 22, maxRange: 70, severity: [0.35, 0.8], suppression: 0.04, noise: 110, automatic: false, heat: 0 },
-  thompson: { name: "Thompson submachine gun", capacity: 30, reload: 4, rate: 3, accuracy: 0.28, rangeScale: 12, maxRange: 40, severity: [0.3, 0.75], suppression: 0.035, noise: 110, automatic: true, heat: 0 },
-  bar: { name: "Browning Automatic Rifle", capacity: 20, reload: 4, rate: 3.5, accuracy: 0.22, rangeScale: 32, maxRange: 120, severity: [0.45, 1], suppression: 0.06, noise: 150, automatic: true, heat: 0 },
-  kar98k: { name: "Karabiner 98k", capacity: 5, reload: 4, rate: 0.4, accuracy: 0.55, rangeScale: 38, maxRange: 115, severity: [0.45, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
-  kar98k_scoped: { name: "scoped Karabiner 98k", capacity: 5, reload: 4, rate: 0.25, accuracy: 0.75, rangeScale: 220, maxRange: 150, severity: [0.5, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
-  m1903_scoped: { name: "scoped M1903A4 Springfield", capacity: 5, reload: 4, rate: 0.25, accuracy: 0.75, rangeScale: 220, maxRange: 150, severity: [0.5, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0 },
-  mp40: { name: "MP 40", capacity: 32, reload: 4, rate: 3, accuracy: 0.26, rangeScale: 12, maxRange: 40, severity: [0.3, 0.75], suppression: 0.035, noise: 110, automatic: true, heat: 0 },
-  mg42: { name: "MG 42", capacity: 50, reload: 6, rate: 8, accuracy: 0.17, rangeScale: 45, maxRange: 150, severity: [0.45, 1], suppression: 0.07, noise: 200, automatic: true, heat: 0.0045 },
-  pistol: { name: "pistol", capacity: 8, reload: 3, rate: 0.6, accuracy: 0.35, rangeScale: 6, maxRange: 15, severity: [0.3, 0.7], suppression: 0.02, noise: 80, automatic: false, heat: 0 },
-  tank_mg: { name: "coaxial machine gun", capacity: 150, reload: 7, rate: 5, accuracy: 0.2, rangeScale: 40, maxRange: 120, severity: [0.45, 1], suppression: 0.06, noise: 180, automatic: true, heat: 0.0012 },
+  m1_garand: { name: "M1 Garand", capacity: 8, reload: 3, rate: 0.55, accuracy: 0.5, rangeScale: 35, maxRange: 110, severity: [0.45, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0, pen: 8 },
+  m1_carbine: { name: "M1 carbine", capacity: 15, reload: 3, rate: 0.6, accuracy: 0.45, rangeScale: 22, maxRange: 70, severity: [0.35, 0.8], suppression: 0.04, noise: 110, automatic: false, heat: 0, pen: 4 },
+  thompson: { name: "Thompson submachine gun", capacity: 30, reload: 4, rate: 3, accuracy: 0.28, rangeScale: 12, maxRange: 40, severity: [0.3, 0.75], suppression: 0.035, noise: 110, automatic: true, heat: 0, pen: 3 },
+  bar: { name: "Browning Automatic Rifle", capacity: 20, reload: 4, rate: 3.5, accuracy: 0.22, rangeScale: 32, maxRange: 120, severity: [0.45, 1], suppression: 0.06, noise: 150, automatic: true, heat: 0, pen: 8 },
+  kar98k: { name: "Karabiner 98k", capacity: 5, reload: 4, rate: 0.4, accuracy: 0.55, rangeScale: 38, maxRange: 115, severity: [0.45, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0, pen: 8 },
+  kar98k_scoped: { name: "scoped Karabiner 98k", capacity: 5, reload: 4, rate: 0.25, accuracy: 0.75, rangeScale: 220, maxRange: 150, severity: [0.5, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0, pen: 8 },
+  m1903_scoped: { name: "scoped M1903A4 Springfield", capacity: 5, reload: 4, rate: 0.25, accuracy: 0.75, rangeScale: 220, maxRange: 150, severity: [0.5, 1], suppression: 0.05, noise: 140, automatic: false, heat: 0, pen: 8 },
+  mp40: { name: "MP 40", capacity: 32, reload: 4, rate: 3, accuracy: 0.26, rangeScale: 12, maxRange: 40, severity: [0.3, 0.75], suppression: 0.035, noise: 110, automatic: true, heat: 0, pen: 3 },
+  mg42: { name: "MG 42", capacity: 50, reload: 6, rate: 8, accuracy: 0.17, rangeScale: 45, maxRange: 150, severity: [0.45, 1], suppression: 0.07, noise: 200, automatic: true, heat: 0.0045, pen: 8.5 },
+  pistol: { name: "pistol", capacity: 8, reload: 3, rate: 0.6, accuracy: 0.35, rangeScale: 6, maxRange: 15, severity: [0.3, 0.7], suppression: 0.02, noise: 80, automatic: false, heat: 0, pen: 2 },
+  m1919: { name: "Browning M1919A4 machine gun", capacity: 250, reload: 8, rate: 7, accuracy: 0.2, rangeScale: 50, maxRange: 170, severity: [0.45, 1], suppression: 0.08, noise: 210, automatic: true, heat: 0.0035, pen: 8.5, setup: 10 },
+  m2hb: { name: "Browning M2 .50 calibre machine gun", capacity: 105, reload: 10, rate: 7, accuracy: 0.22, rangeScale: 62, maxRange: 200, severity: [0.75, 1], suppression: 0.13, noise: 280, automatic: true, heat: 0.003, pen: 18, setup: 20 },
+  tank_mg: { name: "coaxial machine gun", capacity: 150, reload: 7, rate: 5, accuracy: 0.2, rangeScale: 40, maxRange: 120, severity: [0.45, 1], suppression: 0.06, noise: 180, automatic: true, heat: 0.0012, pen: 8 },
 };
 
 const moveCost: Record<Terrain, number> = {
@@ -73,6 +79,7 @@ const moveCost: Record<Terrain, number> = {
   statue: Infinity,
   stall: 2.2,
   debris: 1.7,
+  rock: Infinity,
 };
 
 export const DEFAULT_CONFIG = {
@@ -103,20 +110,22 @@ export const DEFAULT_CONFIG = {
     /** The kind of ground to fight over; null lets the seed choose. */
     kind: null as MapKind | null,
     /** How often the seed chooses each kind. */
-    kindWeights: { hamlet: 0.3, rural: 0.25, road: 0.2, town: 0.25, urban: 0.25 } as Record<MapKind, number>,
+    kindWeights: { hamlet: 0.3, rural: 0.25, road: 0.2, town: 0.25, urban: 0.25, forest: 0.45 } as Record<MapKind, number>,
+    /** Kinds of ground the seed only picks in winter. */
+    winterOnly: ["forest"] as MapKind[],
   },
   terrain: {
     moveCost,
     /** Line-of-sight left after passing through one tile of each kind. */
-    seeThrough: { woods: 0.78, orchard: 0.9, wheat: 0.97, hedge: 0, wall: 0.85, building: 0, rubble: 0.92, window: 0.75, door: 0.75, brush: 0.82, deadfall: 0.88, sandbags: 0.35, wire: 0.95, wreck: 0, fountain: 0.5, statue: 0.3, stall: 0.55, debris: 0.9 } as Partial<Record<Terrain, number>>,
+    seeThrough: { woods: 0.78, orchard: 0.9, wheat: 0.97, hedge: 0, wall: 0.85, building: 0, rubble: 0.92, window: 0.75, door: 0.75, brush: 0.82, deadfall: 0.88, sandbags: 0.35, wire: 0.95, wreck: 0, fountain: 0.5, statue: 0.3, stall: 0.55, debris: 0.9, rock: 0.3 } as Partial<Record<Terrain, number>>,
     /** Protection from a hedge, wall or window between a man and the shooter, right beside him. */
-    edgeCover: { hedge: 0.85, wall: 0.65, window: 0.8, door: 0.55, rubble: 0.45, woods: 0.3, orchard: 0.15, building: 0.95, brush: 0.2, deadfall: 0.35, sandbags: 0.8, wreck: 0.9, fountain: 0.75, statue: 0.85, stall: 0.3, debris: 0.3 } as Partial<Record<Terrain, number>>,
+    edgeCover: { hedge: 0.85, wall: 0.65, window: 0.8, door: 0.55, rubble: 0.45, woods: 0.3, orchard: 0.15, building: 0.95, brush: 0.2, deadfall: 0.35, sandbags: 0.8, wreck: 0.9, fountain: 0.75, statue: 0.85, stall: 0.3, debris: 0.3, rock: 0.85 } as Partial<Record<Terrain, number>>,
     /** Protection from the tile he lies in. */
     ownCover: { foxhole: 0.75, crater: 0.5, rubble: 0.3, woods: 0.2, orchard: 0.1, ditch: 0.55, brush: 0.1, deadfall: 0.25, pothole: 0.35, debris: 0.15 } as Partial<Record<Terrain, number>>,
     /** Concealment: how much harder he is to spot on this ground. Foliage and dark rooms hide a man well. */
     concealment: { woods: 0.35, orchard: 0.6, wheat: 0.6, rubble: 0.65, foxhole: 0.45, crater: 0.7, floor: 0.4, stairs: 0.4, door: 0.7, brush: 0.42, ditch: 0.5, marsh: 0.85, deadfall: 0.55, pothole: 0.8, stall: 0.6, debris: 0.75 } as Partial<Record<Terrain, number>>,
     /** How tall what grows or stands on each kind of ground is, in metres. */
-    height: { hedge: 2.6, wall: 1.8, woods: 9, orchard: 4.5, wheat: 1.1, brush: 1.6, rubble: 1, deadfall: 1.5, sandbags: 1.1, wire: 0.9, wreck: 2.2, fountain: 1, statue: 3, stall: 1.8, debris: 0.8 } as Partial<Record<Terrain, number>>,
+    height: { hedge: 2.6, wall: 1.8, woods: 9, orchard: 4.5, wheat: 1.1, brush: 1.6, rubble: 1, deadfall: 1.5, sandbags: 1.1, wire: 0.9, wreck: 2.2, fountain: 1, statue: 3, stall: 1.8, debris: 0.8, rock: 1.8 } as Partial<Record<Terrain, number>>,
     floorHeight: 3,
     eye: 1.5,
     body: 1,
@@ -247,13 +256,19 @@ export const DEFAULT_CONFIG = {
     /** Fire missions on the target the defenders' mortars registered before the battle: on top of their others, and kept for the word. */
     reserveMissions: 1,
     /** Suppression and loss of morale that every man caught in the killing ground takes on the word, before the first round lands: surprise. */
-    shock: 0.45,
+    shock: 0.2,
     shockMorale: 0.08,
     /** The registered mortar target: seconds from the word to the first round leaving the tube, and the scatter. */
     registeredDelay: 2,
     registeredScatter: 3,
     /** For this long after the word, men may throw at enemies in the open too, not only behind cover. */
     grenadeVolley: 8,
+    /** For this long after the word the ambush party fights where it lies, though the enemy is close and on every side. */
+    holdAfter: 120,
+    /** For this long after the word, firing outranks everything but saving his life: the opening volley. */
+    volleyTicks: 12,
+    /** And it is aimed better: the guns were laid on the killing ground beforehand, at men who did not know they were there. */
+    volleyAim: 1.8,
   },
   help: {
     /** A German runner is a man on foot: he sprints this many tiles a second to the Zugführer, and is given up after this long. An American squad radio is instant. */
@@ -279,6 +294,16 @@ export const DEFAULT_CONFIG = {
     giveUp: 160,
   },
   /** Fighting in a city. */
+  /** The forest line (forest.ts): two trench lines in the Ardennes forest with no man's land between. */
+  forest: {
+    /** How much of no man's land the shelling has smashed (stumps, deadfall, craters, open snow), at its middle. */
+    torn: 0.55,
+    clearings: [6, 10] as [number, number],
+    firebreaks: 2,
+    rocks: [160, 230] as [number, number],
+    /** Huts besides the lodge. */
+    huts: 2,
+  },
   urban: {
     /** Ticks the covering team fires before the movers go. */
     coverFirst: 5,
@@ -312,6 +337,42 @@ export const DEFAULT_CONFIG = {
     cooldown: 60,
   },
   weapons,
+  /**
+   * Rounds through cover (penetration.ts): how much each material stops, in
+   * the units of a weapon's `pen`. What comes through hits only close in (its
+   * chance falls by e every `range` tiles), and wounds less.
+   */
+  penetration: {
+    resist: { hedge: 7, woods: 5, orchard: 3, brush: 1, deadfall: 4, door: 2, window: 1.5, building: 20, wall: 14, sandbags: 12, wreck: 10, rubble: 12, debris: 4, stall: 2, fountain: 30, statue: 30, rock: 40, timber: 5 } as Partial<Record<Terrain | "timber", number>>,
+    range: 20,
+    damage: 0.55,
+    /** A man fires through something only if at least this share would get through. */
+    minThrough: 0.12,
+  },
+  /** The American machine-gun teams. */
+  mgTeam: {
+    /** Range band it sets up at to fire on the enemy, in tiles, and how far round it looks for the spot. */
+    overwatch: [16, 55] as [number, number],
+    search: 16,
+    /** It moves on if the gun has not fired for this long with an enemy known. */
+    relocate: 35,
+    /** Enemy this close and the team pulls back: a crew working a gun on a tripod cannot fight off men coming in on it. */
+    tooClose: 12,
+    /** Following the rifle squads, this many tiles behind them. */
+    trail: 14,
+    /** A gunner sitting up behind his gun while it fires is this much bigger a target. */
+    sittingDuck: 1.45,
+  },
+  /** Fear for his life: what drives a man under fire out of the open and into cover. */
+  fear: {
+    /** How far a man caught in the open will dash for cover, in tiles. */
+    coverSearch: 12,
+    /** Extra pull of cover per unit of suppression, and when he is in the open. */
+    suppression: 0.8,
+    open: 0.5,
+    /** How dangerous standing or lying in the open under fire feels, scaled by how exposed the spot is. */
+    openDanger: 0.7,
+  },
   movement: {
     /** How much the places where men were hit count against a route: the platoon learns where it hurts. */
     painWeight: 2.5,
@@ -343,6 +404,9 @@ export const DEFAULT_CONFIG = {
     steadiness: { stand: 0.8, crouch: 0.95, prone: 1.1 },
   },
   fire: {
+    /** Inside this many tiles a man hardly misses, whatever the target's posture: this share of the miss chance is taken away at point blank, less with range. */
+    pointBlank: 10,
+    pointBlankBonus: 0.85,
     /** However far out, a round still has this share of its close-range chance: long-range fire is wild, but not harmless. */
     longRangeFloor: 0.1,
     /** Accuracy multiplier when firing at a remembered position rather than a seen man. */
@@ -414,6 +478,9 @@ export const DEFAULT_CONFIG = {
     scope: 1.7,
     /** Spotting chance per tick of an unconcealed, standing, still man at close range. */
     spotBase: 0.55,
+    /** Within this many tiles (about 40 m) a man is spotted far more surely, concealment counting for much less: up to this chance a tick. */
+    closeRange: 14,
+    closeSpot: 1,
     /** Firing gives a man away. */
     firingFactor: 4,
     movingFactor: 1.8,
@@ -511,6 +578,9 @@ export const DEFAULT_CONFIG = {
     sniperChance: 0.45,
     /** Chance the American platoon headquarters has a sniper with it. */
     usSniperChance: 0.5,
+    /** Chance an American platoon, attacking or defending, has a machine-gun team attached, and that it is a .50 rather than a .30. */
+    usMgTeamChance: 0.7,
+    m2Chance: 0.3,
   },
   /** Armour: tanks, anti-tank launchers and guns. Their crews are outside the platoon's headcount. */
   armour: {

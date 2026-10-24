@@ -6,7 +6,7 @@
 // once he is fired on, he moves.
 import { clusters, concealment, sideContacts } from "../combat/perception.ts";
 import { cheb, dist } from "../world/map.ts";
-import { enemyOf, MAX_FLOORS, type Point, type Soldier } from "../world/types.ts";
+import { enemyOf, MAX_FLOORS, type Point, type Soldier, isMachineGun } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { canFireOn, vantage } from "./tactics.ts";
 
@@ -149,7 +149,7 @@ export function sniperPriority(w: World, s: Soldier, e: Soldier): number {
   // A tank crew out on the ground, mending a track or running for it, and the man with the bazooka.
   if (e.role.startsWith("tank_") || e.role === "gun_crew") return 1.25;
   if (e.role === "at_gunner" && e.rockets > 0) return 1.15;
-  if (e.weapon === "mg42" || e.weapon === "bar") return 1.2;
+  if (isMachineGun(e.weapon) || e.weapon === "bar") return 1.2;
   const helping = e.act && (e.act.cand.kind === "aid" || e.act.cand.kind === "carry");
   if (e.role === "medic" || helping) return 1;
   if (e.role === "platoon_leader" || e.role === "squad_leader") return 0.85;

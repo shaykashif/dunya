@@ -6,7 +6,7 @@ import { EventLog, type SimEvent } from "../../src/log/events.ts";
 import { createSimulation } from "../../src/sim.ts";
 import type { BodyPart, Injury, Side, Soldier, Squad } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
-import { Sfx, impactOf, surfaceOf } from "./audio.ts";
+import { Sfx, impactOf, surfaceOf, type Voicing } from "./audio.ts";
 import { hydrateIcons, icon } from "./icons.ts";
 import { clock, describe, label, roleName, worstWound, type FeedLine } from "./feed.ts";
 import { BLAST_SECONDS } from "./fx.ts";
@@ -718,6 +718,23 @@ function onEvent(e: SimEvent): void {
 // ---------- Sound ----------
 
 const BOLT_GUNS = new Set(["kar98k", "kar98k_scoped", "m1903_scoped"]);
+const SOUND_OF: Record<string, string> = { m1919: "bar", m2hb: "mg42", tank_mg: "mg42" };
+/**
+ * Each automatic weapon as it should sound: which recording, pitched how
+ * (below 1 is deeper and slower), reshaped how, and its cyclic rate in rounds
+ * a minute, which sets the spacing of the shots in a burst. The MG 42 rips;
+ * the Brownings and the BAR thud along at half its rate; the .50 is the
+ * deepest and heaviest of all.
+ */
+const GUN_VOICE: Record<string, { rate: number; rpm: number; gain: number; voicing: Voicing }> = {
+  mg42: { rate: 1, rpm: 1200, gain: 1, voicing: { shelf: 4, thump: 2, drive: 0.15, top: 0 } },
+  bar: { rate: 0.97, rpm: 550, gain: 1.05, voicing: { shelf: 4, thump: 2, drive: 0.15, top: 0 } },
+  m1919: { rate: 0.86, rpm: 500, gain: 1.2, voicing: { shelf: 7, thump: 4, drive: 0.3, top: 7000 } },
+  m2hb: { rate: 0.68, rpm: 550, gain: 1.45, voicing: { shelf: 10, thump: 8, drive: 0.45, top: 4800 } },
+  tank_mg: { rate: 0.9, rpm: 650, gain: 1.1, voicing: { shelf: 5, thump: 3, drive: 0.2, top: 0 } },
+  thompson: { rate: 1, rpm: 700, gain: 1, voicing: { shelf: 2, thump: 0, drive: 0, top: 0 } },
+  mp40: { rate: 1, rpm: 540, gain: 1, voicing: { shelf: 2, thump: 0, drive: 0, top: 0 } },
+};
 
 function surfaceAt(x: number, y: number): string {
   const tx = Math.floor(x), ty = Math.floor(y);
@@ -733,14 +750,28 @@ function soundsFor(e: SimEvent): void {
     case "fire": {
       const [fx, fy] = d.from as [number, number];
       const [ax, ay] = d.at as [number, number];
-      const weapon = (d.weapon as string | null) ?? "pistol";
+      // The Brownings on their tripods are made from the nearest recordings in the bank, reshaped: the BAR for the .30, the MG 42 for the .50.
+      const gun = (d.weapon as string | null) ?? "pistol";
+      const weapon = SOUND_OF[gun] ?? gun;
+      const voice = GUN_VOICE[gun];
       const rounds = d.rounds as number;
-      const shown = Math.min(rounds, 8);
       sfx.noteGunfire();
-      const loud = (weapon === "mg42" ? 4 : weapon === "pistol" ? 2.8 : 3.4) * (shown > 3 ? 0.8 : 1);
-      for (let k = 0; k < shown; k++) {
-        sfx.play(`shot.${weapon}`, { x: fx, y: fy, gain: loud, reach: 3.6, anywhere: true, delay: (k / shown) * span, byDistance: true, priority: k === 0 });
+      if (voice) {
+        // A burst at the gun's own rate of fire, squeezed to fit the tick when the clock runs fast.
+        const shown = Math.min(rounds, 16);
+        const gap = Math.min(60 / voice.rpm, span / shown);
+        const loud = (weapon === "mg42" ? 4 : 3.4) * voice.gain * (shown > 3 ? 0.8 : 1);
+        for (let k = 0; k < shown; k++) {
+          sfx.play(`shot.${weapon}`, { x: fx, y: fy, gain: loud, reach: 3.6, anywhere: true, delay: k * gap * (0.97 + Math.random() * 0.06), byDistance: true, priority: k === 0, rate: voice.rate, voicing: voice.voicing });
+        }
+      } else {
+        const shown = Math.min(rounds, 8);
+        const loud = (weapon === "pistol" ? 2.8 : 3.4) * (shown > 3 ? 0.8 : 1);
+        for (let k = 0; k < shown; k++) {
+          sfx.play(`shot.${weapon}`, { x: fx, y: fy, gain: loud, reach: 3.6, anywhere: true, delay: (k / shown) * span, byDistance: true, priority: k === 0 });
+        }
       }
+      const shown = Math.min(rounds, 8);
       if (BOLT_GUNS.has(weapon)) sfx.play("gun.bolt", { x: fx, y: fy, gain: 0.2, reach: 0.9, close: true, delay: 0.55 + span });
       for (let k = 0; k < shown; k++) {
         if (weapon !== "pistol" || k === 0) sfx.bulletPass(fx, fy, ax, ay, (k / shown) * span, 1.6);
@@ -763,7 +794,7 @@ function soundsFor(e: SimEvent): void {
       if (!s) break;
       const weapon = d.weapon as string | null;
       if (weapon && BOLT_GUNS.has(weapon)) sfx.playLimited(`r${s.id}`, 200, "gun.clip", { x: s.x, y: s.y, gain: 0.2, reach: 1, close: true });
-      else if (weapon === "mg42" || weapon === "bar") sfx.playLimited(`r${s.id}`, 200, "clank", { x: s.x, y: s.y, gain: 0.2, reach: 1, close: true });
+      else if (weapon === "mg42" || weapon === "bar" || weapon === "m1919" || weapon === "m2hb") sfx.playLimited(`r${s.id}`, 200, "clank", { x: s.x, y: s.y, gain: 0.2, reach: 1, close: true });
       else {
         sfx.playLimited(`r${s.id}`, 200, "gun.mag", { x: s.x, y: s.y, gain: 0.2, reach: 1, close: true });
         sfx.play("gun.slide", { x: s.x, y: s.y, gain: 0.15, reach: 1, close: true, delay: 0.45 });
@@ -1137,7 +1168,7 @@ function toastFor(e: SimEvent): void {
     case "runner_killed": {
       const sq = world.squads[d.squad as number]!;
       const at = d.at as number[];
-      toast("death", `Runner down · ${sq.side === "us" ? "US" : "German"}`, `${sq.name}'s runner is ${d.by === "shell" ? "caught by a shell" : "shot down"} before he reaches the platoon leader.`, [], sq.color, sq.id);
+      toast("death", `Runner down · ${sq.side === "us" ? "US" : "German"}`, `${sq.name}'s runner${s("person") ? `, ${label(s("person")!)},` : ""} ${d.by === "shell" ? "is caught by a shell" : d.by === "broke" ? "loses his nerve and runs" : "is shot down"} before he reaches the platoon leader.`, d.person !== undefined ? [d.person as number] : [], sq.color, sq.id);
       renderer.addEffect({ kind: "pop", x: at[0]! * TILE + 8, y: at[1]! * TILE + 8, seed: e.seq, born: now(), dur: 1.2, delay: 0 });
       break;
     }
@@ -1247,10 +1278,10 @@ function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: fal
   $("toasts").innerHTML = "";
   log.addSink((e) => onEvent(e));
   world = undefined as unknown as World;
-  // ?map=urban (or hamlet, rural, road, town) picks the ground instead of the seed, and ?season=winter (or summer) the season.
+  // ?map=urban (or hamlet, rural, road, town, forest) picks the ground instead of the seed, and ?season=winter (or summer) the season.
   const params = new URLSearchParams(location.search);
   const mapKind = params.get("map");
-  const kinds = ["hamlet", "rural", "road", "town", "urban"] as const;
+  const kinds = ["hamlet", "rural", "road", "town", "urban", "forest"] as const;
   const kind = kinds.find((k) => k === mapKind) ?? null;
   // The vetted battles (the featured and daily seeds) were picked as summer battles, so they stay summer.
   const season = (["summer", "winter"] as const).find((k) => k === params.get("season")) ?? (FEATURED_SEEDS.includes(seed) || DAILY_SEEDS.includes(seed) ? "summer" : null);
@@ -2047,11 +2078,11 @@ canvas.addEventListener("pointerup", (ev) => {
   const rect = canvas.getBoundingClientRect();
   const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
   const tx = Math.floor((sx / cam.zoom + cam.x) / TILE), ty = Math.floor((sy / cam.zoom + cam.y) / TILE);
-  // A runner: click him to run along with him.
+  // A runner is a soldier like any other now: clicking him selects him (below). Clicking the envelope over his head follows him.
   for (const r of world.runners) {
     const rx = r.x * TILE + 8, ry = r.y * TILE + 8;
     const px = (rx - cam.x) * cam.zoom, py = (ry - cam.y) * cam.zoom;
-    if (Math.hypot(px - sx, py - 4 * cam.zoom - sy) <= Math.max(18, 10 * cam.zoom)) {
+    if (Math.hypot(px - sx, py - 16 * cam.zoom - sy) <= Math.max(8, 5 * cam.zoom)) {
       runnerFollow = { squad: r.squadId, lastMark: 0 };
       scopeTour = null;
       follow = false;

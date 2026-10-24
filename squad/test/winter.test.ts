@@ -91,14 +91,18 @@ describe("fire control", () => {
         const sq = w.squad(s.squadId);
         if (pl.squadIds.includes(sq.id) && s.role !== "sniper" && (sq.state === "ambush" || sq.state === "hold") && sq.orders.A.fire === "hold") waiting.add(e.seq);
       });
-      let reserved = true;
+      let reserved = true, counted = false;
       for (let t = 0; t < 1500 && w.phase === "battle" && pl.killZone.sprung < 0; t++) {
         await engine.step();
+        // The countdown to the word, once the enemy is in sight.
+        if (pl.killZone.sprung < 0 && pl.killZone.eta > 0) counted = true;
         // A mission is kept back for the registered target until the word is given.
         if (pl.killZone.sprung < 0 && pl.fireMissionsLeft < w.config.ambush.reserveMissions) reserved = false;
       }
       expect(reserved).toBe(true);
       if (pl.killZone.sprung < 0) continue;
+      expect(counted).toBe(true);
+      expect(pl.killZone.eta).toBe(0);
       // Nobody waiting on the line or in the ambush fired before the word, except at an enemy right on top of him
       // or one shooting at him (snipers work on their own account).
       const early = log.retained!.filter((x) => waiting.has(x.seq)).filter((x) => {

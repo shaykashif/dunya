@@ -10,11 +10,12 @@
 import { Rng } from "../engine/rng.ts";
 import type { SimConfig } from "../scenario/config.ts";
 import { generateCity } from "./city.ts";
+import { generateForest } from "./forest.ts";
 import { roadDefences } from "./defences.ts";
 import { GameMap } from "./map.ts";
 import type { MapKind, Point, Season, Terrain } from "./types.ts";
 
-export type BuildingKind = "farmhouse" | "barn" | "cottage" | "church" | "house" | "shop" | "apartment" | "townhall" | "warehouse";
+export type BuildingKind = "farmhouse" | "barn" | "cottage" | "church" | "house" | "shop" | "apartment" | "townhall" | "warehouse" | "cabin";
 
 export interface Building {
   id: number;
@@ -76,7 +77,8 @@ const KINDS: Record<MapKind, KindSpec> = {
   rural: { name: "open farmland on a ridge", objectiveName: "the farm", fieldWidth: [34, 52], fieldHeight: [17, 25], mergeChance: 0.32, crops: [0.4, 0.82, 0.9], copses: [3, 6], settlementRow: 24, lineGap: 22, area: { w: 18, n: 10, s: 10 } },
   road: { name: "a highway junction", objectiveName: "the road junction", fieldWidth: [26, 42], fieldHeight: [14, 20], mergeChance: 0.2, crops: [0.45, 0.75, 0.9], copses: [4, 8], settlementRow: 26, lineGap: 22, area: { w: 16, n: 16, s: 10 } },
   town: { name: "a market town", objectiveName: "the town square", fieldWidth: [24, 38], fieldHeight: [13, 18], mergeChance: 0.14, crops: [0.45, 0.7, 0.9], copses: [4, 7], settlementRow: 28, lineGap: 27, area: { w: 41, n: 19, s: 19 } },
-  // The city has its own generator (city.ts); these are unused.
+  // The city and the forest have their own generators (city.ts, forest.ts); these are unused.
+  forest: { name: "a forest line in the Ardennes", objectiveName: "the forest crossroads", fieldWidth: [24, 38], fieldHeight: [13, 18], mergeChance: 0, crops: [0, 0, 0], copses: [0, 0], settlementRow: 28, lineGap: 27, area: { w: 10, n: 10, s: 10 } },
   urban: { name: "a shell-torn city", objectiveName: "the town hall", fieldWidth: [24, 38], fieldHeight: [13, 18], mergeChance: 0, crops: [1, 1, 1], copses: [0, 0], settlementRow: 28, lineGap: 27, area: { w: 41, n: 19, s: 19 } },
 };
 
@@ -87,6 +89,7 @@ const WINTER_NAMES: Record<MapKind, string> = {
   road: "a highway junction in the snow",
   town: "a snowbound market town",
   urban: "a shell-torn city under snow",
+  forest: "a frozen forest line in the Ardennes",
 };
 
 /** Stable per-tile noise, independent of draw order. */
@@ -109,9 +112,10 @@ function wobble(rng: Rng, n: number, amp: number): number[] {
   return out;
 }
 
-function pickKind(cfg: SimConfig, rng: Rng): MapKind {
+function pickKind(cfg: SimConfig, rng: Rng, season: Season): MapKind {
   const weights = cfg.map.kindWeights;
-  const kinds = Object.keys(weights) as MapKind[];
+  // Some ground (the forest line) comes up only in winter; leaving it out in summer keeps summer seeds as they were.
+  const kinds = (Object.keys(weights) as MapKind[]).filter((k) => season === "winter" || !cfg.map.winterOnly.includes(k));
   const total = kinds.reduce((a, k) => a + weights[k], 0);
   let r = rng.next() * total;
   for (const k of kinds) {
@@ -131,8 +135,9 @@ export function startClearance(cfg: SimConfig): number {
 }
 
 export function generateLayout(cfg: SimConfig, rng: Rng, season: Season = "summer"): Layout {
-  const kind = cfg.map.kind ?? pickKind(cfg, rng);
+  const kind = cfg.map.kind ?? pickKind(cfg, rng, season);
   if (kind === "urban") return generateCity(cfg, rng, season);
+  if (kind === "forest") return generateForest(cfg, rng, season);
   const winter = season === "winter";
   const spec = KINDS[kind];
   const W = cfg.map.width, H = cfg.map.height;
@@ -794,7 +799,8 @@ export function shapeGround(map: GameMap, kind: MapKind, rng: Rng, at: { lineRow
   const town = kind === "town" || kind === "urban";
   const tilt = town ? 2 : kind === "rural" ? 1.5 : 3;
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) e[y * W + x] = tilt * (1 - y / H);
-  const hills = kind === "rural" ? 2 : town ? 2 : 4;
+  // The forest stands on rocky ridges: more and steeper rises.
+  const hills = kind === "rural" ? 2 : town ? 2 : kind === "forest" ? 7 : 4;
   for (let k = 0; k < hills; k++) hill(rng.int(W), rng.int(H), 14 + rng.int(20), (rng.next() - 0.35) * (town ? 3 : 7));
   if (kind === "rural") {
     // A ridge, its crest just behind the defended hedge.

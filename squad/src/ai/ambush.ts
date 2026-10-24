@@ -3,7 +3,8 @@
 // close enough to the route to catch a whole squad in the open. They go flat,
 // hold their fire, and spring it all at once (see ambushStep in command.ts).
 import { startClearance } from "../world/layout.ts";
-import { dist, findPath } from "../world/map.ts";
+import { cheb, dist, findPath } from "../world/map.ts";
+import { buildingPositions, canFireOn, vantage } from "./tactics.ts";
 import { enemyOf, type Point, type Side, type Soldier } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 
@@ -69,8 +70,45 @@ export function ambushSite(w: World, side: Side): { at: Point; look: Point } | n
   return best;
 }
 
+/**
+ * In a city the ambush party splits up: each fire team takes a house of its own
+ * beside the street the enemy will come along, at the windows that look onto it
+ * (upstairs first), so the street is under fire from two places at once. The gun
+ * team gets the house with the better view.
+ */
+function cityAmbushSpots(w: World, men: readonly Soldier[], site: { at: Point; look: Point }): Record<number, Point> | null {
+  const teams = [men.filter((m) => m.element !== "B"), men.filter((m) => m.element === "B")].filter((t) => t.length > 0);
+  const houses = w.buildings
+    .filter((b) => !b.destroyed && b.kind !== "townhall" && cheb({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, site.look) <= 20)
+    .map((b) => {
+      const spots = buildingPositions(w, teams[0]!, b, site.look);
+      const ps = Object.values(spots);
+      const view = ps.reduce((a, p) => a + vantage(w, p, site.look) + (canFireOn(w, p, site.look) ? 0.5 : 0), 0) / Math.max(1, ps.length);
+      return { b, view };
+    })
+    .filter((h) => h.view > 0.2)
+    .sort((a, c) => c.view - a.view || a.b.id - c.b.id);
+  if (houses.length === 0) return null;
+  const out: Record<number, Point> = {};
+  const taken: Point[] = [];
+  teams.forEach((team, k) => {
+    const house = (houses[k] ?? houses[0]!).b;
+    const spots = buildingPositions(w, team, house, site.look, 0, taken);
+    for (const m of team) {
+      const p = spots[m.id] ?? w.freeTileNear({ x: house.x + Math.floor(house.w / 2), y: house.y + Math.floor(house.h / 2) }, 6, m.id) ?? site.at;
+      out[m.id] = p;
+      taken.push(p);
+    }
+  });
+  return out;
+}
+
 /** Spots for the men around the site, each in cover, spread out, with a view of the route. */
 export function ambushSpots(w: World, men: readonly Soldier[], site: { at: Point; look: Point }): Record<number, Point> {
+  if (w.layout.kind === "urban") {
+    const city = cityAmbushSpots(w, men, site);
+    if (city) return city;
+  }
   const cands: { p: Point; score: number }[] = [];
   for (let dy = -4; dy <= 4; dy++) {
     for (let dx = -4; dx <= 4; dx++) {

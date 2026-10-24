@@ -4,7 +4,7 @@
 import { sightFactor } from "../entities/body.ts";
 import type { WeaponSpec } from "../scenario/config.ts";
 import { cheb, dist } from "../world/map.ts";
-import { enemyOf, type Contact, type Point, type Side, type Soldier, type Squad } from "../world/types.ts";
+import { enemyOf, type Contact, type Point, type Side, type Soldier, type Squad, isMachineGun } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 
 /**
@@ -22,21 +22,21 @@ export function concealment(w: World, s: Soldier, from: Soldier | null = null): 
   if (s.posture === "prone") c *= t === "wheat" ? 0.4 : t === "woods" || t === "brush" ? 0.6 : 0.8;
   if (from && w.map.indoors(s.x, s.y, s.z) && !w.map.indoors(from.x, from.y, from.z) && dist(s, from) > cfg.darkRoomRange) c *= cfg.darkRoom;
   // A machine-gun post gives itself away to a patient glass: the gun, the belt boxes, the spoil from the pit.
-  if ((s.weapon === "mg42" || s.weapon === "bar") && !(from && from.role !== "sniper" && dist(s, from) > 40)) c = Math.max(c, 0.5);
+  if ((isMachineGun(s.weapon) || s.weapon === "bar") && !(from && from.role !== "sniper" && dist(s, from) > 40)) c = Math.max(c, 0.5);
   return c;
 }
 
 /** How much more a shot gives the shooter away: a lot in the open, little from cover, almost nothing for a sniper. */
 function firingReveal(w: World, e: Soldier, hidden: number): number {
   const cfg = w.config.perception;
-  let f = cfg.firingFactor * (e.weapon === "mg42" && hidden >= 0.5 ? 1.5 : 1);
+  let f = cfg.firingFactor * (isMachineGun(e.weapon) && hidden >= 0.5 ? 1.5 : 1);
   if (e.role === "sniper") f = 1 + (f - 1) * cfg.sniperFiring;
   else if (hidden < 0.5) f = 1 + (f - 1) * cfg.concealedFiring;
   return f;
 }
 
 function isAutomatic(s: Soldier): boolean {
-  return s.weapon === "mg42" || s.weapon === "bar";
+  return isMachineGun(s.weapon) || s.weapon === "bar";
 }
 
 export function updateContact(w: World, squad: Squad, enemy: Soldier, at: Point, visible: boolean): void {
@@ -60,7 +60,7 @@ export function updateContact(w: World, squad: Squad, enemy: Soldier, at: Point,
     if (enemy.role === "tank" || enemy.role === "field_gun") c.armour = true;
     return;
   }
-  squad.contacts[enemy.id] = { id: enemy.id, x: at.x, y: at.y, z, tick: w.tick, visible, identified: visible, automatic: visible ? isAutomatic(enemy) : enemy.weapon === "mg42", sniper: visible && enemy.role === "sniper", down: visible ? enemy.status !== "active" : false, armour: enemy.role === "tank" || enemy.role === "field_gun" };
+  squad.contacts[enemy.id] = { id: enemy.id, x: at.x, y: at.y, z, tick: w.tick, visible, identified: visible, automatic: visible ? isAutomatic(enemy) : isMachineGun(enemy.weapon), sniper: visible && enemy.role === "sniper", down: visible ? enemy.status !== "active" : false, armour: enemy.role === "tank" || enemy.role === "field_gun" };
   if (Object.keys(squad.contacts).length === 1 || squad.firstContactTick === null) {
     squad.firstContactTick ??= w.tick;
     w.emit("contact", [], { squad: squad.id, side: squad.side, enemy: enemy.id, at: [at.x, at.y], visible, automatic: squad.contacts[enemy.id]!.automatic });
@@ -105,6 +105,8 @@ export function perceptionStep(w: World): void {
         const looking = (hunt && cheb(e, hunt) <= 12 ? 2.5 : 1) * watching;
         p = cfg.spotBase * w.weather.spot * vis * w.config.posture.size[e.posture] * hidden * firing * moving * fall * alert * looking;
         if (d <= 6) p = Math.max(p, 0.8 * vis * Math.min(1, hidden * 2));
+        // Close by, a man is hard to miss even in the trees or lying flat: a movement, a helmet, a voice, a smell of smoke.
+        if (d <= cfg.closeRange) p = Math.max(p, cfg.closeSpot * (1 - d / (cfg.closeRange * 1.6)) * vis * Math.pow(hidden, 0.35) * (moved.has(e.id) ? 1.3 : 1) * Math.max(0.6, alert));
       }
       if (!rng.chance(Math.min(0.98, p))) continue;
       s.sees.push(e.id);
