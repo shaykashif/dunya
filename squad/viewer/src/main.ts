@@ -1147,9 +1147,14 @@ function toastFor(e: SimEvent): void {
       toast("squad", `Support · ${to.side === "us" ? "US" : "German"}`, sent ? `${sent.name} is sent to help ${to.name}.` : `No squad to spare for ${to.name}${d.mortars ? "; the mortars will be told" : ""}.`, [], (sent ?? to).color, (sent ?? to).id);
       break;
     }
+    case "kill_zone": {
+      const pl = world.platoons[d.side as Side];
+      toast("fire", `Open fire · ${d.side === "us" ? "US" : "German"}`, `${pl.name} opens up all at once on ${d.enemies === 1 ? "the man" : `${d.enemies as number} men`} in the killing ground!`, []);
+      break;
+    }
     case "ambush_sprung": {
       const sq = world.squads[d.squad as number]!;
-      toast("fire", `Ambush · ${sq.side === "us" ? "US" : "German"}`, d.found ? `${sq.name}'s ambush is found; they open fire.` : `${sq.name} springs its ambush on ${d.enemies as number} men in the open!`, [], sq.color, sq.id);
+      toast("fire", `Ambush · ${sq.side === "us" ? "US" : "German"}`, d.found ? `${sq.name}'s ambush is found; they open fire.` : `${sq.name} springs its ambush on ${d.enemies === 1 ? "a man" : `${d.enemies as number} men`} in the open!`, [], sq.color, sq.id);
       break;
     }
     case "breach": {
@@ -1242,11 +1247,14 @@ function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: fal
   $("toasts").innerHTML = "";
   log.addSink((e) => onEvent(e));
   world = undefined as unknown as World;
-  // ?map=urban (or hamlet, rural, road, town) picks the ground instead of the seed.
-  const mapKind = new URLSearchParams(location.search).get("map");
+  // ?map=urban (or hamlet, rural, road, town) picks the ground instead of the seed, and ?season=winter (or summer) the season.
+  const params = new URLSearchParams(location.search);
+  const mapKind = params.get("map");
   const kinds = ["hamlet", "rural", "road", "town", "urban"] as const;
   const kind = kinds.find((k) => k === mapKind) ?? null;
-  engine = createSimulation({ seed, log, config: { checkInvariants: false, map: { kind } } });
+  // The vetted battles (the featured and daily seeds) were picked as summer battles, so they stay summer.
+  const season = (["summer", "winter"] as const).find((k) => k === params.get("season")) ?? (FEATURED_SEEDS.includes(seed) || DAILY_SEEDS.includes(seed) ? "summer" : null);
+  engine = createSimulation({ seed, log, config: { checkInvariants: false, map: { kind }, season: { kind: season } } });
   world = engine.world;
   // The opening event fired before the sink saw the world; describe it now.
   const start = describe({ seq: 0, tick: 0, type: "battle_start", actors: [], data: {} }, world);
@@ -1258,7 +1266,7 @@ function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: fal
   acc = 0;
   paused = false;
   dirty = { feed: true, events: true };
-  $("date").textContent = `${world.config.time.date} · ${world.weather.kind}`.toUpperCase();
+  $("date").textContent = `${world.date} · ${world.weather.kind}`.toUpperCase();
   $("date").title = `${world.layout.name}, ${world.weather.label}`;
   fitCamera();
   renderRoster();
@@ -1284,7 +1292,7 @@ function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: fal
   }
   track("battle_start", { seed, n: battlesRun, cinematic, phone: isPhone(), daily: dailyBattle });
   try {
-    history.replaceState(null, "", `?seed=${seed}${kind ? `&map=${kind}` : ""}`);
+    history.replaceState(null, "", `?seed=${seed}${kind ? `&map=${kind}` : ""}${params.get("season") ? `&season=${params.get("season")}` : ""}`);
   } catch {
     // Not important.
   }
@@ -1386,7 +1394,7 @@ function frame(t: number): void {
   renderer.draw(world, cam, opts, prev, alpha, selected, t / 1000);
   const halfW = rect.width / cam.zoom / 2;
   sfx.setListener((cam.x + halfW) / TILE, (cam.y + rect.height / cam.zoom / 2) / TILE, halfW / TILE);
-  sfx.ambience(dt, world.weather.kind);
+  sfx.ambience(dt, world.weather.kind, world.season === "winter");
   footsteps(alpha);
   engines(dt);
   drawMinimap(minimap, world, cam, rect.width, rect.height, miniBase);
@@ -1941,7 +1949,7 @@ function openReport(): void {
     <ul class="plain">${fallen.map((s) => `<li class="l-death"><time>${clock(world, s.deathTick ?? 0)}</time> ${personLink(s)}, ${esc(roleName(s))} of ${esc(world.squad(s.squadId).name)}, ${s.age}, ${esc(s.hometown)} — ${s.causeOfDeath === "wounds" ? "died of wounds" : "killed"}${worstWound(s) || s.injuries.length ? `: ${esc(describeInjury(s.injuries.slice().sort((a, b) => b.severity - a.severity)[0]!))}` : ""}</li>`).join("") || "<li>None.</li>"}</ul>
     <h3>The wounded, and a month later</h3>
     <ul class="plain">${hurt.map((s) => `<li class="l-wound">${personLink(s)} (${esc(world.squad(s.squadId).name)}): ${s.injuries.filter((i) => !i.permanent && i.severity >= 0.1).map((i) => esc(describeInjury(i))).join("; ")}${after[s.id] ? ` — <i>${esc(after[s.id]!.outcome)}</i>` : ""}</li>`).join("") || "<li>None.</li>"}</ul>`;
-  openModal(`After-action report · ${world.config.time.date}`, html);
+  openModal(`After-action report · ${world.date}`, html);
   hydrateIcons($("mbody"));
   $("mnew").style.display = r ? "" : "none";
 }

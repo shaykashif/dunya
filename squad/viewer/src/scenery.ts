@@ -30,7 +30,19 @@ const LEAVES: Greens[] = [
   { light: "#b4dc6c", mid: "#86ba4a", base: "#5e9636", dark: "#3a6a26", rim: "#203c16" },
   { light: "#82bc54", mid: "#56963a", base: "#3c742a", dark: "#264e1c", rim: "#142e12" },
 ];
-const PINE: Greens = { light: "#5a9a54", mid: "#3e7c40", base: "#2e6634", dark: "#204c28", rim: "#10281a" };
+const PINE_GREEN: Greens = { light: "#5a9a54", mid: "#3e7c40", base: "#2e6634", dark: "#204c28", rim: "#10281a" };
+// Winter: bare boughs (browns and greys) and hedges of dark bramble and holly, heaped with snow on
+// every upper surface, so the lit tops of the crowns come out white; firs stay dark green under it.
+const WINTER_BOUGHS: Greens[] = [
+  { light: "#f4f7fa", mid: "#d4dce4", base: "#6e6656", dark: "#4a4438", rim: "#2a2620" },
+  { light: "#eef3f7", mid: "#cad4de", base: "#5e5a50", dark: "#403c34", rim: "#24221c" },
+  { light: "#f6f8fb", mid: "#d8e0e8", base: "#76705e", dark: "#524a3c", rim: "#2e2a22" },
+];
+const WINTER_HEDGE: Greens[] = [
+  { light: "#f4f7fa", mid: "#c8d2dc", base: "#465a3a", dark: "#30402a", rim: "#1a2416" },
+  { light: "#eef3f7", mid: "#c0ccd6", base: "#3e5234", dark: "#2a3a24", rim: "#162012" },
+];
+const WINTER_PINE: Greens = { light: "#e6edf3", mid: "#2e5a3c", base: "#244a32", dark: "#183824", rim: "#0c2016" };
 const BARK = { light: "#8a6040", base: "#6a4428", dark: "#432a18" };
 
 function canvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
@@ -117,8 +129,9 @@ function trunk(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: 
 }
 
 /** A broadleaf tree: an oak, ash or elm, about one tile across. */
-function broadleaf(seed: number, big: boolean): Prop {
-  const pal = LEAVES[Math.floor(hash2(seed, 1) * LEAVES.length)]!;
+function broadleaf(seed: number, big: boolean, winter = false): Prop {
+  const set = winter ? WINTER_BOUGHS : LEAVES;
+  const pal = set[Math.floor(hash2(seed, 1) * set.length)]!;
   const W = big ? 22 : 18, H = big ? 27 : 22;
   const [c, g] = canvas(W, H);
   const r = big ? 7.5 : 6;
@@ -138,8 +151,8 @@ function broadleaf(seed: number, big: boolean): Prop {
 }
 
 /** An apple tree, as in every Norman orchard: short, round, red-spotted. */
-function appleTree(seed: number): Prop {
-  const pal = LEAVES[2 + Math.floor(hash2(seed, 1) * 2)]!;
+function appleTree(seed: number, winter = false): Prop {
+  const pal = winter ? WINTER_BOUGHS[Math.floor(hash2(seed, 1) * WINTER_BOUGHS.length)]! : LEAVES[2 + Math.floor(hash2(seed, 1) * 2)]!;
   const W = 16, H = 17;
   const [c, g] = canvas(W, H);
   const cx = W / 2, r = 5.5;
@@ -150,12 +163,13 @@ function appleTree(seed: number): Prop {
     [cx, 9, 3.6],
   ];
   trunk(g, Math.floor(cx) - 1, 11, 2, H - 11);
-  crown(g, W, 13, discs, pal, seed, hash2(seed, 5) < 0.75 ? "#d8402c" : "#e8c040");
+  crown(g, W, 13, discs, pal, seed, winter ? null : hash2(seed, 5) < 0.75 ? "#d8402c" : "#e8c040");
   return { img: c, ax: Math.floor(cx), ay: H - 1, shadow: 11 };
 }
 
 /** A fir: stacked tiers, lit on the left. */
-function pine(seed: number): Prop {
+function pine(seed: number, winter = false): Prop {
+  const PINE = winter ? WINTER_PINE : PINE_GREEN;
   const W = 15, H = 26;
   const [c, g] = canvas(W, H);
   const cx = 7;
@@ -168,7 +182,9 @@ function pine(seed: number): Prop {
       for (let x = -half; x <= half; x++) {
         const edge = Math.abs(x) === half || y === hh - 1;
         const n = hash2(seed + k, x * 7 + y, 3);
-        const col = edge ? PINE.rim : x < -half / 2 ? (n < 0.6 ? PINE.light : PINE.mid) : x < 1 ? PINE.mid : x < half / 1.5 ? PINE.base : PINE.dark;
+        let col = edge ? PINE.rim : x < -half / 2 ? (n < 0.6 ? PINE.light : PINE.mid) : x < 1 ? PINE.mid : x < half / 1.5 ? PINE.base : PINE.dark;
+        // Snow lying along the top of each tier of boughs.
+        if (winter && !edge && y < 2 + (n < 0.4 ? 1 : 0)) col = x < half / 2 ? "#f6f9fc" : "#d6dee6";
         g.fillStyle = col;
         g.fillRect(cx + x, Math.floor(y0 + y), 1, 1);
       }
@@ -178,8 +194,9 @@ function pine(seed: number): Prop {
 }
 
 /** A low bush or bramble clump: hedgerow stuff. */
-function bush(seed: number, w: number): Prop {
-  const pal = LEAVES[Math.floor(hash2(seed, 1) * LEAVES.length)]!;
+function bush(seed: number, w: number, winter = false): Prop {
+  const set = winter ? WINTER_HEDGE : LEAVES;
+  const pal = set[Math.floor(hash2(seed, 1) * set.length)]!;
   const h = Math.round(w * 0.72);
   const [c, g] = canvas(w, h);
   const r = h / 2 - 0.5;
@@ -188,7 +205,7 @@ function bush(seed: number, w: number): Prop {
     [r * 0.85 + 0.5, h / 2 + 1, r * 0.8],
     [w - r * 0.85 - 0.5, h / 2 + 1, r * 0.8],
   ];
-  crown(g, w, h, discs, pal, seed, hash2(seed, 6) < 0.15 ? "#f0e8e0" : null);
+  crown(g, w, h, discs, pal, seed, winter ? (hash2(seed, 6) < 0.2 ? "#b8202a" : null) : hash2(seed, 6) < 0.15 ? "#f0e8e0" : null);
   return { img: c, ax: Math.floor(w / 2), ay: h - 2, shadow: w - 2 };
 }
 
@@ -202,15 +219,16 @@ export class Flora {
   readonly shrubs: Prop[] = [];
   readonly hedge: Prop[] = [];
 
-  constructor() {
+  /** Winter's flora is the same plants, bare and under snow. */
+  constructor(winter = false) {
     for (let k = 0; k < 8; k++) {
-      this.oaks.push(broadleaf(100 + k, false));
-      this.bigOaks.push(broadleaf(200 + k, true));
-      this.apples.push(appleTree(300 + k));
-      this.pines.push(pine(400 + k));
-      this.bushes.push(bush(500 + k, 12));
-      this.hedge.push(bush(700 + k, 15));
-      this.shrubs.push(bush(600 + k, 9));
+      this.oaks.push(broadleaf(100 + k, false, winter));
+      this.bigOaks.push(broadleaf(200 + k, true, winter));
+      this.apples.push(appleTree(300 + k, winter));
+      this.pines.push(pine(400 + k, winter));
+      this.bushes.push(bush(500 + k, 12, winter));
+      this.hedge.push(bush(700 + k, 15, winter));
+      this.shrubs.push(bush(600 + k, 9, winter));
     }
   }
 }
@@ -400,7 +418,8 @@ export function buildingSprite(w: World, b: Building): HTMLCanvasElement {
     if (RH - 1 - y < gable * (1 - Math.abs(x + 0.5 - mid) / mid) - 1) return -1;
     return x < mid ? 0 : 2;
   };
-  const colours = [L.roof[0], L.roof[1], L.roof[2], shade(L.roof[0], 1.12)];
+  // In winter the slopes lie under snow, the courses of tiles still showing as faint ridges.
+  const colours = w.season === "winter" ? ["#eef2f6", "#dce3ea", "#c2cad6", "#e6ecf1"] : [L.roof[0], L.roof[1], L.roof[2], shade(L.roof[0], 1.12)];
   for (let y = 0; y < RH; y++) {
     for (let x = 0; x < RW; x++) {
       const f = face(x, y);

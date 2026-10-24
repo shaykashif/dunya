@@ -11,7 +11,7 @@ import { Rng } from "../engine/rng.ts";
 import type { EventLog } from "../log/events.ts";
 import { generateLayout, type Layout } from "../world/layout.ts";
 import { cheb } from "../world/map.ts";
-import { enemyOf, type Experience, type Point, type Role, type Side, type Soldier, type Squad, type Tank, type Traits, type WeaponId } from "../world/types.ts";
+import { enemyOf, type Experience, type Point, type Role, type Season, type Side, type Soldier, type Squad, type Tank, type Traits, type WeaponId, type WeatherKind } from "../world/types.ts";
 import { World } from "../world/world.ts";
 import type { SimConfig } from "./config.ts";
 
@@ -187,17 +187,23 @@ function experienceFor(rng: Rng, side: Side, role: Role): Experience {
 
 export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): World {
   const rng = new Rng(seed, "scenario");
-  const layout = generateLayout(cfg, new Rng(seed, "map"));
+  // The season, from its own stream, so a summer battle is the same battle it always was.
+  const season: Season = cfg.season.kind ?? (new Rng(seed, "season").chance(cfg.season.winterChance) ? "winter" : "summer");
+  const layout = generateLayout(cfg, new Rng(seed, "map"), season);
   const attacker: Side = rng.chance(cfg.forces.germanAttackChance) ? "de" : "us";
   const w = new World(cfg, seed, log, layout, attacker);
   // The weather, from its own stream so it does not shift the rest of the battle.
   const sky = new Rng(seed, "weather");
-  const kinds = Object.keys(cfg.weather.weights) as (keyof typeof cfg.weather.weights)[];
-  let roll = sky.next() * kinds.reduce((a, k) => a + cfg.weather.weights[k], 0);
-  let wk = cfg.weather.kind ?? kinds[kinds.length - 1]!;
-  if (!cfg.weather.kind) for (const k of kinds) if ((roll -= cfg.weather.weights[k]) < 0) { wk = k; break; }
-  w.weather = cfg.weather.kinds[wk];
+  const table = season === "winter" ? cfg.season : cfg.weather;
+  const kinds = (Object.keys(table.weights) as WeatherKind[]).filter((k) => (table.weights[k] ?? 0) > 0 && table.kinds[k]);
+  let roll = sky.next() * kinds.reduce((a, k) => a + table.weights[k]!, 0);
+  // A weather asked for that the season does not have (rain in winter) gives way to the season's last.
+  const asked = cfg.weather.kind && table.kinds[cfg.weather.kind] ? cfg.weather.kind : null;
+  let wk = asked ?? kinds[kinds.length - 1]!;
+  if (!asked) for (const k of kinds) if ((roll -= table.weights[k]!) < 0) { wk = k; break; }
+  w.weather = table.kinds[wk]!;
   w.map.mud = w.weather.mud;
+  if (season === "winter") w.map.snow = cfg.season.snowRoads;
   const W = w.map.width, H = w.map.height;
   const usedNames = new Set<string>();
   let nextSoldier = 1;
@@ -368,7 +374,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       objective,
       aidPost,
       rearY,
-      fireMissionsLeft: cfg.mortars.missions[role] + (city && role === "attack" ? cfg.urban.attackerMissions : 0),
+      fireMissionsLeft: cfg.mortars.missions[role] + (city && role === "attack" ? cfg.urban.attackerMissions : 0) + (role === "defend" ? cfg.ambush.reserveMissions : 0),
       missions: [],
       scoutIds,
       plan: null,
@@ -383,6 +389,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       startStrength: 0,
       withdrawing: false,
       withdrawTick: -1,
+      killZone: { sprung: -1, peak: 0, best: 0, bestTick: 0 },
     };
   }
 
@@ -464,8 +471,9 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
   w.emit("battle_start", [], {
     seed,
     map: layout.kind,
+    season: layout.season,
     weather: w.weather.kind,
-    date: cfg.time.date,
+    date: w.date,
     clock: w.clock(),
     attacker,
     forces: { us: w.side("us").length, de: w.side("de").length },

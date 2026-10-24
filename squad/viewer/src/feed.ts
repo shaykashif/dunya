@@ -72,7 +72,7 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
   switch (e.type) {
     case "battle_start": {
       const att = w.platoons[w.attacker], def = w.platoons[w.attacker === "us" ? "de" : "us"];
-      return line(`${w.config.time.date}, dawn: ${w.weather.label}. ${att.name} (${w.men(att.side).length} men) moves up through the hedgerows on ${w.layout.name} to take ${w.layout.objectiveName}, held by ${def.name} (${w.men(def.side).length} men).`, "battle", [], true);
+      return line(`${w.date}, dawn: ${w.weather.label}. ${att.name} (${w.men(att.side).length} men) moves up ${w.season === "winter" ? "through the snow" : "through the hedgerows"} on ${w.layout.name} to take ${w.layout.objectiveName}, held by ${def.name} (${w.men(def.side).length} men).`, "battle", [], true);
     }
     case "contact": {
       const sq = w.squads[d.squad as number]!;
@@ -115,6 +115,7 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
       if (!r) return null;
       const [x, y] = d.at as [number, number];
       const what = d.side === "us" ? "60 mm mortars" : "the 8 cm mortars";
+      if (d.registered) return line(`${label(r)} brings ${what} down on the target registered before the battle, at ${x},${y}: no ranging round, straight to fire for effect. (${d.left as number} missions left)`, "fire", [r.id], true);
       return line(`${label(r)} calls ${what} down on the enemy at ${x},${y}. (${d.left as number} missions left)`, "fire", [r.id], true);
     }
     case "check_fire":
@@ -271,13 +272,18 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
       if (d.squad === null) return line(`No squad can be spared for ${to.name}${d.mortars ? "; the mortars are told where they are wanted" : ""}.`, to.side, [], false);
       return line(`The platoon leader sends ${w.squads[d.squad as number]!.name} to help ${to.name}.`, to.side, [], true);
     }
+    case "kill_zone": {
+      const pl = w.platoons[d.side as "us" | "de"];
+      const why = d.why === "found" ? "the enemy has found them" : d.why === "danger" ? "the enemy is about to walk onto them" : d.why === "stalled" ? "no more of the enemy are coming in" : `${d.enemies as number} of the ${d.seen as number} enemy seen are in the killing ground`;
+      return line(`${pl.name} has held its fire, every gun, until now: ${why}. On the word the whole platoon opens up at once.`, d.side as "us" | "de", [], true);
+    }
     case "ambush_laid": {
       const sq = w.squads[d.squad as number]!;
       return line(`${sq.name} goes forward to lie in ambush beside the way the enemy must come.`, sq.side, [], false);
     }
     case "ambush_sprung": {
       const sq = w.squads[d.squad as number]!;
-      return line(d.found ? `${sq.name}'s ambush is discovered; they open fire.` : `${sq.name} springs its ambush: every rifle and the machine gun open up at once on ${d.enemies as number} men in the open.`, sq.side, [], true);
+      return line(d.found ? `${sq.name}'s ambush is discovered; they open fire.` : `${sq.name} springs its ambush: every rifle and the machine gun open up at once on ${d.enemies === 1 ? "a man" : `${d.enemies as number} men`} in the open.`, sq.side, [], true);
     }
     case "breach": {
       const sq = w.squads[d.squad as number]!;

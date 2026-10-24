@@ -15,9 +15,10 @@ let config = {};
 const readLines = <T>(file: string): T[] => readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as T);
 
 if (args.dir) {
-  const summary = JSON.parse(readFileSync(join(args.dir, "summary.json"), "utf8")) as RunSummary & { mapChosen?: boolean };
+  const summary = JSON.parse(readFileSync(join(args.dir, "summary.json"), "utf8")) as RunSummary & { mapChosen?: boolean; seasonChosen?: boolean };
   // A run made with --map had its ground chosen, not rolled from the seed.
   if (summary.mapChosen) config = { map: { kind: summary.map } };
+  if (summary.seasonChosen) config = { ...config, season: { kind: summary.season } };
   seed = summary.seed;
   ticks = summary.ticks;
   expectedHash = summary.hash;

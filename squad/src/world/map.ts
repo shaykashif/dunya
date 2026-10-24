@@ -35,6 +35,9 @@ const WALLS = new Set<Terrain>(["building", "window", "door"]);
 /** Ground that turns to mud in the rain (not paving, a city's streets, nor its debris). */
 const MUDDY = new Set<Terrain>(["grass", "wheat", "orchard", "marsh", "crater", "foxhole", "ditch", "brush", "woods", "deadfall"]);
 
+/** Ground under a roof, which snow never reaches. */
+const INDOORS = new Set<Terrain>(["floor", "stairs", "door"]);
+
 export class GameMap {
   readonly width: number;
   readonly height: number;
@@ -56,8 +59,10 @@ export class GameMap {
   private portAt: Float32Array;
   /** Bumped whenever terrain changes (craters, rubble), so viewers redraw. */
   version = 0;
-  /** How much heavier going rain makes open ground. */
+  /** How much heavier going rain (or deep snow) makes open ground. */
   mud = 1;
+  /** How much heavier going snow and ice make roads, yards and streets (indoors is untouched). */
+  snow = 1;
   /** Hits each stretch of wall can still take before it is breached (0 for anything else). */
   readonly wallHp: Uint8Array;
   /** Shell hits each tile of a roof has taken. */
@@ -149,7 +154,7 @@ export class GameMap {
   /** Ground move cost of a tile (the ground floor), mud included. */
   cost(i: number): number {
     const t = this.terrain[i % (this.width * this.height)]!;
-    return this.rules.moveCost[t] * (this.mud !== 1 && MUDDY.has(t) ? this.mud : 1);
+    return this.rules.moveCost[t] * (MUDDY.has(t) ? this.mud : this.snow !== 1 && !INDOORS.has(t) ? this.snow : 1);
   }
 
   /** Move cost of entering a cell on its own floor. */

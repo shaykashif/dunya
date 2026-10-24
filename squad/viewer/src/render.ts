@@ -81,7 +81,11 @@ export function gridSquare(x: number, y: number): string {
 /** Colours for the minimap. */
 export const MINI: Record<Terrain, string> = { ...BASE, deadfall: "#4a4a30", hedge: "#24481e", woods: "#2a5022", orchard: "#4a7a30", building: "#4a4038", window: "#4a4038", crater: "#5a4630", foxhole: "#3a2e20", brush: "#3e6a2c", ditch: "#3a5426", marsh: "#4a6e5a", sandbags: "#b09a68", wire: "#5a5a58", wreck: "#2e2620", pothole: "#4a4640", paving: "#8a8680", fountain: "#5a7a94", statue: "#c8c4b8", stall: "#b0503c", debris: "#6a5e50" };
 
+/** The minimap in winter: snowfields, dark forest, iced water and trodden roads. */
+const MINI_WINTER: Record<Terrain, string> = { ...MINI, grass: "#dfe6ea", wheat: "#dfe6ea", orchard: "#c8d2d6", hedge: "#4a5a46", woods: "#4e6050", brush: "#a8b4b0", deadfall: "#7a7c70", marsh: "#b8c8cc", crater: "#8a8478", foxhole: "#5a5248", ditch: "#8a9088", road: "#a89c88", bridge: "#a89c88", water: "#8aa8bc", wire: "#b8bcbc", sandbags: "#c8bca0" };
+
 let flora: Flora | undefined;
+let winterFlora: Flora | undefined;
 
 interface Placed {
   p: Prop;
@@ -403,6 +407,7 @@ function drawTile(g: CanvasRenderingContext2D, w: World, tx: number, ty: number)
     px(x, y + TILE - 3, "#4e3e26", TILE, 2);
     for (let k = 0; k < 3; k++) px(x + Math.floor(hash2(tx, ty, k + 70) * 15), y + 4 + Math.floor(hash2(tx, ty, k + 80) * 8), "#806a48", 2, 1);
   }
+  if (w.season === "winter") snowOn(g, t, tx, ty);
   terrace(g, w, tx, ty);
   // Bullet holes pocking a wall.
   const holes = holeStep(w.map.holes[w.map.idx(tx, ty)]!);
@@ -413,6 +418,41 @@ function drawTile(g: CanvasRenderingContext2D, w: World, tx: number, ty: number)
       px(hx + 1, hy, "#d8d0bc");
     }
   }
+}
+
+/**
+ * How thickly snow lies on each kind of ground, as the share of the tile it
+ * whitens: deep on the fields, thinner under the trees, trodden to slush on
+ * the roads, and none at all indoors. Dug earth shows dark through it.
+ */
+const SNOW: Partial<Record<Terrain, number>> = {
+  grass: 0.84, wheat: 0.86, orchard: 0.8, hedge: 0.78, woods: 0.68, brush: 0.72, deadfall: 0.66, marsh: 0.76, crater: 0.6,
+  road: 0.5, bridge: 0.45, paving: 0.48, pothole: 0.42, debris: 0.45, stall: 0.5, fountain: 0.55, statue: 0.55,
+  ditch: 0.4, foxhole: 0.42, rubble: 0.42, wall: 0.55, sandbags: 0.5, wire: 0.7, wreck: 0.55,
+};
+
+/** Lays the winter's snow over a tile already painted: the ground shows faintly through it, with drifts and tracks. */
+function snowOn(g: CanvasRenderingContext2D, t: Terrain, tx: number, ty: number): void {
+  const x = tx * TILE, y = ty * TILE;
+  const r = (k: number) => hash2(tx, ty, k + 500);
+  const px = (xx: number, yy: number, col: string, ww = 1, hh = 1) => {
+    g.fillStyle = col;
+    g.fillRect(xx, yy, ww, hh);
+  };
+  if (t === "water") {
+    // Iced over at the edges, black water in the middle.
+    px(x, y, "rgba(196,214,228,0.55)", TILE, TILE);
+    for (let k = 0; k < 3; k++) px(x + Math.floor(r(k) * 12), y + Math.floor(r(k + 4) * 15), "#e4eef4", 4, 1);
+    return;
+  }
+  const cover = SNOW[t];
+  if (!cover) return;
+  px(x, y, `rgba(234,240,244,${cover})`, TILE, TILE);
+  // Soft drifts in blue shadow, and glints of fresh snow.
+  for (let k = 0; k < 3; k++) px(x + Math.floor(r(k + 10) * 13), y + Math.floor(r(k + 20) * 15), "rgba(170,186,206,0.45)", 3 + Math.floor(r(k + 30) * 3), 1);
+  for (let k = 0; k < 4; k++) px(x + Math.floor(r(k + 40) * 16), y + Math.floor(r(k + 50) * 16), "#fbfdff");
+  // Ruts down the roads, where carts and boots have churned it.
+  if (t === "road" || t === "bridge") for (const rx of [4, 11]) px(x + rx, y, "rgba(120,110,96,0.35)", 1, TILE);
 }
 
 /** Height in steps, for the terraced look. */
@@ -449,7 +489,7 @@ function terrace(g: CanvasRenderingContext2D, w: World, tx: number, ty: number):
       px(x, y, water ? "#2e5478" : stone ? "#6a665e" : "#5e4c32", TILE, h);
       for (let k = 2; k < h; k += 3) px(x, y + k, water ? "#284a6a" : stone ? "#57534c" : "#4e3e28", TILE, 1);
       for (let k = 0; k < 3; k++) px(x + Math.floor(hash2(tx, ty, k + 300) * 15), y + 1 + Math.floor(hash2(tx, ty, k + 310) * Math.max(1, h - 2)), stone ? "#7e7a70" : "#7a6444", 2, 1);
-      px(x, y, water ? "#4a7aa8" : stone ? "#a8a498" : "#7aae4a", TILE, 1);
+      px(x, y, water ? "#4a7aa8" : stone ? "#a8a498" : w.season === "winter" ? "#f2f6fa" : "#7aae4a", TILE, 1);
       px(x, y + h, "rgba(10,16,6,0.35)", TILE, 2);
     }
   }
@@ -461,7 +501,7 @@ function terrace(g: CanvasRenderingContext2D, w: World, tx: number, ty: number):
 
 /** The trees and bushes growing on one tile. */
 function propsAt(w: World, tx: number, ty: number, out: Placed[]): void {
-  const f = (flora ??= new Flora());
+  const f = w.season === "winter" ? (winterFlora ??= new Flora(true)) : (flora ??= new Flora());
   const i = w.map.idx(tx, ty);
   const add = (p: Prop, x: number, y: number) => out.push({ p, x: Math.round(x), y: Math.round(y), i });
   const t = w.map.terrain[i]!;
@@ -509,6 +549,7 @@ function hillShade(w: World): HTMLCanvasElement {
   const g = c.getContext("2d")!;
   const img = g.createImageData(W * S, H * S);
   const e = w.map.elev;
+  const cold = w.season === "winter";
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < W * H; i++) {
     lo = Math.min(lo, e[i]!);
@@ -531,9 +572,10 @@ function hillShade(w: World): HTMLCanvasElement {
       const v = Math.round(Math.max(-0.26, Math.min(0.26, lit * 0.55 + height * 0.08)) / 0.04) * 0.04;
       const o = (by * W * S + bx) * 4;
       const light = v > 0;
-      img.data[o] = light ? 255 : 10;
-      img.data[o + 1] = light ? 246 : 18;
-      img.data[o + 2] = light ? 200 : 30;
+      // Warm June light, or the cold blue of a winter morning on snow.
+      img.data[o] = light ? (cold ? 244 : 255) : cold ? 24 : 10;
+      img.data[o + 1] = light ? (cold ? 248 : 246) : cold ? 36 : 18;
+      img.data[o + 2] = light ? (cold ? 255 : 200) : cold ? 72 : 30;
       img.data[o + 3] = Math.round(Math.abs(v) * 255);
     }
   }
@@ -652,6 +694,8 @@ export class Renderer {
   private readonly houses = new Map<number, { version: number; world: World; look: string; img: HTMLCanvasElement }>();
   hoverBuilding = -1;
   alpha = 1;
+  /** Greatcoats for the men, while a winter battle is on. */
+  private winter = false;
   trails = new Map<number, number[]>();
 
   constructor(canvas: HTMLCanvasElement) {
@@ -689,10 +733,11 @@ export class Renderer {
   private sprite(s: Soldier, walking: boolean): HTMLCanvasElement {
     const dead = s.status === "dead";
     const posture = dead || s.status === "casualty" || s.carriedById !== null ? "prone" : s.posture;
-    const key = `${s.id}|${s.side}|${s.role === "medic" ? 1 : 0}|${posture}|${walking ? 1 : 0}|${s.dir}|${s.status}`;
+    const winter = this.winter;
+    const key = `${s.id}|${s.side}|${s.role === "medic" ? 1 : 0}|${posture}|${walking ? 1 : 0}|${s.dir}|${s.status}|${winter ? 1 : 0}`;
     let spr = this.spriteCache.get(key);
     if (!spr) {
-      spr = soldierSprite({ side: s.side, posture, walking, medic: s.role === "medic", surrendered: s.status === "surrendered" || s.status === "captured", flip: s.dir < 0, dead, id: s.id });
+      spr = soldierSprite({ side: s.side, posture, walking, medic: s.role === "medic", surrendered: s.status === "surrendered" || s.status === "captured", flip: s.dir < 0, dead, id: s.id, winter });
       this.spriteCache.set(key, spr);
       if (this.spriteCache.size > 3000) this.spriteCache.clear();
     }
@@ -702,6 +747,7 @@ export class Renderer {
   draw(w: World, cam: Camera, opts: ViewOptions, prev: Map<number, { x: number; y: number }>, alpha: number, selected: number | null, time: number): void {
     this.alpha = alpha;
     this.zoomNow = cam.zoom;
+    this.winter = w.season === "winter";
     const g = this.g;
     const dpr = window.devicePixelRatio || 1;
     const vw = this.canvas.width / dpr, vh = this.canvas.height / dpr;
@@ -908,7 +954,7 @@ export class Renderer {
       const x = (r.px + (r.x - r.px) * Math.min(1, Math.max(0, this.alpha))) * TILE + 8;
       const y = (r.py + (r.y - r.py) * Math.min(1, Math.max(0, this.alpha))) * TILE + 8;
       const step = Math.floor(time * 9 + r.id) % 2 === 0;
-      const spr = soldierSprite({ side: r.side, posture: "stand", walking: true, medic: false, surrendered: false, flip: r.x < r.px, dead: false, id: r.id });
+      const spr = soldierSprite({ side: r.side, posture: "stand", walking: true, medic: false, surrendered: false, flip: r.x < r.px, dead: false, id: r.id, winter: w.season === "winter" });
       g.fillStyle = "rgba(0,0,0,0.3)";
       g.fillRect(Math.round(x) - 4, Math.round(y) + 5, 8, 2);
       const { sx, sy } = figureBox(spr, { x, y }, step ? -1 : 0);
@@ -1010,11 +1056,30 @@ export class Renderer {
     }
   }
 
-  /** Rain streaking down, fog drifting, or a grey sky, over the whole view. */
+  /** Rain streaking down, snow drifting down, fog, or a grey sky, over the whole view. */
   private drawWeather(w: World, vw: number, vh: number, time: number): void {
     const g = this.g;
     const kind = w.weather.kind;
-    if (kind === "overcast") {
+    // A winter morning is a dim, cold one, whatever the sky.
+    if (w.season === "winter") {
+      g.fillStyle = "rgba(30,44,70,0.1)";
+      g.fillRect(0, 0, vw, vh);
+    }
+    if (kind === "snow") {
+      g.fillStyle = "rgba(200,210,226,0.16)";
+      g.fillRect(0, 0, vw, vh);
+      // Flakes falling slowly and swaying, nearer ones bigger and faster, in square pixels.
+      const n = Math.round((vw * vh) / 2600);
+      for (let k = 0; k < n; k++) {
+        const near = hash2(k, 4) < 0.25;
+        const fall = near ? 46 : 22 + hash2(k, 3) * 14;
+        const sway = Math.sin(time * (0.6 + hash2(k, 5)) + k) * (near ? 9 : 5);
+        const x = Math.floor(((hash2(k, 1) * (vw + 40) + time * 12 + sway) % (vw + 40)) - 20) & ~1;
+        const y = Math.floor(((hash2(k, 2) * (vh + 40) + time * fall) % (vh + 40)) - 20) & ~1;
+        g.fillStyle = near ? "rgba(250,252,255,0.95)" : "rgba(236,242,250,0.7)";
+        g.fillRect(x, y, near ? 4 : 2, near ? 4 : 2);
+      }
+    } else if (kind === "overcast") {
       g.fillStyle = "rgba(40,48,58,0.12)";
       g.fillRect(0, 0, vw, vh);
     } else if (kind === "rain") {
@@ -1929,7 +1994,7 @@ export function drawMinimap(canvas: HTMLCanvasElement, w: World, cam: Camera, vi
   if (!base.img || base.version !== w.map.version || base.world !== w) {
     const img = g.createImageData(W, H);
     for (let i = 0; i < W * H; i++) {
-      const n = parseInt(MINI[w.map.terrain[i]!].slice(1), 16);
+      const n = parseInt((w.season === "winter" ? MINI_WINTER : MINI)[w.map.terrain[i]!].slice(1), 16);
       img.data[i * 4] = (n >> 16) & 255;
       img.data[i * 4 + 1] = (n >> 8) & 255;
       img.data[i * 4 + 2] = n & 255;

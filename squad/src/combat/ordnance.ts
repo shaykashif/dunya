@@ -332,7 +332,8 @@ export function missionStep(w: World): void {
           w.emit("check_fire", [], { side, mission: m.id, at: [m.target.x, m.target.y] });
           continue;
         }
-        incoming(w, m.kind, side, m.target, cfg.spotScatter, m.calledBy, true, m.msg);
+        // On a registered target the first round is already fire for effect: no ranging, no warning.
+        incoming(w, m.kind, side, m.target, m.registered ? w.config.ambush.registeredScatter : cfg.spotScatter, m.calledBy, !m.registered, m.msg);
         if (pl.mortarPit && m.kind === "mortar") w.emit("mortar_fire", [], { side, at: [pl.mortarPit.x, pl.mortarPit.y], target: [m.target.x, m.target.y], msg: m.msg, round: 0 });
         m.fired = 1;
       } else if (w.tick >= m.effectTick && (w.tick - m.effectTick) % cfg.roundInterval === 0 && m.fired >= 1) {

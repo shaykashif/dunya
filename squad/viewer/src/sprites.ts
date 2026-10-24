@@ -40,6 +40,17 @@ export const SIDE_COLORS: Record<Side, { coat: string; coatDark: string; trouser
   de: { coat: "#5e6e6c", coatDark: "#435250", trousers: "#6c7470", helmet: "#3c4644", helmetDark: "#262e2e", boots: "#16161a", tracer: "#c8ff70", name: "#c8d8c0" },
 };
 
+/**
+ * Winter dress, the Ardennes in December. The Americans in the long olive drab
+ * wool overcoat, a knitted scarf and rubber overshoes; the Germans in the
+ * field-grey Mantel, double-breasted and buttoned to the throat, with a wool
+ * toque under the helmet. Some helmets are daubed white with lime.
+ */
+export const WINTER_COLORS: Record<Side, { coat: string; coatDark: string; trousers: string; boots: string; scarf: string; scarfDark: string; button: string; glove: string; whitewash: string; whitewashDark: string }> = {
+  us: { coat: "#6a6242", coatDark: "#4c462e", trousers: "#5c5038", boots: "#24221e", scarf: "#bcae84", scarfDark: "#8e8260", button: "#2e2a1c", glove: "#3a3022", whitewash: "#d6dad4", whitewashDark: "#a8aca6" },
+  de: { coat: "#4c5a50", coatDark: "#34403a", trousers: "#5a625e", boots: "#16161a", scarf: "#8a8e86", scarfDark: "#666a62", button: "#c8c4a8", glove: "#26282a", whitewash: "#dadcd6", whitewashDark: "#acb0a8" },
+};
+
 const SKINS = ["#f2c9a0", "#e8b890", "#d9a57a", "#c98e62", "#a86f48"];
 
 export function skinOf(id: number): string {
@@ -74,6 +85,38 @@ const DE_STAND = [
   "..B..B..",
   "..B..B..",
 ];
+// The greatcoat: collar and scarf up round the chin, and the skirts down past the knee, split at the back.
+const US_WINTER = [
+  "..WWWH..",
+  ".HnHHnH.",
+  ".hSSSSh.",
+  "..SESE..",
+  ".kKKKKk.",
+  "GCCCCCCG",
+  "GCbbbbCG",
+  ".CCoCCC.",
+  ".cCCCCc.",
+  ".cC..Cc.",
+  "..P..P..",
+  "..B..B..",
+];
+const DE_WINTER = [
+  "..WWWH..",
+  ".HHHHHH.",
+  "hhKSSKhh",
+  ".hSESEh.",
+  ".kKKKKk.",
+  "GCoCCoCG",
+  "GCbbbbCG",
+  ".CoCCoC.",
+  ".cCCCCc.",
+  ".cC..Cc.",
+  "..P..P..",
+  "..B..B..",
+];
+const winterWalk = (rows: readonly string[]) => [...rows.slice(0, 9), ".C....C.", ".P....P.", ".B....B."];
+const WINTER_CROUCH = (rows: readonly string[]) => [rows[0]!, rows[1]!, rows[2]!, rows[3]!, rows[4]!, rows[5]!, rows[6]!, ".CCCCCC.", "CC....CC", "B......B"];
+const WINTER_PRONE = ["....cCCCCWW.", "BPCCCbCCCKHH", "BPCCCCCCCSSH", "..P...c..G.."];
 const walkRows = (rows: readonly string[]) => [...rows.slice(0, 9), ".P....P.", rows[10]!.includes("L") ? ".L....L." : ".B....B.", ".B....B."];
 const CROUCH = (rows: readonly string[]) => [rows[0]!, rows[1]!, rows[2]!, rows[3]!, rows[4]!, rows[5]!, rows[6]!, ".PPPPPP.", "PP....PP", "B......B"];
 const PRONE = ["......cCCHH.", "BPPPPbCCCSHH", "BPPPPCCCCSSH", "..P...c....."];
@@ -88,17 +131,21 @@ export interface SoldierLook {
   flip: boolean;
   dead: boolean;
   id: number;
+  /** Greatcoats and scarves for the snow. */
+  winter?: boolean;
 }
 
 /** A soldier sprite for his side, posture and state. */
 export function soldierSprite(l: SoldierLook): HTMLCanvasElement {
   const c = SIDE_COLORS[l.side];
-  const base = l.side === "us" ? US_STAND : DE_STAND;
+  const wc = WINTER_COLORS[l.side];
+  const winter = l.winter === true;
+  const base = winter ? (l.side === "us" ? US_WINTER : DE_WINTER) : l.side === "us" ? US_STAND : DE_STAND;
   let rows: readonly string[];
-  if (l.dead || l.posture === "prone") rows = PRONE;
+  if (l.dead || l.posture === "prone") rows = winter ? WINTER_PRONE : PRONE;
   else if (l.surrendered) rows = SURRENDER(base);
-  else if (l.posture === "crouch") rows = CROUCH(base);
-  else rows = l.walking ? walkRows(base) : base;
+  else if (l.posture === "crouch") rows = winter ? WINTER_CROUCH(base) : CROUCH(base);
+  else rows = l.walking ? (winter ? winterWalk(base) : walkRows(base)) : base;
   const pal: Palette = {
     H: c.helmet,
     h: c.helmetDark,
@@ -113,9 +160,28 @@ export function soldierSprite(l: SoldierLook): HTMLCanvasElement {
     n: "#7e8a4a",
     y: "#1e1e1c",
   };
+  if (winter) {
+    // A helmet daubed white, on about one man in three; the rest wear it as issued, with a dusting of snow.
+    const white = hash2(l.id, 41) < 0.35;
+    Object.assign(pal, {
+      H: white ? wc.whitewash : c.helmet,
+      h: white ? wc.whitewashDark : c.helmetDark,
+      n: white ? wc.whitewashDark : "#c8ccc4",
+      C: wc.coat,
+      c: wc.coatDark,
+      b: l.side === "us" ? "#8a7a50" : "#1e1e1c",
+      P: wc.trousers,
+      B: wc.boots,
+      K: wc.scarf,
+      k: wc.scarfDark,
+      o: wc.button,
+      G: wc.glove,
+      W: "#f2f6fa",
+    });
+  }
   if (l.dead) {
-    pal.C = shade(c.coat, 0.75);
-    pal.c = shade(c.coatDark, 0.75);
+    pal.C = shade(winter ? wc.coat : c.coat, 0.75);
+    pal.c = shade(winter ? wc.coatDark : c.coatDark, 0.75);
     pal.S = "#b0a090";
   }
   const spr = fromRows(rows, pal, l.flip);

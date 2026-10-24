@@ -6,6 +6,7 @@
 import { clusters, liveContacts, sideContacts, updateContact } from "../combat/perception.ts";
 import { gasp as gaspAt, isLeader, label, note, shout, spotOf } from "../entities/soldier.ts";
 import { incoming } from "../combat/ordnance.ts";
+import { shakeMorale, suppress } from "../entities/morale.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { Building } from "../world/layout.ts";
 import { enemyOf, type Contact, type ElementOrder, type FirePolicy, type Pace, type Platoon, type Point, type Side, type Soldier, type Squad, type SquadState } from "../world/types.ts";
@@ -890,17 +891,17 @@ function defendStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
   switch (sq.state) {
     case "deploy":
     case "hold": {
-      if (sq.state === "deploy") setState(w, sq, "hold", "dug in, holding fire until they are in the open");
-      // Fire discipline: wait until the enemy is in the killing ground.
+      if (sq.state === "deploy") setState(w, sq, "hold", "dug in, holding fire until the killing ground fills");
+      // Fire discipline: every gun in the platoon waits for the word (fireControl); rounds sprayed about
+      // on spec do not draw it. Once the platoon has opened, or is pulling out, the squad fires freely.
       const live = liveContacts(w, sq, 30);
-      const fired = all.some((m) => m.underFire && w.tick - m.underFire.tick < 10) || all.some((m) => w.tick - m.lastFiredTick < 30);
-      const close = live.some((c) => c.visible && dist(c, pos) <= 35);
+      const word = pl.killZone.sprung >= 0 || pl.withdrawing;
       const open = sq.orders.A.fire === "free";
-      if (!open && (fired || close)) {
+      if (!open && word) {
         shout(w, leader, leader.side === "de" ? "Feuer frei!" : "Open fire!", null);
         w.emit("open_fire", [leader.id], { squad: sq.id });
       }
-      const policy: FirePolicy = open || fired || close ? "free" : "hold";
+      const policy: FirePolicy = open || word ? "free" : "hold";
       for (const el of ["A", "B"] as const) {
         const cur = sq.orders[el];
         if (cur.kind !== "hold" || cur.fire !== policy || Object.keys(cur.positions).length === 0) {
@@ -974,7 +975,7 @@ function defendStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
       withdrawStep(w, sq, men);
       return;
     case "ambush": {
-      ambushStep(w, sq, men, pos, leader);
+      ambushStep(w, sq, men, leader);
       return;
     }
     case "reinforce": {
@@ -998,37 +999,161 @@ function defendStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
 
 /**
  * Lying in wait, prone in the woods or scrub, every man holding his fire.
- * It springs all at once when an enemy it can see walks within close range,
- * or the moment it is found.
+ * The word to fire comes from the platoon (fireControl), which waits until as
+ * much of the enemy as it can get is in the killing ground; until then this
+ * keeps the men still.
  */
-function ambushStep(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, pos: Point, leader: Soldier): void {
-  const cfg = w.config.ambush;
-  const all = [...men.A, ...men.B];
-  const live = liveContacts(w, sq, 6);
-  const close = live.filter((c) => c.visible && dist(c, pos) <= cfg.trigger);
-  const found = all.some((m) => (m.underFire !== null && w.tick - m.underFire.tick < 3) || m.lastHitTick >= w.tick - 3);
-  if (close.length === 0 && !found) {
-    for (const el of ["A", "B"] as const) {
-      const cur = sq.orders[el];
-      if (cur.kind !== "hold" || cur.fire !== "hold") {
-        const keep: Record<number, Point> = {};
-        for (const m of men[el]) keep[m.id] = cur.positions[m.id] ?? spotOf(m);
-        setOrder(w, sq, el, order("hold", keep, "crawl", "hold"));
-      }
-    }
+function ambushStep(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }, leader: Soldier): void {
+  if (w.platoons[sq.side].killZone.sprung >= 0) {
+    springAmbush(w, sq, leader, false);
     return;
   }
-  setState(w, sq, "hold", found && close.length === 0 ? "the ambush is found: opening fire" : `ambush sprung: ${close.length > 1 ? `${close.length} of them` : "the enemy"} at ${Math.round(Math.min(...close.map((c) => dist(c, pos))) * 3)} m, every rifle opens up at once`);
+  for (const el of ["A", "B"] as const) {
+    const cur = sq.orders[el];
+    if (cur.kind !== "hold" || cur.fire !== "hold") {
+      const keep: Record<number, Point> = {};
+      for (const m of men[el]) keep[m.id] = cur.positions[m.id] ?? spotOf(m);
+      setOrder(w, sq, el, order("hold", keep, "crawl", "hold"));
+    }
+  }
+}
+
+/** The ambush party opens up, every man at once, and goes over to holding where it lies. */
+function springAmbush(w: World, sq: Squad, leader: Soldier, found: boolean): void {
+  const men = elements(w, sq);
+  const all = [...men.A, ...men.B];
+  const pos = all.length > 0 ? centroid(all) : { x: leader.x, y: leader.y };
+  const close = liveContacts(w, sq, 6).filter((c) => c.visible && dist(c, pos) <= w.config.ambush.trigger);
+  setState(w, sq, "hold", found && close.length === 0 ? "the ambush is found: opening fire" : close.length === 0 ? "the platoon has opened fire: the ambush joins in" : `ambush sprung: ${close.length > 1 ? `${close.length} of them` : "the enemy"} at ${Math.round(Math.min(...close.map((c) => dist(c, pos))) * 3)} m, every rifle opens up at once`);
   shout(w, leader, leader.side === "de" ? "Feuer!" : "Fire! Fire!", null);
   w.emit("ambush_sprung", [leader.id], { squad: sq.id, enemies: close.length, found });
   w.emit("open_fire", [leader.id], { squad: sq.id, ambush: true });
+  openUp(w, sq, men);
+}
+
+/** Every man in the squad free to fire, now, from where he is. */
+function openUp(w: World, sq: Squad, men: { A: Soldier[]; B: Soldier[] }): void {
   for (const el of ["A", "B"] as const) {
     const keep: Record<number, Point> = {};
     for (const m of men[el]) keep[m.id] = sq.orders[el].positions[m.id] ?? spotOf(m);
     setOrder(w, sq, el, order("hold", keep, "crouch", "free"));
   }
   // Everyone fires now, together.
-  for (const m of all) if (m.act && m.act.cand.kind !== "fire") m.act = null;
+  for (const m of [...men.A, ...men.B]) if (m.act && m.act.cand.kind !== "fire") m.act = null;
+}
+
+/**
+ * Fire control for a defending platoon, every second until it opens. The
+ * killing ground is close round the ambush party and in front of the squads on
+ * the line. Nobody fires until as many of the enemy as it is going to get are
+ * in it: most of those yet seen, or as many as came in before the count
+ * stopped growing. Or until a hidden man is about to be stepped on, or anyone
+ * is shot at. Then the word goes out and the whole platoon opens at once: the
+ * ambush, the guns on the line, the mortars on a target registered beforehand,
+ * and grenades from anyone near enough to throw.
+ */
+function fireControl(w: World, pl: Platoon): void {
+  const kz = pl.killZone;
+  const cfg = w.config.ambush;
+  const waiting = pl.squadIds.map((id) => w.squad(id)).filter((sq) => sq.state === "ambush" || ((sq.state === "hold" || sq.state === "deploy") && sq.orders.A.fire === "hold"));
+  if (waiting.length === 0) return;
+  const seen = new Map<number, Contact>();
+  const inZone = new Map<number, Contact>();
+  const hidden = new Set<number>();
+  let danger = false;
+  for (const sq of waiting) {
+    const men = ableMen(w, sq).filter((m) => m.role !== "sniper");
+    if (men.length === 0) continue;
+    for (const m of men) hidden.add(m.id);
+    const ambush = sq.state === "ambush";
+    for (const c of liveContacts(w, sq, 3)) {
+      if (!c.visible) continue;
+      seen.set(c.id, c);
+      let near = Infinity;
+      for (const m of men) near = Math.min(near, dist(m, c));
+      if (near <= (ambush ? cfg.trigger : cfg.lineRange)) inZone.set(c.id, c);
+      if (near <= (ambush ? cfg.danger : cfg.lineDanger)) danger = true;
+    }
+  }
+  // Found: a hidden man is shot at by an enemy inside the killing ground who can see him. An observer
+  // watching unseen gives nothing away; rounds sprayed at a hedge on spec, a sniper far off or a stray
+  // mortar bomb do not give the ambush away either, and nobody answers them.
+  const found = [...hidden].some((id) => {
+    const m = w.soldier(id);
+    if (m.underFire === null || w.tick - m.underFire.tick >= 3) return false;
+    const by = w.maybe(m.underFire.by);
+    return by !== null && by.role !== "sniper" && by.sees.includes(id) && dist(by, m) <= cfg.lineRange;
+  });
+  kz.peak = Math.max(kz.peak, seen.size);
+  const n = inZone.size;
+  if (n > kz.best) {
+    kz.best = n;
+    kz.bestTick = w.tick;
+  }
+  const full = n >= Math.max(cfg.minVictims, Math.ceil(cfg.share * kz.peak));
+  // As many as are coming: the count has not grown for a while, and most of the best are still in it.
+  const stalled = n >= Math.max(Math.ceil(cfg.minVictims * 0.6), Math.ceil(kz.best * 0.6)) && w.tick - kz.bestTick >= cfg.patience;
+  if (!found && !danger && !full && !stalled) return;
+  kz.sprung = w.tick;
+  const why = found ? "found" : danger ? "danger" : full ? "full" : "stalled";
+  const boss = w.maybe(w.squad(pl.hqSquadId).leaderId);
+  w.emit("kill_zone", boss ? [boss.id] : [], { side: pl.side, enemies: n, seen: kz.peak, why });
+  if (boss && w.able(boss)) shout(w, boss, pl.side === "de" ? "Feuer frei! Alles, was schießen kann!" : "Open fire! Everything you've got!", null);
+  for (const sq of waiting) {
+    const leader = ensureLeader(w, sq);
+    if (!leader) continue;
+    if (sq.state === "ambush") springAmbush(w, sq, leader, found);
+    else {
+      if (sq.state === "deploy") setState(w, sq, "hold", "dug in and firing");
+      shout(w, leader, leader.side === "de" ? "Feuer frei!" : "Open fire!", null);
+      w.emit("open_fire", [leader.id], { squad: sq.id });
+      openUp(w, sq, elements(w, sq));
+    }
+  }
+  // Caught in the open by every gun at once: the men in the killing ground are stunned before the first
+  // of them can answer, and throw themselves flat where they stand.
+  for (const c of inZone.values()) {
+    const e = w.maybe(c.id);
+    if (!e || e.status !== "active") continue;
+    suppress(w, e, cfg.shock);
+    shakeMorale(w, e, cfg.shockMorale);
+  }
+  registeredFire(w, pl, [...inZone.values()], [...seen.values()]);
+}
+
+/** Fire missions the platoon may spend now: a defending platoon keeps some back for its registered target until it opens fire. */
+function missionsFree(w: World, pl: Platoon): number {
+  return pl.fireMissionsLeft - (pl.role === "defend" && pl.killZone.sprung < 0 ? w.config.ambush.reserveMissions : 0);
+}
+
+/**
+ * Mortars on the target registered before the battle, the moment the platoon
+ * opens up: on the biggest knot of the enemy if it is clear of friends, or
+ * else on the ground just behind it on their way in, where the squads following
+ * up are and where the men in the killing ground would have to go back through.
+ */
+function registeredFire(w: World, pl: Platoon, inZone: readonly Contact[], seen: readonly Contact[]): void {
+  const cfg = w.config;
+  if (pl.fireMissionsLeft <= 0) return;
+  const crew = w.squad(pl.hqSquadId).members.map((id) => w.soldier(id));
+  const caller = crew.find((s) => s.role === "radioman" && w.able(s)) ?? crew.find((s) => s.role === "platoon_leader" && w.able(s));
+  if (!caller) return;
+  const clear = (at: Point) => !w.soldiers.some((s) => s.side === pl.side && w.onField(s) && cheb(s, at) < cfg.mortars.dangerClose + 2);
+  const knot = [...clusters(inZone, 6), ...clusters(seen, 6)].sort((a, b) => b.n - a.n)[0];
+  if (!knot) return;
+  const back = Math.sign(w.platoons[enemyOf(pl.side)].rearY - knot.at.y) || 1;
+  let target: { at: Point } | null = null;
+  for (let k = 0; k <= 30 && !target; k += 2) {
+    const at = { x: knot.at.x, y: Math.max(0, Math.min(w.map.height - 1, knot.at.y + back * k)) };
+    if (clear(at)) target = { at };
+  }
+  if (!target) return;
+  pl.fireMissionsLeft--;
+  const spot = w.tick + cfg.ambush.registeredDelay;
+  pl.missions.push({ id: w.nextId("mission"), side: pl.side, target: target.at, spotTick: spot, effectTick: spot + cfg.mortars.roundInterval, rounds: cfg.mortars.rounds, fired: 0, calledBy: caller.id, kind: "mortar", msg: null, registered: true });
+  w.emit("fire_mission", [caller.id], { side: pl.side, at: [target.at.x, target.at.y], by: caller.id, left: pl.fireMissionsLeft, registered: true });
+  shout(w, caller, pl.side === "us" ? "Fire mission, target one as registered, fire for effect!" : "Feuerauftrag! Ziel eins, wie eingeschossen, Wirkungsfeuer!", null);
+  note(w, caller, "brought the mortars down on the registered target");
 }
 
 // ---------- Calling for help ----------
@@ -1506,7 +1631,7 @@ function coordinate(w: World, pl: Platoon, leader: Soldier | undefined): void {
   // The radioman calls the mortars on it, timed to the attack.
   let mission: number | null = null;
   const radio = hq.members.map((id) => w.soldier(id)).find((m) => m.role === "radioman" && w.able(m));
-  if (pl.fireMissionsLeft > 0 && pl.missions.every((m) => m.fired >= m.rounds + 1) && radio && cheb(radio, leader) <= cfg.mortars.radioReach + 3 && !w.soldiers.some((s) => s.side === pl.side && w.onField(s) && cheb(s, F) < cfg.mortars.dangerClose + 4)) {
+  if (missionsFree(w, pl) > 0 && pl.missions.every((m) => m.fired >= m.rounds + 1) && radio && cheb(radio, leader) <= cfg.mortars.radioReach + 3 && !w.soldiers.some((s) => s.side === pl.side && w.onField(s) && cheb(s, F) < cfg.mortars.dangerClose + 4)) {
     pl.fireMissionsLeft--;
     const spot = w.tick + cfg.mortars.spotDelay;
     const id = w.nextId("mission");
@@ -1535,7 +1660,7 @@ function coordinate(w: World, pl: Platoon, leader: Soldier | undefined): void {
  * it was called.
  */
 function smokeMission(w: World, pl: Platoon, aims: readonly Point[], why: string): boolean {
-  if (pl.fireMissionsLeft <= 0 || aims.length === 0 || w.tick - pl.smokeAt < 90) return false;
+  if (missionsFree(w, pl) <= 0 || aims.length === 0 || w.tick - pl.smokeAt < 90) return false;
   const hq = w.squad(pl.hqSquadId);
   const leader = w.maybe(hq.leaderId);
   const radio = hq.members.map((id) => w.soldier(id)).find((m) => m.role === "radioman" && w.able(m));
@@ -1555,7 +1680,7 @@ function smokeMission(w: World, pl: Platoon, aims: readonly Point[], why: string
  * get a screen between them and the guns that have them.
  */
 function screenStep(w: World, pl: Platoon): void {
-  if (pl.fireMissionsLeft <= 0 || w.tick - pl.smokeAt < 150 || w.tick % 5 !== 0) return;
+  if (missionsFree(w, pl) <= 0 || w.tick - pl.smokeAt < 150 || w.tick % 5 !== 0) return;
   const squads = pl.squadIds.map((id) => w.squad(id));
   const known = sideContacts(w, pl.side, 15).filter((c) => c.identified);
   if (known.length === 0) return;
@@ -1633,7 +1758,7 @@ function platoonStep(w: World, pl: Platoon): void {
   if (pl.reports.length > 0) {
     pl.reports = pl.reports.filter((r) => w.tick - r.tick < 240);
     const radio = hq.members.map((id) => w.soldier(id)).find((s) => s.role === "radioman" && w.able(s));
-    if (!pl.withdrawing && pl.fireMissionsLeft > 0 && pl.missions.every((m) => m.fired >= m.rounds + 1) && radio && pltLeader && w.able(pltLeader) && cheb(radio, pltLeader) <= cfg.mortars.radioReach + 3) {
+    if (!pl.withdrawing && missionsFree(w, pl) > 0 && pl.missions.every((m) => m.fired >= m.rounds + 1) && radio && pltLeader && w.able(pltLeader) && cheb(radio, pltLeader) <= cfg.mortars.radioReach + 3) {
       const r = pl.reports.find((x) => !w.soldiers.some((s) => s.side === side && w.onField(s) && cheb(s, x.at) < cfg.mortars.dangerClose + 4));
       if (r) {
         pl.reports = pl.reports.filter((x) => x !== r);
@@ -1648,7 +1773,7 @@ function platoonStep(w: World, pl: Platoon): void {
     }
   }
   // Fire support: the radioman calls the mortars on the strongest known position.
-  if (!pl.withdrawing && pl.fireMissionsLeft > 0 && pl.missions.every((m) => m.fired >= m.rounds + 1) && pltLeader && w.able(pltLeader)) {
+  if (!pl.withdrawing && missionsFree(w, pl) > 0 && pl.missions.every((m) => m.fired >= m.rounds + 1) && pltLeader && w.able(pltLeader)) {
     const radio = hq.members.map((id) => w.soldier(id)).find((s) => s.role === "radioman" && w.able(s));
     if (radio && cheb(radio, pltLeader) <= cfg.mortars.radioReach + 3) {
       // Only on what has been seen: a gun heard but never spotted is not a map reference.
@@ -1808,6 +1933,7 @@ export function commandStep(w: World): void {
   for (const side of [w.attacker, enemyOf(w.attacker)] as const) {
     const pl = w.platoons[side];
     if (w.tick % 10 === (side === "us" ? 0 : 5)) platoonStep(w, pl);
+    if (pl.role === "defend" && !pl.withdrawing && pl.killZone.sprung < 0) fireControl(w, pl);
     for (const id of [pl.hqSquadId, ...pl.squadIds]) {
       const sq = w.squad(id);
       if ((w.tick + sq.id) % 2 !== 0) continue;

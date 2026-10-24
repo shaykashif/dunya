@@ -1,5 +1,7 @@
-// The ground a battle is fought over. Every map is Normandy, June 1944, but
-// the seed picks what kind of place: a bocage hamlet at a crossroads, open
+// The ground a battle is fought over. In summer the map is Normandy, June
+// 1944; in winter it is the Ardennes, December 1944, the same kinds of place
+// under deep snow, more thickly wooded and dug in for weeks. The seed picks
+// what kind of place: a bocage hamlet at a crossroads, open
 // farmland on a ridge, a highway junction lined with houses, or a market
 // town. All of them have fields boxed in by hedgerows, a stream across the
 // south, rising and falling ground, and buildings with rooms and upper floors.
@@ -10,7 +12,7 @@ import type { SimConfig } from "../scenario/config.ts";
 import { generateCity } from "./city.ts";
 import { roadDefences } from "./defences.ts";
 import { GameMap } from "./map.ts";
-import type { MapKind, Point, Terrain } from "./types.ts";
+import type { MapKind, Point, Season, Terrain } from "./types.ts";
 
 export type BuildingKind = "farmhouse" | "barn" | "cottage" | "church" | "house" | "shop" | "apartment" | "townhall" | "warehouse";
 
@@ -30,6 +32,7 @@ export interface Building {
 
 export interface Layout {
   kind: MapKind;
+  season: Season;
   /** What the place is, for the chronicle: "a bocage hamlet". */
   name: string;
   /** What the attackers are after: "the crossroads". */
@@ -77,6 +80,15 @@ const KINDS: Record<MapKind, KindSpec> = {
   urban: { name: "a shell-torn city", objectiveName: "the town hall", fieldWidth: [24, 38], fieldHeight: [13, 18], mergeChance: 0, crops: [1, 1, 1], copses: [0, 0], settlementRow: 28, lineGap: 27, area: { w: 41, n: 19, s: 19 } },
 };
 
+/** What each kind of place is called in winter. */
+const WINTER_NAMES: Record<MapKind, string> = {
+  hamlet: "a forest hamlet in the Ardennes",
+  rural: "snowbound farmland on a wooded ridge",
+  road: "a highway junction in the snow",
+  town: "a snowbound market town",
+  urban: "a shell-torn city under snow",
+};
+
 /** Stable per-tile noise, independent of draw order. */
 function hashTile(x: number, y: number): number {
   let h = (x * 374761393 + y * 668265263) | 0;
@@ -118,9 +130,10 @@ export function startClearance(cfg: SimConfig): number {
   return Math.ceil(cfg.perception.maxRange * cfg.perception.scope) + cfg.map.startMargin;
 }
 
-export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
+export function generateLayout(cfg: SimConfig, rng: Rng, season: Season = "summer"): Layout {
   const kind = cfg.map.kind ?? pickKind(cfg, rng);
-  if (kind === "urban") return generateCity(cfg, rng);
+  if (kind === "urban") return generateCity(cfg, rng, season);
+  const winter = season === "winter";
   const spec = KINDS[kind];
   const W = cfg.map.width, H = cfg.map.height;
   const map = new GameMap(W, H, cfg.terrain);
@@ -206,7 +219,9 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
   }
 
   // ---- Field contents: each field is pasture, wheat, orchard or a wood ----
-  const [pGrass, pWheat, pOrchard] = spec.crops;
+  // In winter the forest has crept over more of it, and there is no standing wheat: the fields lie fallow under snow.
+  const thin = winter ? 1 - cfg.season.woodsShare : 1;
+  const [pGrass, pWheat, pOrchard] = spec.crops.map((p) => p * thin) as [number, number, number];
   const cellKind = new Map<string, Terrain>();
   const cellOf = (x: number, y: number) => `${cols.filter((c) => c <= x).length},${rows.filter((r) => r <= y).length}`;
   for (let y = 0; y < H; y++) {
@@ -217,7 +232,7 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
       let k = cellKind.get(key);
       if (!k) {
         const roll = rng.next();
-        k = roll < pGrass ? "grass" : roll < pWheat ? "wheat" : roll < pOrchard ? "orchard" : "woods";
+        k = roll < pGrass ? "grass" : roll < pWheat ? (winter ? "grass" : "wheat") : roll < pOrchard ? "orchard" : "woods";
         cellKind.set(key, k);
       }
       if (k === "woods") map.terrain[i] = hashTile(x, y) < 0.85 ? "woods" : hashTile(y, x) < 0.5 ? "brush" : "grass";
@@ -225,7 +240,8 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
     }
   }
   // A copse here and there in the pastures, edged with scrub.
-  for (let k = 0; k < spec.copses[0] + rng.int(spec.copses[1] - spec.copses[0] + 1); k++) {
+  const copses = winter ? cfg.season.copses : spec.copses;
+  for (let k = 0; k < copses[0] + rng.int(copses[1] - copses[0] + 1); k++) {
     const c = { x: 4 + rng.int(W - 8), y: 4 + rng.int(H - 8) };
     const rad = 2 + rng.int(3);
     for (let y = c.y - rad - 1; y <= c.y + rad + 1; y++) {
@@ -535,7 +551,7 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
   const diggable = (x: number, y: number) => {
     if (!map.inBounds(x, y) || map.building[map.idx(x, y)]! >= 0) return false;
     const t = map.at(x, y);
-    return t === "grass" || t === "wheat" || t === "orchard" || t === "brush" || t === "crater";
+    return t === "grass" || t === "wheat" || t === "orchard" || t === "brush" || t === "crater" || (winter && t === "woods");
   };
   /** A zig-zag trench, with a firing pit dug in front of it every so often. */
   const trench = (x0: number, y0: number, len: number): Point[] => {
@@ -610,6 +626,37 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
     const x = 8 + deco.int(W - 16), y = lineRow - 14 + deco.int(Math.max(1, streamY - lineRow + 6));
     nest(x, y);
   }
+  // In winter the line has been held for weeks: more trenches behind it, a foxhole dug in behind
+  // the hedge every few paces, more strongpoints, and old holes all through the woods from the
+  // fighting that went back and forth over this ground. (Its own stream, so summer maps are unchanged.)
+  const holes: Point[] = [];
+  if (winter) {
+    const dig = new Rng(Math.floor(rng.next() * 2147483646) + 1, "winter");
+    const S = cfg.season;
+    for (let k = 0; k < S.trenches[0] + dig.int(S.trenches[1] - S.trenches[0] + 1); k++) {
+      const len = 12 + dig.int(16);
+      const x0 = 6 + dig.int(Math.max(1, W - len - 12));
+      const t = trench(x0, lineRow - 2 - dig.int(9), len);
+      trenchTiles.push(...t);
+      if (t.length > 0 && dig.chance(0.6)) nest(t[Math.floor(t.length / 2)]!.x, t[Math.floor(t.length / 2)]!.y - 1);
+    }
+    const lineAt = rowAt.get(lineRow)!;
+    for (let x = 3; x < W - 3; x += S.foxholeEvery) {
+      const y = lineAt[x]! - 1;
+      if (map.at(x, y + 1) !== "hedge" || !diggable(x, y)) continue;
+      set(x, y, "foxhole");
+      holes.push({ x, y });
+    }
+    for (let k = 0; k < S.strongpoints[0] + dig.int(S.strongpoints[1] - S.strongpoints[0] + 1); k++) nest(6 + dig.int(W - 12), lineRow - 16 + dig.int(26));
+    // Old holes, mostly in the woods, in pairs, anywhere short of the line of departure.
+    for (let k = 0, made = 0; k < 400 && made < S.oldHoles[0] + dig.int(S.oldHoles[1] - S.oldHoles[0] + 1); k++) {
+      const x = 4 + dig.int(W - 8), y = 6 + dig.int(Math.max(1, startRow - 14));
+      if (!diggable(x, y) || (map.at(x, y) !== "woods" && dig.chance(0.7))) continue;
+      set(x, y, "foxhole");
+      if (diggable(x + 1, y) && dig.chance(0.5)) set(x + 1, y, "foxhole");
+      made++;
+    }
+  }
 
   // ---- Sandbags and wire along the roads ----
   const roadDef = roadDefences(map, new Rng(Math.floor(deco.next() * 2147483646) + 1, "defences"), { roadX, laneAt: hamRow, lineAt: rowAt.get(lineRow)!, lineRow, startRow, cx, cy, areaW: A.w });
@@ -653,6 +700,8 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
   // (Only ones on or behind the line: forward pits are dressing, so no gun starts nearer the enemy than the hedge.)
   mgPositions.push(...extraMg.filter((p) => p.y <= lineRow && map.passable(p.x, p.y)));
   for (const p of trenchTiles) if (p.y <= lineRow + 1 && p.y >= lineRow - 9 && map.passable(p.x, p.y)) linePositions.push(p);
+  // The foxholes dug in behind the hedge stand in for the plain line positions they were dug on.
+  for (const p of holes) if (map.at(p.x, p.y) === "foxhole" && !linePositions.some((q) => q.x === p.x && q.y === p.y)) linePositions.push(p);
   for (const p of roadDef.line) if (map.passable(p.x, p.y) && !linePositions.some((q) => q.x === p.x && q.y === p.y)) linePositions.push(p);
 
   // ---- Where scouts can lie up: concealed ground ahead of the line, beyond sight of the line of departure ----
@@ -683,7 +732,8 @@ export function generateLayout(cfg: SimConfig, rng: Rng): Layout {
   map.finalize();
   return {
     kind,
-    name: spec.name,
+    season,
+    name: winter ? WINTER_NAMES[kind] : spec.name,
     objectiveName: spec.objectiveName,
     map,
     buildings,

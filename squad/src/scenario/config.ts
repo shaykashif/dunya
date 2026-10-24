@@ -1,7 +1,7 @@
 // Every tunable parameter lives here, so tuning never requires code changes.
 // One tick is one second; one tile is about 3 metres.
 
-import type { MapKind, Terrain, WeaponId, Weather, WeatherKind } from "../world/types.ts";
+import type { MapKind, Season, Terrain, WeaponId, Weather, WeatherKind } from "../world/types.ts";
 
 export interface WeaponSpec {
   name: string;
@@ -130,13 +130,44 @@ export const DEFAULT_CONFIG = {
   weather: {
     /** The weather to fight in; null lets the seed choose. */
     kind: null as WeatherKind | null,
-    weights: { clear: 0.35, overcast: 0.3, rain: 0.2, fog: 0.15 } as Record<WeatherKind, number>,
+    weights: { clear: 0.35, overcast: 0.3, rain: 0.2, fog: 0.15 } as Partial<Record<WeatherKind, number>>,
     kinds: {
       clear: { kind: "clear", label: "a clear, bright morning", sight: 1, spot: 1, hearing: 1, mud: 1, fatigue: 1, aim: 1 },
       overcast: { kind: "overcast", label: "a grey, overcast morning", sight: 0.9, spot: 0.92, hearing: 1, mud: 1, fatigue: 1, aim: 1 },
       rain: { kind: "rain", label: "steady rain", sight: 0.65, spot: 0.78, hearing: 0.7, mud: 1.3, fatigue: 1.25, aim: 0.9 },
       fog: { kind: "fog", label: "thick morning fog", sight: 0.32, spot: 0.7, hearing: 0.9, mud: 1.1, fatigue: 1, aim: 0.95 },
-    } as Record<WeatherKind, Weather>,
+    } as Partial<Record<WeatherKind, Weather>>,
+  },
+  /**
+   * Summer is Normandy in June. Winter is the Ardennes in December: the same
+   * kinds of place, but deep in snow and thick with forest, the defence dug
+   * in for weeks, short grey days that cut how far a man can see, and snow
+   * that drags at every step.
+   */
+  season: {
+    /** The season to fight in; null lets the seed choose. */
+    kind: null as Season | null,
+    winterChance: 0.3,
+    winterDate: "19 December 1944",
+    /** Deep snow: going off the roads is this much heavier on top of the day's weather, and roads, yards and streets (trodden, but icy) this much. */
+    snowRoads: 1.25,
+    /** In winter, field cells are this much likelier to be forest (taken from the open pasture), and there are this many more copses. */
+    woodsShare: 0.22,
+    copses: [8, 14] as [number, number],
+    /** Extra trench lines behind the defended hedge, foxholes dug along it every this many tiles, and extra strongpoints out in front. */
+    trenches: [5, 8] as [number, number],
+    foxholeEvery: 3,
+    strongpoints: [8, 12] as [number, number],
+    /** Old foxholes and dug-outs scattered through the woods: weeks of fighting over the same ground. */
+    oldHoles: [30, 50] as [number, number],
+    weights: { clear: 0.2, overcast: 0.3, snow: 0.35, fog: 0.15 } as Partial<Record<WeatherKind, number>>,
+    /** Every winter day is darker and heavier going than summer: mud stands for the depth of the snow. */
+    kinds: {
+      clear: { kind: "clear", label: "a bitter, clear morning over deep snow", sight: 0.8, spot: 0.88, hearing: 0.95, mud: 1.45, fatigue: 1.3, aim: 0.95 },
+      overcast: { kind: "overcast", label: "a leaden sky over deep snow", sight: 0.68, spot: 0.82, hearing: 0.9, mud: 1.45, fatigue: 1.3, aim: 0.94 },
+      snow: { kind: "snow", label: "heavy snow falling", sight: 0.45, spot: 0.72, hearing: 0.7, mud: 1.6, fatigue: 1.4, aim: 0.88 },
+      fog: { kind: "fog", label: "freezing fog over the snow", sight: 0.3, spot: 0.68, hearing: 0.85, mud: 1.5, fatigue: 1.3, aim: 0.92 },
+    } as Partial<Record<WeatherKind, Weather>>,
   },
   /** High ground: a shooter above his target hits a little more often, one below a little less. */
   highGround: { perMetre: 0.025, max: 0.2 },
@@ -192,9 +223,37 @@ export const DEFAULT_CONFIG = {
     /** Chance the defenders put a squad out in ambush, when they have two or more. */
     chance: 0.55,
     /** It springs when an enemy it can see comes this close, or when it is found. */
-    trigger: 22,
+    trigger: 28,
     /** How far in front of the defended hedge it may lie, in tiles. */
     forward: [6, 34] as [number, number],
+    /**
+     * Fire control for the whole defending platoon. The killing ground is
+     * within `trigger` of the ambush party, or within `lineRange` of the
+     * squads on the line. Every gun holds until at least `share` of the most
+     * enemies yet seen at once are in it (and no fewer than `minVictims`), or
+     * the count has stopped growing for `patience` ticks, or an enemy comes
+     * within `danger` of a man in the ambush and must find him (within
+     * `lineDanger` of the line, which cannot let him reach the hedge), or an enemy inside
+     * `lineRange` who can see one of them shoots at him.
+     * Then all of them open together, the mortars come down on a target
+     * registered beforehand, and men in reach throw grenades.
+     */
+    lineRange: 35,
+    share: 0.65,
+    minVictims: 5,
+    patience: 30,
+    danger: 4,
+    lineDanger: 14,
+    /** Fire missions on the target the defenders' mortars registered before the battle: on top of their others, and kept for the word. */
+    reserveMissions: 1,
+    /** Suppression and loss of morale that every man caught in the killing ground takes on the word, before the first round lands: surprise. */
+    shock: 0.45,
+    shockMorale: 0.08,
+    /** The registered mortar target: seconds from the word to the first round leaving the tube, and the scatter. */
+    registeredDelay: 2,
+    registeredScatter: 3,
+    /** For this long after the word, men may throw at enemies in the open too, not only behind cover. */
+    grenadeVolley: 8,
   },
   help: {
     /** A German runner is a man on foot: he sprints this many tiles a second to the Zugführer, and is given up after this long. An American squad radio is instant. */

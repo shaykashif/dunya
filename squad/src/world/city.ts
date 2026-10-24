@@ -12,7 +12,7 @@ import { Rng } from "../engine/rng.ts";
 import type { SimConfig } from "../scenario/config.ts";
 import { GameMap } from "./map.ts";
 import { shapeGround, startClearance, type Building, type BuildingKind, type Layout } from "./layout.ts";
-import type { Point, Terrain } from "./types.ts";
+import type { Point, Season, Terrain } from "./types.ts";
 
 /** Stable per-tile noise, independent of draw order. */
 function hashTile(x: number, y: number): number {
@@ -41,7 +41,7 @@ interface Band {
 
 const SAINTS = ["Saint-Jean", "Notre-Dame", "Saint-Pierre", "Sainte-Croix", "Saint-Gilles", "Saint-Sauveur"];
 
-export function generateCity(cfg: SimConfig, rng: Rng): Layout {
+export function generateCity(cfg: SimConfig, rng: Rng, season: Season = "summer"): Layout {
   const W = cfg.map.width, H = cfg.map.height;
   const map = new GameMap(W, H, cfg.terrain);
   map.openCost = cfg.movement.openCost.urban;
@@ -107,7 +107,8 @@ export function generateCity(cfg: SimConfig, rng: Rng): Layout {
     for (let x = 0; x < W; x++) {
       if (at(x, y) === "road") continue;
       const path = (x + y * 2) % 37 === 0 || (x - y * 2 + 400) % 41 === 0;
-      set(x, y, path ? "paving" : hashTile(x, y) < 0.07 ? "woods" : hashTile(y, x) < 0.05 ? "brush" : "grass");
+      // In winter the park is overgrown, its trees left standing thick for cover.
+      set(x, y, path ? "paving" : hashTile(x, y) < (season === "winter" ? 0.2 : 0.07) ? "woods" : hashTile(y, x) < (season === "winter" ? 0.1 : 0.05) ? "brush" : "grass");
     }
   }
 
@@ -627,7 +628,8 @@ export function generateCity(cfg: SimConfig, rng: Rng): Layout {
 
   return {
     kind: "urban",
-    name: "a shell-torn city",
+    season,
+    name: season === "winter" ? "a shell-torn city under snow" : "a shell-torn city",
     objectiveName: hall ? "the town hall" : "the square",
     map,
     buildings,

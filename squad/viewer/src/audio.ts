@@ -491,7 +491,7 @@ export class Sfx {
   }
 
   /** Eases the weather beds toward what the day sounds like. Call once a frame. */
-  ambience(dt: number, weather: string): void {
+  ambience(dt: number, weather: string, winter = false): void {
     if (!this.ctx) return;
     this.intensity = Math.max(0, this.intensity - dt * 0.12);
     const w: Record<string, number> = { wind: 0, forest: 0, birds: 0, rain: 0, downpour: 0, river: 0.015, cicadas: 0 };
@@ -500,6 +500,10 @@ export class Sfx {
     if (weather === "rain") {
       w.rain = 0.09;
       w.wind = 0.015;
+    } else if (weather === "snow") {
+      // Snow deadens everything: only the wind in the firs.
+      w.wind = 0.04;
+      w.forest = 0.02;
     } else if (weather === "fog") {
       w.wind = 0.025;
       w.birds = 0.03 * calm;
@@ -510,6 +514,11 @@ export class Sfx {
       w.wind = 0.012;
       w.birds = 0.1 * calm;
       w.cicadas = 0.02 * calm;
+    }
+    // No insects in December, and few birds: a crow or two.
+    if (winter) {
+      w.cicadas = 0;
+      w.birds *= 0.3;
     }
     for (const [key, bed] of this.beds) {
       // Birds fall silent within a moment of the first shot and come back slowly.

@@ -1,10 +1,10 @@
-// npm run simulate -- --seed 42 [--map urban] [--ticks 1800] [--out runs/seed42]
+// npm run simulate -- --seed 42 [--map urban] [--season winter] [--ticks 1800] [--out runs/seed42]
 import { createWriteStream, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventLog } from "../log/events.ts";
 import { firstBlood, verdict } from "../battle/verdict.ts";
 import { createSimulation, summarize, type SideSummary } from "../sim.ts";
-import type { MapKind } from "../world/types.ts";
+import type { MapKind, Season } from "../world/types.ts";
 import { parseArgs } from "./args.ts";
 
 const args = parseArgs(process.argv.slice(2));
@@ -23,11 +23,13 @@ if (out) {
 
 // --map picks the kind of ground instead of letting the seed choose (hamlet, rural, road, town, urban).
 const map = args.map as MapKind | undefined;
-const engine = createSimulation({ seed, log, config: map ? { map: { kind: map } } : {} });
+// --season picks summer (Normandy) or winter (the Ardennes, in snow) instead of letting the seed choose.
+const season = args.season as Season | undefined;
+const engine = createSimulation({ seed, log, config: { ...(map ? { map: { kind: map } } : {}), ...(season ? { season: { kind: season } } : {}) } });
 const t0 = performance.now();
 if (args.ticks) await engine.runTicks(Number(args.ticks));
 else await engine.runBattle();
-const summary = { ...summarize(engine.world), ...(map ? { mapChosen: true } : {}) };
+const summary = { ...summarize(engine.world), ...(map ? { mapChosen: true } : {}), ...(season ? { seasonChosen: true } : {}) };
 const ms = Math.round(performance.now() - t0);
 
 if (out) {
@@ -40,7 +42,7 @@ if (out) {
 const side = (name: string, s: SideSummary) =>
   `  ${name.padEnd(9)} ${String(s.men).padStart(2)} men: ${s.killed} killed, ${s.wounded} wounded, ${s.captured} captured, ${s.fled} left the field; ${s.shots} rounds, ${s.hits} hits`;
 const w = engine.world;
-console.log(`Squad simulation, seed ${seed}: ${w.config.time.date}, ${w.attacker === "us" ? "the US platoon attacks" : "the German Zug attacks"} (${summary.ticks} ticks, to ${summary.clock}; ${ms} ms)`);
+console.log(`Squad simulation, seed ${seed}: ${w.date}, ${w.attacker === "us" ? "the US platoon attacks" : "the German Zug attacks"} (${summary.ticks} ticks, to ${summary.clock}; ${ms} ms)`);
 console.log(`  ground    ${w.layout.name}, ${w.weather.label}${w.side("us").concat(w.side("de")).some((s) => s.role === "sniper") ? `; snipers: ${w.soldiers.filter((s) => s.role === "sniper").map((s) => s.side).join(", ")}` : ""}`);
 console.log(`  outcome   ${summary.winner === null ? "no decision" : summary.winner === "us" ? "US victory" : "German victory"}: ${summary.reason}`);
 console.log(side("US", summary.us));

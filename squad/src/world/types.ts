@@ -11,8 +11,11 @@ export interface Point {
 /** Most floors any building has. Upper floors exist only inside buildings. */
 export const MAX_FLOORS = 4;
 
-/** The weather on the day. */
-export type WeatherKind = "clear" | "overcast" | "rain" | "fog";
+/** The weather on the day. Snow falls only in winter. */
+export type WeatherKind = "clear" | "overcast" | "rain" | "fog" | "snow";
+
+/** Summer is Normandy, June 1944; winter is the Ardennes, December 1944, deep in snow. */
+export type Season = "summer" | "winter";
 
 export interface Weather {
   kind: WeatherKind;
@@ -484,6 +487,8 @@ export interface FireMission {
   kind: "mortar" | "artillery";
   /** The radio message that started it, if a forward team reported the target. */
   msg: number | null;
+  /** Fired on a target registered beforehand: no ranging round, straight to fire for effect. */
+  registered?: boolean;
 }
 
 /** A set-piece attack on a hard position: some squads keep it pinned, others wait at the jump-off for the mortars to land. */
@@ -535,6 +540,12 @@ export interface Platoon {
   startStrength: number;
   withdrawing: boolean;
   withdrawTick: number;
+  /**
+   * Defenders' fire control: every gun holds until the killing ground is full,
+   * then the whole platoon opens at once. When it opened (-1 not yet), the most
+   * enemies seen at once, and the most in the killing ground and since when.
+   */
+  killZone: { sprung: number; peak: number; best: number; bestTick: number };
 }
 
 // ---------- Ordnance and smoke ----------

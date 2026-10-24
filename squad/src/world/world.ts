@@ -4,7 +4,7 @@ import type { EventLog, SimEvent } from "../log/events.ts";
 import type { SimConfig } from "../scenario/config.ts";
 import type { Building, Layout } from "./layout.ts";
 import { type GameMap, cheb, findPath } from "./map.ts";
-import { MAX_FLOORS, isArmourRole, type Tank, type Weather, type BattlePhase, type BattleResult, type Corpse, type Impact, type Ordnance, type Platoon, type Point, type Runner, type Side, type SmokeCloud, type Soldier, type Squad } from "./types.ts";
+import { MAX_FLOORS, isArmourRole, type Season, type Tank, type Weather, type BattlePhase, type BattleResult, type Corpse, type Impact, type Ordnance, type Platoon, type Point, type Runner, type Side, type SmokeCloud, type Soldier, type Squad } from "./types.ts";
 
 export class World {
   readonly config: SimConfig;
@@ -65,7 +65,17 @@ export class World {
     this.exposure = { us: new Float32Array(n), de: new Float32Array(n) };
     this.pain = { us: new Float32Array(n), de: new Float32Array(n) };
     this.platoons = {} as Record<Side, Platoon>;
-    this.weather = config.weather.kinds.clear;
+    this.weather = config.weather.kinds.clear!;
+  }
+
+  /** Summer in Normandy or winter in the Ardennes. */
+  get season(): Season {
+    return this.layout.season;
+  }
+
+  /** The day the battle is fought, for the chronicle. */
+  get date(): string {
+    return this.season === "winter" ? this.config.season.winterDate : this.config.time.date;
   }
 
   /** Marks a place where a man was hit. */

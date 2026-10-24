@@ -224,6 +224,7 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
   }
 
   // ---- Fire at men he can see ----
+  const waiting = fire === "hold" && w.platoons[s.side].role === "defend" && w.platoons[s.side].killZone.sprung < 0;
   if (spec && !reloading && s.loaded > 0) {
     const scored = enemiesSeen
       .map((e) => {
@@ -241,7 +242,8 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
       .sort((a, b) => b.threat + b.p * 3 - (a.threat + a.p * 3) || a.e.id - b.e.id)
       .slice(0, 3);
     for (const t of scored) {
-      const allowed = fire === "free" || t.d <= 12 || (fire === "return" && (t.firing || t.d <= 30)) || underFire;
+      // A defender waiting for the word fires only at a man right on top of him, or one who has seen him and is shooting at him.
+      const allowed = waiting ? t.d <= cfg.ambush.danger || (s.underFire?.by === t.e.id && underFire && t.e.sees.includes(s.id)) : fire === "free" || t.d <= 12 || (fire === "return" && (t.firing || t.d <= 30)) || underFire;
       if (!allowed) continue;
       out.push(
         cand("fire", `fire:${t.e.id}`, `fire at ${t.e.abbr} ${t.e.last}`, {
@@ -258,7 +260,7 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
     // ---- Suppress what can't be seen ----
     const points: Point[] = [];
     if (order.kind === "suppress" && order.target) points.push(order.target);
-    if (underFire && s.underFire && !s.sees.includes(s.underFire.by)) points.push({ x: s.underFire.x, y: s.underFire.y });
+    if (underFire && !waiting && s.underFire && !s.sees.includes(s.underFire.by)) points.push({ x: s.underFire.x, y: s.underFire.y });
     if (fire === "free" && contacts.length > 0 && !contacts[0]!.visible) points.push(contacts[0]!.z > 0 ? { x: contacts[0]!.x, y: contacts[0]!.y, z: contacts[0]!.z } : { x: contacts[0]!.x, y: contacts[0]!.y });
     if (alert) points.push({ x: alert.x, y: alert.y });
     const seen = new Set<string>();
@@ -398,6 +400,8 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
 
   // ---- Grenades ----
   const assaulting = order.kind === "assault";
+  const sprung = w.platoons[s.side].killZone.sprung;
+  const volley = sprung >= 0 && w.tick - sprung < cfg.ambush.grenadeVolley;
   if (s.grenades > 0 && !(s.cooldowns["grenade"] !== undefined && w.tick < s.cooldowns["grenade"]!)) {
     const range = Math.min(assaulting ? 13 : 10, s.side === "us" ? cfg.explosives.throwRange.frag : cfg.explosives.throwRange.stick);
     for (const c of contacts.slice(0, 3)) {
@@ -405,11 +409,12 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
       if (d < 3 || d > range || w.tick - c.tick > 12) continue;
       if (w.friendsNear({ x: c.x, y: c.y, side: s.side, id: s.id }, 3).some((f) => w.onField(f))) continue;
       const behind = w.map.cover({ x: c.x, y: c.y }, s, "crouch") >= 0.45 || !c.visible || w.map.at(c.x, c.y) === "foxhole" || w.map.indoors(c.x, c.y);
-      // A man in the open is a rifle target; grenades are for men behind cover, or for the final rush.
-      if (!behind && !assaulting && d > 6) continue;
+      // A man in the open is a rifle target; grenades are for men behind cover, or for the final rush,
+      // or the first seconds of an ambush, when everything is thrown at once.
+      if (!behind && !assaulting && !volley && d > 6) continue;
       // Up through an upstairs window, if that is where he is.
       const aim = c.z > 0 && d <= 8 ? { x: c.x, y: c.y, z: c.z } : { x: c.x, y: c.y };
-      out.push(cand("grenade", `grenade:${c.x},${c.y}`, c.z > 0 && d <= 8 ? "lob a grenade up through the window" : "throw a grenade", { at: aim, duration: 1, value: 0.4 + (behind ? 0.35 : 0) + (assaulting ? 0.3 : 0) + (c.automatic ? 0.2 : 0), ordered: assaulting, danger: 0.25 + 0.2 * exHere, offense: 0.9 }));
+      out.push(cand("grenade", `grenade:${c.x},${c.y}`, c.z > 0 && d <= 8 ? "lob a grenade up through the window" : volley ? "hurl a grenade into the killing ground" : "throw a grenade", { at: aim, duration: 1, value: 0.4 + (behind ? 0.35 : 0) + (assaulting ? 0.3 : 0) + (volley ? 0.55 : 0) + (c.automatic ? 0.2 : 0), ordered: assaulting || volley, danger: 0.25 + 0.2 * exHere, offense: 0.9 }));
       break;
     }
   }
