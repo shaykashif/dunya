@@ -1546,7 +1546,10 @@ function statusIcon(s: Soldier): string {
 function renderRoster(): void {
   if (!world) return;
   const parts: string[] = [];
-  for (const sq of world.squads) {
+  // Each side together, in the order the sides were raised: the units attached later (machine-gun teams,
+  // tank and gun crews) go at the foot of their own side's list, not after the enemy's.
+  const sides = [...new Set(world.squads.map((q) => q.side))];
+  for (const sq of sides.flatMap((side) => world.squads.filter((q) => q.side === side))) {
     const men = sq.members.map((id) => world.soldier(id));
     parts.push(
       `<div class="sq"><em class="sw" style="background:${sq.color}"></em><b style="color:${SIDE_COLORS[sq.side].name}">${esc(sq.name)}</b> ` +
@@ -1836,7 +1839,7 @@ function renderSquads(): void {
   for (const side of [world.attacker, world.attacker === "us" ? "de" : "us"] as Side[]) {
     const pl = world.platoons[side];
     out.push(`<div class="side-h" style="color:${SIDE_COLORS[side].name}">${esc(pl.name.toUpperCase())} — ${pl.role === "attack" ? "ATTACKING" : "DEFENDING"}</div>`);
-    for (const id of [...pl.squadIds, pl.hqSquadId]) {
+    for (const id of [...pl.squadIds, ...pl.mgIds, pl.hqSquadId]) {
       const sq = world.squad(id);
       const leader = world.maybe(sq.leaderId);
       const men = sq.members.map((m) => world.soldier(m));
