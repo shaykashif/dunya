@@ -4,6 +4,8 @@ What changed in the squad simulation, newest first. The reasons behind each chan
 
 ## 23 October 2026: selecting squads with a box, and orders along a line
 
+Commit `d8aa542`.
+
 ### New
 
 - **Selecting several squads.** Drag a box with the left button round the squads you want; shift-click a label to add one or take it out. The orders panel then speaks to all of them.
@@ -21,7 +23,19 @@ What changed in the squad simulation, newest first. The reasons behind each chan
 - The help line along the bottom is one line again, so it no longer runs under the powers bar.
 - Headquarters and the forward observation teams no longer take orders: they never carried them out.
 
+## 23 October 2026: keys that answer at once
+
+Commit `ac16d6f`.
+
+### Changed
+
+- **The man under control answers the keys at once.** A key used to wait up to a second for the next tick of the battle, and a walking man another second to make his first tile: one to two seconds in all, and a second key (A then W), a turn or a stop got no help at all. Now any change of direction, a stop, a trigger pull or a grenade brings the next tick forward, and he takes his first step on it. Key to first step went from 1 to 2 seconds to a few hundredths of one. The time run early is paid back by running at 75% for a moment, so the battle keeps to real time.
+- **No more jumping when firing on the move.** Bringing a tick forward snapped him to the end of the step he was taking. He now carries on from where he was drawn.
+- **Turning to and fro does not make a man faster.** The quick first step is at most three seconds' going at his pace, one when crawling.
+
 ## 23 October 2026: orders for squads, and a man of your own
+
+Commit `777f6aa`.
 
 ### New
 
