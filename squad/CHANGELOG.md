@@ -2,6 +2,30 @@
 
 What changed in the squad simulation, newest first. The reasons behind each change are in [`DECISIONS.md`](DECISIONS.md), and every number mentioned here lives in `src/scenario/config.ts`.
 
+## 23 October 2026: orders for squads, and a man of your own
+
+### New
+
+- **Orders for a squad.** Zoomed out, click a squad's label (or **Orders** in the Squads tab) and an orders panel opens beside Barrage, Smoke and Sniper:
+  - **Move to:** click a place. The squad bounds there its own way (hedge to hedge, or house to house in a city), then spreads out into cover and holds it.
+  - **Assault:** click a position. The base of fire pins it while the rifle team rushes it; enemies in a house get the grenade drill. Once the position is taken the squad holds it.
+  - **Suppress:** click a place. Every man with a line of fire on it shoots at it, and those without one move up until they have one.
+  - **Hold:** stay where they are and fight from there.
+  - **Carry on:** hand the squad back to the platoon's own plan.
+
+  The order stands until it is lifted, the squad loses its leader, or the platoon pulls back. The platoon leader leaves a squad under orders alone, and the map shows each order as a dashed line to a marked spot.
+- **Taking control of a soldier.** Select a man and press **T** (or **Take control** in his panel, or on the tap card).
+  - **On a computer:** WASD moves him, Shift runs, C cycles standing, crouched and prone, and he faces the pointer. Click fires there (aimed at an enemy he can see there, otherwise into the spot), G or a right-click throws a grenade, R reloads, and T lets him go.
+  - **Realism:** he has his own rounds and grenades, gets suppressed and wounded like anyone else, and slows down when he is hurt or blown. A man who cannot walk drags himself. A machine gun still has to be set up after it is moved.
+  - **Losing him:** if he is killed or taken prisoner, control is lost.
+  - **On a phone:** a thumb stick (push to the rim to run), and a touch on the map fires there. The powers bar and minimap step aside while you have control.
+  - Taking control drops the speed to 1x.
+- **Replays:** orders, taking control and every change of the controls are logged as interventions and replay exactly.
+
+### Changed
+
+- **Quieter machine-gun bursts.** Each round's recording carries its own room echo, and a burst played a dozen of them over one another. Now each shot is cut off as the next fires, and only the last of a burst rings out, shortened. The MG 42 is a little quieter too.
+
 ## 23 October 2026: the forest line, machine-gun teams and rounds through cover
 
 Commit `a233830`.

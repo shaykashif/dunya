@@ -7,7 +7,7 @@ import { fireRifleGrenade, fireRocket, missionStep, ordnanceStep, throwGrenade }
 import { armourStep } from "../combat/armour.ts";
 import { perceptionStep, rebuildExposure, scoutStep } from "../combat/perception.ts";
 import { aftermath } from "../battle/aftermath.ts";
-import { fightingPain } from "../entities/body.ts";
+import { armFactor, cannotWalk, fightingPain } from "../entities/body.ts";
 import { pickUp, setDown, stumbleStep, treat, updateInjuries } from "../entities/injuries.ts";
 import { moraleStep, rally } from "../entities/morale.ts";
 import { label, note, postureFor, shout, speedOf } from "../entities/soldier.ts";
@@ -17,7 +17,7 @@ import { r3 } from "../log/events.ts";
 import { cheb, dist } from "../world/map.ts";
 import { enemyOf, type Activity, type Candidate, type Pace, type Point, type Side, type Soldier, isMachineGun } from "../world/types.ts";
 import type { World } from "../world/world.ts";
-import { applyIntervention, type Intervention, type ScheduledIntervention } from "./interventions.ts";
+import { applyIntervention, releasePilot, type Intervention, type ScheduledIntervention } from "./interventions.ts";
 import { checkInvariants } from "./invariants.ts";
 
 function isPromise<T>(v: T | Promise<T>): v is Promise<T> {
@@ -430,6 +430,120 @@ export class Engine {
     }
   }
 
+  // ---------- The man under the player's control ----------
+
+  /** Lets go of the man under control once he is killed, taken or gone. */
+  private checkPilot(): void {
+    const w = this.world;
+    const p = w.pilot;
+    if (!p) return;
+    const s = w.maybe(p.id);
+    if (s && w.onField(s) && w.phase === "battle") return;
+    releasePilot(w, !s ? "gone" : s.status === "dead" ? "killed" : w.phase !== "battle" ? "over" : s.status);
+  }
+
+  /** The next tile the player's man steps onto: one of the four around him, toward where he is steered. Diagonals go a tile at a time on alternate axes. */
+  private pilotNext(s: Soldier, dx: number, dy: number): number {
+    const w = this.world;
+    const tries: [number, number][] = dx !== 0 && dy !== 0 ? ((s.x + s.y) % 2 === 0 ? [[dx, 0], [0, dy]] : [[0, dy], [dx, 0]]) : [[dx, dy]];
+    for (const [ox, oy] of tries) {
+      const x = s.x + ox, y = s.y + oy;
+      if (!w.map.inBounds(x, y) || !w.isFree(x, y, s.id, s.z)) continue;
+      const c = w.map.cell(x, y, s.z);
+      if (Number.isFinite(w.map.cellCost(c))) return c;
+    }
+    return -1;
+  }
+
+  /**
+   * One second of the player's man: he walks, runs or crawls the way he is
+   * steered, at his own speed (wounds, fatigue and the going all count), faces
+   * where the player is looking, and fires there while the trigger is down.
+   * He is shot at, suppressed and wounded like anyone else; a wounded man
+   * still moves, slower, and one who cannot walk drags himself.
+   */
+  private pilotStep(s: Soldier): void {
+    const w = this.world;
+    const p = w.pilot!;
+    s.act = null;
+    const pull = p.pull, grenade = p.grenade, reload = p.reload;
+    p.pull = false;
+    p.grenade = false;
+    p.reload = false;
+    if (!s.conscious || s.carriedById !== null) return;
+    if (p.aim && p.aim.x !== s.x) s.dir = p.aim.x < s.x ? -1 : 1;
+    const spec = s.weapon ? w.config.weapons[s.weapon] : null;
+    const hands = armFactor(s) > 0.3;
+    // Reload on the key, or when the weapon runs dry.
+    if (spec && hands && s.reloadLeft === 0 && s.ammo > 0 && s.loaded < spec.capacity && (reload || s.loaded === 0)) startReload(w, s);
+    // Moving.
+    const legs = !cannotWalk(s);
+    const pace: Pace = !legs || p.stance === "prone" ? "crawl" : p.sprint && s.status === "active" ? "rush" : p.stance === "crouch" ? "crouch" : "walk";
+    const moving = (p.dx !== 0 || p.dy !== 0) && (legs || armFactor(s) > 0.35);
+    if (moving) {
+      // Setting off, he takes his first step at once rather than a second or two later (up to a tile of open ground: not over a bank).
+      if (p.moveAcc === 0 && legs) {
+        const first = this.pilotNext(s, p.dx, p.dy);
+        if (first >= 0) p.moveAcc = Math.min(1.5, w.map.stepCost(w.cellOf(s), first));
+      }
+      p.moveAcc += legs ? speedOf(w, s, pace) : w.config.movement.speed.crawl * 0.5;
+      const n = w.map.tiles;
+      const trail = w.trails.get(s.id) ?? [];
+      let stepped = 0;
+      while (stepped < 4) {
+        const next = this.pilotNext(s, p.dx, p.dy);
+        if (next < 0) {
+          p.moveAcc = Math.min(p.moveAcc, 3);
+          break;
+        }
+        const from = w.cellOf(s);
+        const cost = w.map.stepCost(from, next);
+        if (p.moveAcc < cost) break;
+        p.moveAcc -= cost;
+        tire(w, s, from, next, pace);
+        trail.push(next % n);
+        const pt = w.map.ptz(next);
+        if (pt.x !== s.x && !p.aim) s.dir = pt.x < s.x ? -1 : 1;
+        w.place(s, pt.x, pt.y, pt.z);
+        stepped++;
+      }
+      if (stepped > 0) {
+        w.trails.set(s.id, trail);
+        if (spec?.setup) s.cooldowns["movedAt"] = w.tick;
+      }
+    } else p.moveAcc = 0;
+    s.posture = s.status === "casualty" ? "prone" : moving ? postureFor(pace) : p.stance;
+    if (moving && s.z === 0 && (w.map.at(s.x, s.y) === "hedge" || w.map.at(s.x, s.y) === "wire")) s.posture = "stand";
+    if (!p.aim || !hands) return;
+    // A grenade at the aim point, if it is within a throw.
+    if (grenade && s.grenades > 0 && !(s.cooldowns["grenade"] !== undefined && w.tick < s.cooldowns["grenade"]!)) {
+      const range = s.side === "us" ? w.config.explosives.throwRange.frag : w.config.explosives.throwRange.stick;
+      if (dist(s, p.aim) <= range) {
+        throwGrenade(w, s, p.aim, false, false);
+        s.cooldowns["grenade"] = w.tick + 3;
+        return;
+      }
+      w.emit("act_failed", [s.id], { person: s.id, kind: "grenade", key: "pilot", reason: "too far to throw" });
+    }
+    // Firing where he looks: aimed at a man he can see there, otherwise into the spot.
+    if (!(p.firing || pull) || !spec || s.reloadLeft > 0 || s.loaded <= 0) return;
+    if (spec.setup !== undefined && w.tick - (s.cooldowns["movedAt"] ?? -1e9) < spec.setup) return;
+    // A fresh pull of the trigger fires now if the weapon is ready (the bolt worked since the last shot); holding it fires at the weapon's own rate.
+    if (pull && s.fireAcc + spec.rate < 1 && w.tick - s.lastFiredTick >= Math.ceil(1 / spec.rate)) s.fireAcc = 1 - spec.rate;
+    let target: Soldier | null = null, td = 1.6;
+    for (const id of s.sees) {
+      const e = w.soldier(id);
+      if (!w.onField(e) || e.role === "tank" || e.role === "field_gun") continue;
+      const d = dist(e, p.aim);
+      if (d <= td) {
+        td = d;
+        target = e;
+      }
+    }
+    if (target) fireTick(w, s, target, target.id, "aimed");
+    else fireTick(w, s, p.aim, null, "suppress");
+  }
+
   /** A man who reaches his own map edge while running or withdrawing is gone from the field. */
   private maybeLeave(s: Soldier): void {
     const w = this.world;
@@ -472,7 +586,7 @@ export class Engine {
     const w = this.world;
     for (const s of w.soldiers) {
       const a = s.act;
-      if (!a || s.status !== "active") continue;
+      if (!a || s.status !== "active" || s.id === w.pilot?.id) continue;
       const kind = a.cand.kind;
       const firedOn = s.underFire !== null && s.underFire.tick === w.tick - 1;
       if (s.broken && kind !== "flee") s.act = null;
@@ -491,6 +605,7 @@ export class Engine {
       this.interventionLog.push({ tick: w.tick, cmd: x.cmd });
       applyIntervention(w, x.cmd);
     }
+    this.checkPilot();
     w.trails.clear();
     // 1. Rounds land, smoke drifts, mortars fire.
     ordnanceStep(w);
@@ -512,8 +627,9 @@ export class Engine {
     armourStep(w);
     if (w.tick % 10 === 0) w.fadePain();
     // 5. Decisions for everyone without something to do, in id order.
+    const pilot = w.pilot?.id ?? -1;
     for (const s of w.soldiers) {
-      if (s.act || !s.conscious || s.carriedById !== null) continue;
+      if (s.id === pilot || s.act || !s.conscious || s.carriedById !== null) continue;
       if (s.status !== "active" && s.status !== "casualty") continue;
       if (s.role === "tank" || s.role === "field_gun") continue;
       const cands = generateCandidates(w, s);
@@ -522,6 +638,10 @@ export class Engine {
     }
     // 6. Everyone acts, in id order.
     for (const s of w.soldiers) {
+      if (s.id === pilot && w.pilot && w.onField(s)) {
+        this.pilotStep(s);
+        continue;
+      }
       if (!s.act || !(s.status === "active" || s.status === "casualty") || s.carriedById !== null) continue;
       this.runActivity(s);
     }
@@ -530,6 +650,7 @@ export class Engine {
     restStep(w);
     // 7. Is it over?
     checkBattleEnd(w);
+    this.checkPilot();
     if (w.config.checkInvariants) checkInvariants(w);
     if (w.tick % w.config.summaryEvery === 0) w.emit("tick_summary", [], summaryData(w));
     w.tick++;

@@ -52,6 +52,27 @@
   #controls, #powers, #toggles { display: flex; gap: 4px; align-items: center; }
   #powers kbd { font: 11px "Silkscreen", monospace; margin-left: 4px; padding: 1px 4px; color: var(--gold); border: 1px solid var(--edge); background: rgba(0,0,0,.35); }
   #powers { position: absolute; left: 12px; bottom: 44px; z-index: 5; }
+  /* Orders for the squad whose label was clicked, beside the powers. */
+  #world.power-move, #world.power-assault, #world.power-suppress, #world.piloting { cursor: crosshair; }
+  #orders { position: absolute; left: 12px; bottom: 84px; z-index: 6; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; max-width: min(620px, calc(100% - 260px)); border-color: var(--gold); }
+  #orders[hidden], #pilot[hidden], #stick[hidden] { display: none; }
+  #orders .who { font: 11px "Silkscreen", monospace; display: flex; align-items: center; gap: 2px; margin-right: 4px; white-space: nowrap; }
+  #orders .ohint { flex-basis: 100%; font-size: 15px; color: var(--dim); }
+  #orders .ohint b { color: var(--gold); font-weight: normal; }
+  /* The man under control: who he is, what he has, and the keys. */
+  #pilot { position: absolute; left: 12px; bottom: 12px; z-index: 7; width: min(560px, calc(100% - 260px)); border-color: var(--gold); }
+  body.piloting #powers { bottom: 112px; }
+  body.piloting #orders { bottom: 152px; }
+  #pilot .ph { display: flex; gap: 6px; align-items: center; }
+  #pilot .ph b { font-size: 19px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pilot .pst { font-size: 16px; color: var(--gold); }
+  #pilot .pst .bad { color: var(--red); }
+  #pilot .pkeys { font-size: 14px; color: var(--dim); }
+  #pilot .bar { grid-template-columns: 60px 1fr; font-size: 14px; }
+  body.piloting #help { display: none; }
+  /* A thumb stick for the man under control on a touch screen: push to walk, push to the rim to run. */
+  #stick { position: absolute; left: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); width: 120px; height: 120px; border-radius: 50%; border: 3px solid rgba(232,200,74,.75); background: rgba(22,24,15,.5); z-index: 8; touch-action: none; }
+  #stick i { position: absolute; left: 50%; top: 50%; width: 48px; height: 48px; margin: -24px 0 0 -24px; border-radius: 50%; background: rgba(232,200,74,.6); border: 2px solid #000a; pointer-events: none; }
   #help { position: absolute; left: 12px; bottom: 12px; font-size: 15px; color: var(--dim); max-width: calc(100% - 256px); }
   #minimap { position: absolute; right: 12px; bottom: 34px; height: 200px; width: auto; max-width: 216px; image-rendering: pixelated; border: 2px solid var(--edge); box-shadow: 0 3px 0 #000a; cursor: pointer; background: #000; }
   #gridref { position: absolute; right: 12px; bottom: 10px; width: 220px; box-sizing: border-box; padding: 2px 6px; font: 10px "Silkscreen", monospace; color: var(--dim); background: rgba(20,22,14,.9); border: 2px solid var(--edge); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
@@ -180,6 +201,14 @@
     /* Battlefield powers are the main action: keep them in thumb reach along the bottom edge. */
     #powers { position: absolute; left: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); }
     #powers button { padding: 4px 8px; }
+    #orders { left: 8px; right: 8px; max-width: none; bottom: calc(58px + env(safe-area-inset-bottom)); }
+    #orders button { padding: 4px 8px; }
+    body.piloting #powers, body.piloting #orders, body.piloting #minimap, body.piloting #toasts { display: none; }
+    #pilot { left: auto; right: 8px; width: calc(100% - 158px); bottom: calc(8px + env(safe-area-inset-bottom)); padding: 3px 6px; }
+    #pilot .pkeys { display: none; }
+    #pilot .ph { flex-wrap: wrap; gap: 4px; }
+    #pilot .ph b { font-size: 17px; flex-basis: calc(100% - 20px); }
+    #pilot .ph button { flex: 1; padding: 2px 4px; }
     #minimap { top: auto; right: 8px; bottom: calc(64px + env(safe-area-inset-bottom)); height: 84px; max-width: 150px; }
     #toasts { left: 8px; right: calc(var(--mm-w, 100px) + 16px); top: auto; bottom: calc(64px + env(safe-area-inset-bottom)); max-height: 84px; overflow: hidden; width: auto; flex-direction: column-reverse; gap: 3px; }
     .toast { padding: 2px 6px; font-size: 14px; line-height: 1.05; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; box-shadow: 0 2px 0 #000c; }
@@ -337,6 +366,9 @@
       <button data-power="smoke" class="danger" title="Lay a smoke screen (Z)"><i data-icon="smoke"></i> Smoke <kbd>Z</kbd></button>
       <button data-power="sniper" class="danger" title="A shot from an unseen sniper (K)"><i data-icon="sniper"></i> Sniper <kbd>K</kbd></button>
     </div>
+    <div class="chip" id="orders" hidden></div>
+    <div class="chip" id="pilot" hidden></div>
+    <div id="stick" hidden><i></i></div>
     <div id="chronicle"><ul id="feed"></ul></div>
     <div id="toasts"></div>
     <button id="hook" hidden></button>
@@ -347,7 +379,7 @@
     <div id="ff"><b>Moving up to the line</b><small>Skipping the march to first contact</small><button id="ffstop">Stop here and watch</button></div>
     <canvas id="minimap" title="Click to look there"></canvas>
     <div id="gridref">Grid —</div>
-    <div id="help" class="chip">drag to pan · wheel to zoom · click a soldier · WASD pan · Q/E zoom · space pause · 1–6 speed · M sound · F follow · hover a house to look inside</div>
+    <div id="help" class="chip">drag to pan · wheel to zoom · click a soldier · zoomed out, click a squad's label for orders · T take control · WASD pan · Q/E zoom · space pause · 1–6 speed · M sound · F follow · hover a house to look inside</div>
   </div>
   <aside>
     <section>

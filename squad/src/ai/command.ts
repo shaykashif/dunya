@@ -9,7 +9,7 @@ import { incoming } from "../combat/ordnance.ts";
 import { shakeMorale, suppress } from "../entities/morale.ts";
 import { cheb, dist } from "../world/map.ts";
 import type { Building } from "../world/layout.ts";
-import { enemyOf, isMachineGun, type Contact, type ElementOrder, type FirePolicy, type Pace, type Platoon, type Point, type Side, type Soldier, type Squad, type SquadState } from "../world/types.ts";
+import { enemyOf, isMachineGun, type Contact, type Directive, type ElementOrder, type FirePolicy, type Pace, type Platoon, type Point, type Side, type Soldier, type Squad, type SquadState } from "../world/types.ts";
 import type { World } from "../world/world.ts";
 import { boundsTo, buildingPositions, canFireOn, centroid, facingFrom, flankPoint, gapTo, houseAt, pickPositions, pickPositions as pickPositionsAt, urbanBoundsTo, urbanFlankPoint, vantage } from "./tactics.ts";
 
@@ -1670,7 +1670,7 @@ function hqStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
  * round, either side, wider each time it fails.
  */
 function stallCheck(w: World, pl: Platoon, leader: Soldier | undefined): void {
-  const squads = pl.squadIds.map((id) => w.squad(id)).filter((s) => ableMen(w, s).length >= 3 && s.state !== "withdraw" && s.state !== "broken");
+  const squads = pl.squadIds.map((id) => w.squad(id)).filter((s) => ableMen(w, s).length >= 3 && s.state !== "withdraw" && s.state !== "broken" && !s.directive);
   if (squads.length < 2) return;
   const cents = squads.map((s) => centroid(ableMen(w, s)));
   const lead = Math.min(...cents.map((c) => dist(c, pl.objective)));
@@ -1738,7 +1738,7 @@ function coordinate(w: World, pl: Platoon, leader: Soldier | undefined): void {
   const hq = w.squad(pl.hqSquadId);
   if (plan) {
     const assaulters = plan.assault.map((id) => w.squad(id));
-    const live = assaulters.filter((s) => ableMen(w, s).length >= 3 && s.state !== "fall_back" && s.state !== "broken" && s.state !== "withdraw");
+    const live = assaulters.filter((s) => ableMen(w, s).length >= 3 && s.state !== "fall_back" && s.state !== "broken" && s.state !== "withdraw" && !s.directive);
     const quiet = !sideContacts(w, pl.side, 40).some((c) => cheb(c, plan.target) <= 10);
     if (live.length === 0 || w.tick - plan.start > 320 || (quiet && w.tick - plan.start > 30)) {
       for (const s of assaulters) if (s.state === "stage") setState(w, s, "advance", "the attack is over; pressing on");
@@ -1748,7 +1748,7 @@ function coordinate(w: World, pl: Platoon, leader: Soldier | undefined): void {
     }
     // Every squad in contact within reach of it keeps the position under fire.
     for (const b of squads) {
-      if (plan.assault.includes(b.id) || b.state === "fall_back" || b.state === "broken" || b.state === "withdraw") continue;
+      if (plan.assault.includes(b.id) || b.state === "fall_back" || b.state === "broken" || b.state === "withdraw" || b.directive) continue;
       const bm = ableMen(w, b);
       if (bm.length === 0) continue;
       const near = dist(centroid(bm), plan.target) <= 95;
@@ -2124,6 +2124,228 @@ function displaceStep(w: World, sq: Squad, pl: Platoon, men: readonly Soldier[],
   } else setState(w, sq, "react", "clear of the shelling: taking stock");
 }
 
+// ---------- The player's orders ----------
+
+const COMPASS = ["east", "south-east", "south", "south-west", "west", "north-west", "north", "north-east"];
+
+/** "140 m north-east", from one point to another (north is up the map). */
+function bearing(from: Point, to: Point): string {
+  const d = dist(from, to);
+  if (d < 4) return "right here";
+  const a = Math.atan2(to.y - from.y, to.x - from.x);
+  return `${Math.round((d * 3) / 10) * 10} m ${COMPASS[((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8]}`;
+}
+
+const ORDER_WORDS: Record<Directive["kind"], string> = { move: "move", assault: "assault", suppress: "put fire on", hold: "hold" };
+
+const ORDER_SHOUTS: Record<Directive["kind"], [string, string]> = {
+  move: ["Let's go! Move out, keep your spacing!", "Los, vorwärts! Abstand halten!"],
+  assault: ["Fix bayonets! We're taking that position!", "Seitengewehr pflanzt auf! Wir nehmen die Stellung!"],
+  suppress: ["Open up on that position! Keep their heads down!", "Feuer auf die Stellung! Köpfe runter halten!"],
+  hold: ["Hold here! Find cover and stay put!", "Hier halten! In Deckung, keiner rührt sich!"],
+};
+
+/**
+ * The player gives a squad (or a machine-gun team) an order, or with "resume"
+ * hands it back to its leader. The squad then carries it out its own way:
+ * bounding to the place, assaulting it with the base of fire covering, getting
+ * every man a line of fire on it, or holding where it is.
+ */
+export function giveOrder(w: World, sq: Squad, kind: Directive["kind"] | "resume", at: Point): void {
+  const leader = w.maybe(sq.leaderId);
+  if (kind === "resume") {
+    if (!sq.directive) return;
+    sq.directive = null;
+    resumePlan(w, sq);
+    w.emit("squad_order", leader ? [leader.id] : [], { squad: sq.id, kind: "resume" });
+    return;
+  }
+  if (sq.isHQ || sq.state === "broken" || sq.state === "withdraw" || w.phase !== "battle" || !leader) return;
+  const men = ableMen(w, sq);
+  if (men.length === 0) return;
+  const pos = centroid(men);
+  const target = kind === "hold" ? { x: Math.round(pos.x), y: Math.round(pos.y) } : { x: Math.max(0, Math.min(w.map.width - 1, Math.round(at.x))), y: Math.max(0, Math.min(w.map.height - 1, Math.round(at.y))) };
+  sq.directive = { kind, at: target, tick: w.tick };
+  sq.route = [];
+  sq.routeIdx = 0;
+  sq.boundWp = -1;
+  sq.flankPoint = null;
+  sq.sweep = null;
+  sq.refuge = null;
+  sq.resume = null;
+  waitingSinceOf(w).delete(sq.id);
+  setState(w, sq, "orders", kind === "hold" ? "on orders, holding where they are" : `ordered to ${ORDER_WORDS[kind]} the ground ${bearing(pos, target)}`);
+  shout(w, leader, ORDER_SHOUTS[kind][sq.side === "us" ? 0 : 1], null);
+  w.emit("squad_order", [leader.id], { squad: sq.id, kind, at: [target.x, target.y] });
+}
+
+/** The nearest spot on the way to `at` from which it can be fired on, with some cover if there is a choice. */
+function firingBase(w: World, from: Point, at: Point): Point | null {
+  const d = dist(from, at);
+  const f = facingFrom(from, at);
+  for (let along = 0; along <= d - 4; along += 4) {
+    let best: Point | null = null, bs = -Infinity;
+    for (const side of [0, -4, 4, -8, 8]) {
+      const x = Math.round(from.x + f.x * along - f.y * side), y = Math.round(from.y + f.y * along + f.x * side);
+      if (!w.map.inBounds(x, y) || !w.map.passable(x, y) || !canFireOn(w, { x, y }, at)) continue;
+      const score = w.map.cover({ x, y }, at, "crouch") + (w.map.besideCover(x, y) ? 0.2 : 0) - Math.abs(side) * 0.02;
+      if (score > bs && w.map.reachable(from, { x, y })) {
+        bs = score;
+        best = { x, y };
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
+/** Back to the platoon's plan once the player lifts the order. */
+function resumePlan(w: World, sq: Squad): void {
+  const pl = w.platoons[sq.side];
+  const men = elements(w, sq);
+  const all = [...men.A, ...men.B];
+  if (all.length === 0) return;
+  const pos = centroid(all);
+  if (pl.mgIds.includes(sq.id)) {
+    setState(w, sq, "hold", "back under the platoon's orders");
+    return;
+  }
+  if (pl.role === "attack") {
+    sq.route = routeTo(w, sq.side, pos, objectiveFor(w, sq, pl));
+    sq.routeIdx = 0;
+    sq.boundWp = -1;
+    setState(w, sq, "react", "back under the platoon's orders: taking stock");
+    return;
+  }
+  // A defending squad holds where the order left it, and falls back from there if it must.
+  sq.post = { x: Math.round(pos.x), y: Math.round(pos.y) };
+  for (const el of ["A", "B"] as const) {
+    const keep: Record<number, Point> = {};
+    for (const m of men[el]) keep[m.id] = spotOf(m);
+    setOrder(w, sq, el, order("hold", keep, "crouch", pl.killZone.sprung >= 0 ? "free" : sq.orders[el].fire));
+  }
+  setState(w, sq, "hold", "back under the platoon's orders: holding here");
+}
+
+/** A squad carrying out the player's order, every two seconds. */
+function directiveStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void {
+  const d = sq.directive!;
+  const men = elements(w, sq);
+  const all = [...men.A, ...men.B];
+  if (all.length === 0) return;
+  // Kept without setState, which would throw away a house assault under way.
+  sq.state = "orders";
+  const pos = centroid(all);
+  const focus = pickFocus(w, sq, pos);
+  if (focus) sq.focus = focus.at;
+  const at = d.at;
+  const where = bearing(pos, at);
+  // A defending platoon waiting for the word keeps its fire even under orders, unless the order is to shoot.
+  const policy: FirePolicy = pl.role === "defend" && pl.killZone.sprung < 0 && !pl.withdrawing ? "hold" : "free";
+  const holdAt = (positions: Record<number, Point> | null) => {
+    for (const el of ["A", "B"] as const) {
+      const cur = sq.orders[el];
+      if (positions === null && cur.kind === "hold" && cur.fire === policy && cur.issued >= d.tick) continue;
+      const keep: Record<number, Point> = {};
+      for (const m of men[el]) keep[m.id] = positions?.[m.id] ?? spotOf(m);
+      setOrder(w, sq, el, order("hold", keep, "crouch", policy));
+    }
+  };
+  switch (d.kind) {
+    case "move": {
+      if (sq.route.length === 0) {
+        sq.route = routeTo(w, sq.side, pos, w.freeTileNear(at, 5) ?? at);
+        sq.routeIdx = 0;
+        sq.boundWp = -1;
+        sq.bounding = "A";
+      }
+      if (sq.routeIdx >= sq.route.length || dist(pos, at) <= 3) {
+        // There: spread out into cover round the spot, facing the enemy, and hold it.
+        const face = focus ? facingFrom(at, focus.at) : { x: -rearDir(w, sq.side).x, y: -rearDir(w, sq.side).y };
+        sq.directive = { kind: "hold", at, tick: w.tick };
+        holdAt(pickPositions(w, all, at, face, 2, 6));
+        sq.intent = "on orders: reached the place they were sent, holding it";
+        shout(w, leader, sq.side === "us" ? "This is it. Spread out, get in cover!" : "Hier ist es. Ausschwärmen, Deckung!", null);
+        w.emit("squad_order", [leader.id], { squad: sq.id, kind: "arrived", at: [at.x, at.y] });
+        return;
+      }
+      advanceByBounds(w, sq, men, at, facingFrom(pos, focus?.at ?? at));
+      sq.state = "orders";
+      sq.intent = `on orders, moving ${where}: ${sq.intent.replace(/^on orders, moving [^:]*: /, "")}`;
+      return;
+    }
+    case "assault": {
+      sq.focus = at;
+      // Enemies in a house there: stack up, grenades through the windows, then in.
+      const house = houseHeld(w, sq, at);
+      if (house !== null && breachStep(w, sq, men, house, leader)) {
+        sq.state = "orders";
+        return;
+      }
+      const el: "A" | "B" = men.B.length > 0 ? "B" : "A";
+      const assaulters = men[el];
+      const toward = facingFrom(pos, at);
+      if (sq.orders[el].kind !== "assault" || cheb(sq.orders[el].target ?? at, at) > 3) {
+        setOrder(w, sq, el, order("assault", pickPositions(w, assaulters, at, toward, 2, 4), "rush", "free", at));
+      }
+      const closest = Math.min(...assaulters.map((m) => dist(m, at)));
+      const covered = el === "B" && men.A.length > 0;
+      if (covered) {
+        // The base of fire keeps their heads down, then lifts and follows when the assault is close.
+        if (closest > 10) setOrder(w, sq, "A", order("suppress", firingLine(w, men.A, sq.orders.A.positions, at), "crouch", "free", at));
+        else if (sq.orders.A.kind !== "move") {
+          shout(w, leader, leader.side === "us" ? "Shift fire! Shift fire!" : "Feuer verlegen!", "shift", 30);
+          const behind = { x: Math.round(at.x - toward.x * 8), y: Math.round(at.y - toward.y * 8) };
+          setOrder(w, sq, "A", order("move", pickPositions(w, men.A, behind, toward, 2, 5), "rush", "free"));
+        }
+      }
+      const enemyLeft = w.soldiers.some((e) => e.side !== sq.side && w.able(e) && cheb(e, at) <= 6 && sq.contacts[e.id] && w.tick - sq.contacts[e.id]!.tick < 15);
+      if (closest <= 4 && !enemyLeft) {
+        for (const c of Object.values(sq.contacts)) if (cheb(c, at) <= 7) delete sq.contacts[c.id];
+        w.emit("position_taken", [leader.id], { squad: sq.id, at: [at.x, at.y] });
+        shout(w, leader, leader.side === "us" ? "Clear! Hold here!" : "Stellung genommen!", null);
+        sq.focus = null;
+        sq.breach = null;
+        sq.directive = { kind: "hold", at, tick: w.tick };
+        holdAt(pickPositions(w, all, at, toward, 2, 6));
+        sq.intent = "on orders: took the position, holding it";
+        return;
+      }
+      sq.intent = `on orders, assaulting ${where}: ${covered ? (closest > 10 ? "the base of fire pins it while the rifle team rushes it" : "fire shifted, the rifle team going in") : "everyone rushing it"}`;
+      return;
+    }
+    case "suppress": {
+      // Men who have a line of fire on the place keep it; the rest go to where they can get one, up toward it if need be.
+      const face = facingFrom(pos, at);
+      for (const el of ["A", "B"] as const) {
+        if (men[el].length === 0) continue;
+        const prev = sq.orders[el].positions;
+        const spots: Record<number, Point> = {};
+        const need: Soldier[] = [];
+        for (const m of men[el]) {
+          const p = prev[m.id];
+          if (p && cheb(p, m) <= 6 && canFireOn(w, p, at)) spots[m.id] = p;
+          else if (canFireOn(w, m, at)) spots[m.id] = spotOf(m);
+          else need.push(m);
+        }
+        if (need.length > 0) {
+          sq.flankPoint ??= firingBase(w, centroid(need), at);
+          const picked = pickPositions(w, need, sq.flankPoint ?? centroid(need), face, 2, 6, at);
+          for (const m of need) spots[m.id] = picked[m.id] ?? spotOf(m);
+        }
+        setOrder(w, sq, el, order("suppress", spots, need.length > 0 ? "rush" : "crouch", "free", at));
+      }
+      const reach = Math.max(...all.map((m) => (m.weapon ? w.config.weapons[m.weapon].maxRange : 0)));
+      sq.intent = dist(pos, at) > reach ? `on orders, firing on ${where}, though it is beyond their range` : `on orders, putting fire on ${where}`;
+      return;
+    }
+    case "hold": {
+      holdAt(null);
+      return;
+    }
+  }
+}
+
 // ---------- Entry point ----------
 
 /** Engine rule each tick: platoons think every ten seconds, squads every two. */
@@ -2142,13 +2364,18 @@ export function commandStep(w: World): void {
       const sq = w.squad(id);
       if ((w.tick + sq.id) % 2 !== 0) continue;
       const leader = ensureLeader(w, sq);
-      if (leader && w.tick >= leader.confusedUntil) mgTeamStep(w, sq, pl, leader);
+      if (sq.directive && (pl.withdrawing || !leader)) sq.directive = null;
+      if (leader && w.tick >= leader.confusedUntil) {
+        if (sq.directive) directiveStep(w, sq, pl, leader);
+        else mgTeamStep(w, sq, pl, leader);
+      }
     }
     for (const id of [pl.hqSquadId, ...pl.squadIds]) {
       const sq = w.squad(id);
       if ((w.tick + sq.id) % 2 !== 0) continue;
       const leader = ensureLeader(w, sq);
       if (!leader) {
+        sq.directive = null;
         if (sq.state !== "broken") {
           setState(w, sq, "broken", "no one left to lead; the men drift back");
           withdrawStep(w, sq, elements(w, sq));
@@ -2157,6 +2384,15 @@ export function commandStep(w: World): void {
       }
       if (w.tick < leader.confusedUntil) continue;
       maybeCallForHelp(w, sq, pl, leader);
+      // The player's order stands until it is lifted, or the platoon calls the whole thing off.
+      if (sq.directive && pl.withdrawing) {
+        sq.directive = null;
+        w.emit("squad_order", [leader.id], { squad: sq.id, kind: "resume", why: "withdraw" });
+      }
+      if (sq.directive) {
+        directiveStep(w, sq, pl, leader);
+        continue;
+      }
       if (shellReaction(w, sq, pl, leader)) continue;
       if (sq.isHQ) hqStep(w, sq, pl, leader);
       else if (pl.role === "attack") attackStep(w, sq, pl, leader);

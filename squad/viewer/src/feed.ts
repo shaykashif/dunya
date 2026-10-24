@@ -3,6 +3,7 @@ import { describeInjury } from "../../src/entities/injuries.ts";
 import type { SimEvent } from "../../src/log/events.ts";
 import type { Injury, Role, Side, Soldier } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
+import { gridSquare } from "./render.ts";
 
 export type Category = "battle" | "us" | "de" | "death" | "wound" | "order" | "voice" | "medic" | "fire";
 
@@ -186,6 +187,22 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
     case "friendly_fire": {
       const a = s("by"), v = s("victim");
       return a && v ? line(`${label(a)}'s burst hits ${label(v)} by mistake!`, "wound", [a.id, v.id], true) : null;
+    }
+    case "squad_order": {
+      const sq = w.squads[d.squad as number]!;
+      const kind = d.kind as string;
+      const text =
+        kind === "resume" ? (d.why === "withdraw" ? `${sq.name}'s orders are overtaken: the platoon is pulling back.` : `${sq.name} goes back to the platoon's plan.`)
+        : kind === "arrived" ? `${sq.name} reaches the place it was sent and holds it.`
+        : kind === "hold" ? `${sq.name} is ordered to hold where it is.`
+        : `${sq.name} is ordered to ${kind === "move" ? "move" : kind === "assault" ? "assault a position" : "put fire on a position"} ${d.at ? `at ${gridSquare((d.at as [number, number])[0], (d.at as [number, number])[1])}` : ""}.`;
+      return line(text, sq.side, [], true);
+    }
+    case "control": {
+      const p = s("person");
+      if (!p) return null;
+      if (d.on) return line(`You take ${label(p)} in hand.`, p.side, [p.id], true);
+      return d.why === "released" ? line(`${label(p)} is left to his own devices again.`, p.side, [p.id]) : null;
     }
     case "intervention":
       return line(

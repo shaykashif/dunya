@@ -322,6 +322,7 @@ export function generateScenario(cfg: SimConfig, seed: number, log: EventLog): W
       coverTick: -1,
       sweep: null,
       sniperAlert: null,
+      directive: null,
       help: null,
       helping: null,
       breach: null,

@@ -777,6 +777,7 @@ export class Renderer {
   draw(w: World, cam: Camera, opts: ViewOptions, prev: Map<number, { x: number; y: number }>, alpha: number, selected: number | null, time: number): void {
     this.alpha = alpha;
     this.zoomNow = cam.zoom;
+    this.banners = [];
     this.winter = w.season === "winter";
     const g = this.g;
     const dpr = window.devicePixelRatio || 1;
@@ -859,12 +860,161 @@ export class Renderer {
     }
     // The ambush countdown shows in the wide view, where the trap and the enemy walking into it can both be seen.
     if (cam.zoom < SQUAD_BANNER_ZOOM + SQUAD_BANNER_FADE) this.drawAmbushTimers(w, cam, prev, time);
+    this.drawDirectives(w, cam, prev, time);
+    this.drawPilot(w, cam, prev, time);
 
     // Screen space from here: the weather over everything, and the floor buttons.
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.drawWeather(w, vw, vh, time);
     this.drawFloorButtons(w, cam, vw, vh, views);
     this.drawScopeButtons(w, cam, vw, vh, prev);
+  }
+
+  /** The squad labels drawn last frame, in screen (CSS) pixels: click one for that squad's orders. */
+  private banners: { id: number; x: number; y: number; w: number; h: number }[] = [];
+  /** The squad the order panel is open for: its label is ringed and its order drawn boldly. */
+  orderSquad: number | null = null;
+  /** Where the player's man is looking (tiles, fractional) and whether the trigger is down, set by the page each frame. */
+  pilotAim: { x: number; y: number } | null = null;
+  pilotFiring = false;
+
+  /** The squad whose label is under a point on the screen (CSS pixels), or null. */
+  bannerAt(x: number, y: number): number | null {
+    for (let i = this.banners.length - 1; i >= 0; i--) {
+      const r = this.banners[i]!;
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return r.id;
+    }
+    return null;
+  }
+
+  /**
+   * The player's standing orders: a dashed line from each squad to where it
+   * was sent, and a mark there (a chevron to move, crossed bars to assault, a
+   * ring and cross hairs to suppress, a square to hold) with the word.
+   */
+  private drawDirectives(w: World, cam: Camera, prev: Map<number, { x: number; y: number }>, time: number): void {
+    const g = this.g;
+    const k = 1 / cam.zoom;
+    for (const sq of w.squads) {
+      const d = sq.directive;
+      if (!d) continue;
+      let n = 0, cx = 0, cy = 0;
+      for (const id of sq.members) {
+        const s = w.maybe(id);
+        if (!s || !w.able(s)) continue;
+        const p = this.worldPos(s, prev, this.alpha);
+        cx += p.x;
+        cy += p.y;
+        n++;
+      }
+      if (n === 0) continue;
+      cx /= n;
+      cy /= n;
+      const tx = d.at.x * TILE + 8, ty = d.at.y * TILE + 8;
+      const bold = sq.id === this.orderSquad;
+      const lw = Math.max(1, (bold ? 2.5 : 1.6) * k);
+      g.save();
+      g.strokeStyle = "#000000aa";
+      g.lineWidth = lw + 2 * k;
+      g.setLineDash([6 * k, 4 * k]);
+      g.lineDashOffset = -time * 14 * k;
+      if (d.kind !== "hold") {
+        g.beginPath();
+        g.moveTo(cx, cy);
+        g.lineTo(tx, ty);
+        g.stroke();
+        g.strokeStyle = sq.color;
+        g.lineWidth = lw;
+        g.stroke();
+      }
+      g.setLineDash([]);
+      const r = Math.max(9, 7 * k);
+      const mark = () => {
+        g.beginPath();
+        if (d.kind === "move") {
+          g.moveTo(tx - r, ty + r * 0.3);
+          g.lineTo(tx, ty - r * 0.6);
+          g.lineTo(tx + r, ty + r * 0.3);
+        } else if (d.kind === "assault") {
+          g.moveTo(tx - r, ty - r);
+          g.lineTo(tx + r, ty + r);
+          g.moveTo(tx + r, ty - r);
+          g.lineTo(tx - r, ty + r);
+        } else if (d.kind === "suppress") {
+          g.arc(tx, ty, r, 0, Math.PI * 2);
+          g.moveTo(tx - r * 1.4, ty);
+          g.lineTo(tx + r * 1.4, ty);
+          g.moveTo(tx, ty - r * 1.4);
+          g.lineTo(tx, ty + r * 1.4);
+        } else g.rect(tx - r, ty - r, r * 2, r * 2);
+        g.stroke();
+      };
+      g.strokeStyle = "#000000cc";
+      g.lineWidth = lw + 2.5 * k;
+      mark();
+      g.strokeStyle = d.kind === "assault" || d.kind === "suppress" ? "#ff7a5a" : sq.color;
+      g.lineWidth = lw + 0.5 * k;
+      mark();
+      const fs = 10 * k;
+      g.font = `${fs}px "Silkscreen", monospace`;
+      const word = { move: "MOVE", assault: "ASSAULT", suppress: "SUPPRESS", hold: "HOLD" }[d.kind];
+      const tw = g.measureText(word).width;
+      g.fillStyle = "rgba(20,18,14,0.85)";
+      g.fillRect(tx - tw / 2 - 2 * k, ty + r + 3 * k, tw + 4 * k, fs + 3 * k);
+      g.fillStyle = sq.color;
+      g.fillText(word, tx - tw / 2, ty + r + 3 * k + fs);
+      g.restore();
+    }
+  }
+
+  /** The man under the player's control: a ring at his feet, and a line from him to where he is looking, red while he fires. */
+  private drawPilot(w: World, cam: Camera, prev: Map<number, { x: number; y: number }>, time: number): void {
+    const p = w.pilot;
+    const s = p ? w.maybe(p.id) : null;
+    if (!s || !w.onField(s)) return;
+    const g = this.g;
+    const k = 1 / cam.zoom;
+    const at = this.worldPos(s, prev, this.alpha);
+    const pulse = 0.6 + 0.4 * Math.sin(time * 5);
+    g.save();
+    g.strokeStyle = `rgba(255,224,112,${pulse})`;
+    g.lineWidth = Math.max(1, 1.5 * k);
+    g.beginPath();
+    g.ellipse(at.x, at.y + 5, 9, 4.5, 0, 0, Math.PI * 2);
+    g.stroke();
+    const aim = this.pilotAim;
+    if (aim) {
+      const ax = aim.x * TILE, ay = aim.y * TILE;
+      const color = this.pilotFiring ? "#ff5a3a" : "#ffe070";
+      g.strokeStyle = color;
+      g.globalAlpha = 0.6;
+      g.setLineDash([3 * k, 3 * k]);
+      g.beginPath();
+      g.moveTo(at.x, at.y - 2);
+      g.lineTo(ax, ay);
+      g.stroke();
+      g.setLineDash([]);
+      g.globalAlpha = 1;
+      const r = 6 * Math.max(1, k * 0.8);
+      g.strokeStyle = "#000000aa";
+      g.lineWidth = Math.max(1, 2.5 * k);
+      for (const c of ["#000000aa", color]) {
+        g.strokeStyle = c;
+        g.lineWidth = c === color ? Math.max(1, 1.2 * k) : Math.max(1, 3 * k);
+        g.beginPath();
+        g.arc(ax, ay, r, 0, Math.PI * 2);
+        g.moveTo(ax - r * 1.6, ay);
+        g.lineTo(ax - r * 0.5, ay);
+        g.moveTo(ax + r * 0.5, ay);
+        g.lineTo(ax + r * 1.6, ay);
+        g.moveTo(ax, ay - r * 1.6);
+        g.lineTo(ax, ay - r * 0.5);
+        g.moveTo(ax, ay + r * 0.5);
+        g.lineTo(ax, ay + r * 1.6);
+        g.stroke();
+      }
+    }
+    g.restore();
   }
 
   /** Floor shown for each building: the roof (-1), or a floor cut away for looking inside. */
@@ -1876,7 +2026,8 @@ export class Renderer {
       const spotted = fl ? time - fl.contact : Infinity;
       const decided = fl ? time - fl.decidedAt : Infinity;
       const title = `${sq.name} · ${SQUAD_DOING[sq.state] ?? sq.state} · ${n}/${sq.members.length}`;
-      const sub = decided < 6 && fl ? `→ ${fl.decision}` : "";
+      const ordered = sq.directive ? `★ Orders: ${{ move: "move", assault: "assault", suppress: "suppress", hold: "hold" }[sq.directive.kind]}` : "";
+      const sub = ordered || (decided < 6 && fl ? `→ ${fl.decision}` : "");
       const pad = 4 * k, icon = spotted < 5 ? fs + pad : 0;
       const tw = Math.max(g.measureText(title).width, sub ? g.measureText(sub).width : 0);
       const rows = sub ? 2 : 1, h = fs * rows + pad * (rows + 1) * 0.6;
@@ -1887,6 +2038,13 @@ export class Renderer {
       g.fillRect(x, y, wBox, h);
       g.fillStyle = sq.color;
       g.fillRect(x, y, pad * 0.7, h);
+      // Click a squad's label for its orders; the one being given orders is ringed in gold.
+      if (!sq.isHQ && g.globalAlpha > 0.4) this.banners.push({ id: sq.id, x: (x - cam.x) * cam.zoom, y: (y - cam.y) * cam.zoom, w: wBox * cam.zoom, h: h * cam.zoom });
+      if (sq.id === this.orderSquad) {
+        g.strokeStyle = "#ffe070";
+        g.lineWidth = 2 * k;
+        g.strokeRect(x - k, y - k, wBox + 2 * k, h + 2 * k);
+      }
       // The side's flag, so the two armies can be told apart at a glance.
       const fx = x + pad * 1.2, fy = y + pad * 0.6, fh = Math.round(fs * 0.95);
       if (sq.side === "us") {
@@ -2045,6 +2203,7 @@ const SQUAD_DOING: Record<string, string> = {
   ambush: "In ambush",
   reinforce: "Reinforcing",
   stage: "Waiting to go in",
+  orders: "Under your orders",
 };
 
 /** A line in square 1-pixel blocks (Bresenham); `dash` > 0 draws that many on, that many off. */

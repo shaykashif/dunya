@@ -4,7 +4,7 @@ import { describeInjury } from "../../src/entities/injuries.ts";
 import { firstBlood, verdict } from "../../src/battle/verdict.ts";
 import { EventLog, type SimEvent } from "../../src/log/events.ts";
 import { createSimulation } from "../../src/sim.ts";
-import type { BodyPart, Injury, Side, Soldier, Squad } from "../../src/world/types.ts";
+import type { BodyPart, Injury, Posture, Side, Soldier, Squad } from "../../src/world/types.ts";
 import type { World } from "../../src/world/world.ts";
 import { Sfx, impactOf, surfaceOf, type Voicing } from "./audio.ts";
 import { hydrateIcons, icon } from "./icons.ts";
@@ -66,7 +66,7 @@ let selected: number | null = null;
 let follow = false;
 let userCamera = false;
 let lastSize = "";
-let power: "inspect" | "artillery" | "smoke" | "sniper" = "inspect";
+let power: "inspect" | "artillery" | "smoke" | "sniper" | "move" | "assault" | "suppress" = "inspect";
 let tab = "men";
 let dirty = { feed: true, events: true };
 let reportShown = false;
@@ -760,9 +760,13 @@ function soundsFor(e: SimEvent): void {
         // A burst at the gun's own rate of fire, squeezed to fit the tick when the clock runs fast.
         const shown = Math.min(rounds, 16);
         const gap = Math.min(60 / voice.rpm, span / shown);
-        const loud = (weapon === "mg42" ? 4 : 3.4) * voice.gain * (shown > 3 ? 0.8 : 1);
+        const loud = (weapon === "mg42" ? 3.6 : 3.4) * voice.gain * (shown > 3 ? 0.8 : 1);
         for (let k = 0; k < shown; k++) {
-          sfx.play(`shot.${weapon}`, { x: fx, y: fy, gain: loud, reach: 3.6, anywhere: true, delay: k * gap * (0.97 + Math.random() * 0.06), byDistance: true, priority: k === 0, rate: voice.rate, voicing: voice.voicing });
+          // Each recording carries its own room echo; a dozen of them overlapping turn a burst into a wash. Every shot is
+          // cut off as the next one fires, and only the last of the burst rings out, shortened.
+          const last = k === shown - 1;
+          const tail = last ? 0.35 : Math.max(0.07, gap * 1.6);
+          sfx.play(`shot.${weapon}`, { x: fx, y: fy, gain: loud, reach: 3.6, anywhere: true, delay: k * gap * (0.97 + Math.random() * 0.06), byDistance: true, priority: k === 0, rate: voice.rate, voicing: voice.voicing, tail, fade: last ? 0.3 : 0.05 });
         }
       } else {
         const shown = Math.min(rounds, 8);
@@ -1151,6 +1155,24 @@ function toastFor(e: SimEvent): void {
   const d = e.data;
   const s = (k: string) => world.maybe(d[k] as number);
   switch (e.type) {
+    case "control": {
+      if (d.on || d.person !== controlId) break;
+      const p = s("person");
+      const why = d.why as string;
+      endControl();
+      if (why === "another" || why === "released") break;
+      const name = p ? label(p) : "He";
+      toast(why === "killed" ? "death" : "battle", "Control lost", why === "killed" ? `${name} has been killed.` : why === "over" ? "The battle is over." : why === "captured" || why === "surrendered" ? `${name} has been taken prisoner.` : `${name} is out of the fight.`, p ? [p.id] : []);
+      break;
+    }
+    case "squad_order": {
+      const sq = world.squads[d.squad as number];
+      if (!sq) break;
+      if (d.kind === "arrived") toast("squad", "In position", `${sq.name} has reached the place you sent it and is holding it.`, [], sq.color, sq.id);
+      else if (d.kind === "resume" && d.why === "withdraw") toast("squad", "Orders cancelled", `${sq.name} is pulling back with the platoon.`, [], sq.color, sq.id);
+      if (sq.id === orderSquad) renderOrders();
+      break;
+    }
     case "squad_state":
       squadAlert(e);
       break;
@@ -1272,6 +1294,14 @@ function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: fal
   reportShown = false;
   quickId = null;
   $("quick").classList.remove("open");
+  controlId = null;
+  orderSquad = null;
+  renderer.orderSquad = null;
+  renderer.pilotAim = null;
+  document.body.classList.remove("piloting");
+  $("orders").hidden = true;
+  $("pilot").hidden = true;
+  $("stick").hidden = true;
   renderer.reset();
   lastSquadAlert.clear();
   miniBase.img = null;
@@ -1418,6 +1448,7 @@ function frame(t: number): void {
     panCamera(dt);
     easeZoom(dt);
   }
+  pilotFrame();
   updateHook();
   placeBolts();
   placeBlasts();
@@ -1825,14 +1856,15 @@ function renderInspector(): void {
     ${after ? `<h4>A MONTH LATER</h4><p>${esc(after.outcome)}.</p>` : ""}
     <div class="traits">${s.shots} rounds fired · ${s.hits} hits · ${s.kills} killed${s.treated ? ` · ${s.treated} men treated` : ""}</div>
     <h4>RECENTLY</h4><ul class="plain">${s.recent.slice(-8).reverse().map((r) => `<li><time>${clock(world, r.tick)}</time> ${esc(r.text)}</li>`).join("")}</ul>
-    <button id="followbtn" style="margin-top:6px">${follow ? "◉ Following" : "○ Follow (F)"}</button>`;
+    <button id="followbtn" style="margin-top:6px">${follow ? "◉ Following" : "○ Follow (F)"}</button>${controlId === s.id ? ` <button id="ctlbtn" class="on" style="margin-top:6px" title="Let him go back to his own devices (T)">Release (T)</button>` : canControl(s) ? ` <button id="ctlbtn" style="margin-top:6px" title="Steer him yourself: WASD, Shift to run, click to fire (T)">Take control (T)</button>` : ""}`;
   paintPanel(s);
+  document.getElementById("ctlbtn")?.addEventListener("click", () => (controlId === s.id ? releaseControl() : takeControl(s.id)));
   $("followbtn").addEventListener("click", () => {
     follow = !follow;
   });
 }
 
-const STATE_NAMES: Record<string, string> = { ambush: "in ambush", reinforce: "reinforcing", displace: "displacing", deploy: "forming up", advance: "advancing", react: "contact", fix: "fixing", flank: "flanking", assault: "assault", consolidate: "consolidating", hold: "holding", fall_back: "falling back", withdraw: "withdrawing", broken: "broken", support: "support" };
+const STATE_NAMES: Record<string, string> = { orders: "your orders", ambush: "in ambush", reinforce: "reinforcing", displace: "displacing", deploy: "forming up", advance: "advancing", react: "contact", fix: "fixing", flank: "flanking", assault: "assault", consolidate: "consolidating", hold: "holding", fall_back: "falling back", withdraw: "withdrawing", broken: "broken", support: "support" };
 
 function renderSquads(): void {
   const out: string[] = [];
@@ -1853,7 +1885,7 @@ function renderSquads(): void {
               return `<div class="men">${el === "A" ? (side === "us" ? "Base team (BAR)" : "MG-Trupp") : side === "us" ? "Rifle team" : "Schützentrupp"}: ${o.kind}${o.kind === "suppress" ? "ing" : ""}, ${o.pace}, fire ${o.fire} · ${n} men</div>`;
             })
             .join("");
-      out.push(`<div class="squad" data-squad="${sq.id}"><em class="sw" style="background:${sq.color}"></em><b>${esc(sq.name)}</b><span class="st">${STATE_NAMES[sq.state] ?? sq.state}</span>
+      out.push(`<div class="squad" data-squad="${sq.id}"><em class="sw" style="background:${sq.color}"></em><b>${esc(sq.name)}</b><span class="st">${STATE_NAMES[sq.state] ?? sq.state}</span>${sq.isHQ ? "" : ` <button data-orders="${sq.id}" title="Give this squad orders">Orders</button>`}
         <div class="intent">${esc(sq.intent)}</div>
         <div class="men">Led by ${leader ? personLink(leader) : "nobody"} · ${able}/${men.length} able · ${Object.values(sq.contacts).filter((c) => !c.down && world.tick - c.tick < 40).length} known enemies</div>${teams}
         <div class="men">${men.map((m) => `<a data-person="${m.id}" title="${esc(roleName(m))}">${esc(m.last)}${statusIcon(m)}</a>`).join(" ")}</div></div>`);
@@ -1902,8 +1934,10 @@ function renderQuick(): void {
       ${bar("Health", s.survival.health, s.survival.health > 0.5 ? "#7ac860" : s.survival.health > 0.25 ? "#e0a03a" : "#e05a4a")}
       ${bar("Morale", s.morale, "#6ab0f0")}`;
   }
-  el.innerHTML = `${body}<div class="qbtns"><button id="qmore">Full info</button><button id="qclose">Close</button></div>`;
+  const ctl = !t && canControl(s) && controlId !== s.id;
+  el.innerHTML = `${body}<div class="qbtns">${ctl ? `<button id="qctl" class="on">Take control</button>` : ""}<button id="qmore">Full info</button><button id="qclose">Close</button></div>`;
   el.classList.add("open");
+  document.getElementById("qctl")?.addEventListener("click", () => takeControl(s.id));
   $("qclose").addEventListener("click", hideQuick);
   $("qmore").addEventListener("click", () => {
     const id = quickId;
@@ -1988,12 +2022,293 @@ function openReport(): void {
   $("mnew").style.display = r ? "" : "none";
 }
 
+// ---------- Squad orders ----------
+
+type OrderPower = "move" | "assault" | "suppress";
+const isOrderPower = (p: string): p is OrderPower => p === "move" || p === "assault" || p === "suppress";
+const ORDER_HINT: Record<OrderPower, string> = {
+  move: "Click where the squad should go. It bounds there its own way, then holds it.",
+  assault: "Click the position to take. The base of fire pins it while the rifle team rushes it, grenades and all.",
+  suppress: "Click where the squad should put its fire. Men with no line of fire move up until they have one.",
+};
+const DIRECTIVE_WORDS: Record<string, string> = { move: "moving where you sent them", assault: "assaulting the position you gave them", suppress: "putting fire where you told them", hold: "holding where you told them" };
+
+/** The squad whose orders panel is open. */
+let orderSquad: number | null = null;
+
+function openOrders(id: number): void {
+  const sq = world.squads[id];
+  if (!sq || sq.isHQ) return;
+  orderSquad = id;
+  renderer.orderSquad = id;
+  if (isOrderPower(power)) setPower("inspect");
+  renderOrders();
+  trackFirstInteraction("orders");
+}
+
+function closeOrders(): void {
+  orderSquad = null;
+  renderer.orderSquad = null;
+  if (isOrderPower(power)) setPower("inspect");
+  $("orders").hidden = true;
+}
+
+/** The panel beside the powers: who, what they are doing, and the orders that can be given. */
+function renderOrders(): void {
+  const el = $("orders");
+  const sq = orderSquad !== null ? world.squads[orderSquad] : undefined;
+  if (!sq) {
+    el.hidden = true;
+    return;
+  }
+  const men = sq.members.map((id) => world.soldier(id));
+  const able = men.filter((m) => world.able(m)).length;
+  const d = sq.directive;
+  const status = able === 0 ? "Nobody left on his feet to give orders to." : sq.state === "broken" || sq.state === "withdraw" ? "Pulling back: it will not take orders now." : d ? `Under your orders: ${DIRECTIVE_WORDS[d.kind]}.` : "Following the platoon's plan. Give it an order of your own:";
+  const hint = isOrderPower(power) ? `<b>${ORDER_HINT[power]}</b>` : esc(status);
+  const btn = (k: string, text: string, title: string) => `<button data-order="${k}" class="${power === k ? "on" : ""}" title="${title}">${text}</button>`;
+  const html = `<span class="who"><em class="sw" style="background:${sq.color}"></em>${esc(sq.name)} · ${able}/${men.length}</span>${btn("move", "Move to", "Send the squad to a place: it bounds there and holds it")}${btn("assault", "Assault", "Take a position: base of fire and a rush")}${btn("suppress", "Suppress", "Put the squad's fire on a place")}${btn("hold", "Hold", "Stay where they are and fight from there")}${d ? btn("resume", "Carry on", "Back to the platoon's own plan") : ""}<button data-order="close" title="Close (Esc)">${icon("close")}</button><div class="ohint">${hint}</div>`;
+  if (el.innerHTML !== html) el.innerHTML = html;
+  el.hidden = false;
+}
+
+function orderButton(kind: string): void {
+  if (kind === "close") return closeOrders();
+  const sq = orderSquad !== null ? world.squads[orderSquad] : undefined;
+  if (!sq) return closeOrders();
+  if (isOrderPower(kind)) return setPower(power === kind ? "inspect" : kind);
+  if (kind === "hold" || kind === "resume") giveSquadOrder(sq.id, kind, 0, 0);
+}
+
+function giveSquadOrder(id: number, order: OrderPower | "hold" | "resume", x: number, y: number): void {
+  engine.intervene({ kind: "order", squadId: id, order, x, y });
+  track("order", { order });
+  trackFirstInteraction("order");
+  if (paused && !busy) void advance(1).then(renderOrders);
+  else setTimeout(renderOrders, 50);
+}
+
+// ---------- The man under control ----------
+
+/** The man the player has taken control of, as the page knows it (the engine takes him at the next tick). */
+let controlId: number | null = null;
+let controlAsked = 0;
+/** The controls as they stand: how low he keeps, the trigger, keys pressed since the last tick, the thumb stick, the last touch. */
+const pin = { stance: "crouch" as Posture, fire: false, reload: false, grenade: false, stick: { dx: 0, dy: 0, sprint: false }, touchAim: null as { x: number; y: number } | null };
+let lastSteer = "";
+let lastHurry = 0;
+let stickId: number | null = null;
+const coarse = (): boolean => window.matchMedia("(pointer: coarse)").matches;
+
+function canControl(s: Soldier | null): s is Soldier {
+  return !!s && world.phase === "battle" && world.onField(s) && s.role !== "tank" && s.role !== "field_gun" && s.carriedById === null;
+}
+
+function takeControl(id: number): void {
+  const s = world.maybe(id);
+  if (!canControl(s)) return;
+  engine.intervene({ kind: "control", personId: id });
+  controlId = id;
+  controlAsked = world.tick;
+  pin.stance = s.posture === "prone" ? "prone" : "crouch";
+  pin.fire = false;
+  pin.touchAim = null;
+  lastSteer = "";
+  selected = id;
+  follow = false;
+  if (simpleUi) setSimple(false);
+  setDirector(false);
+  endCine(false);
+  scopeTour = null;
+  runnerFollow = null;
+  closeOrders();
+  hideQuick();
+  document.body.classList.add("piloting");
+  setPower("inspect");
+  // Real time: a man is steered a second at a time.
+  if (speed !== 0) setSpeed(0);
+  if (paused) {
+    paused = false;
+    syncControls();
+  }
+  $("stick").hidden = !coarse();
+  renderPilot();
+  renderInspector();
+  toast("battle", "You have control", `${label(s)}. ${coarse() ? "Thumb stick to move, push it to the rim to run. Touch the map to fire there." : "WASD to move, Shift to run, C to crouch or go prone, click to fire, G or right-click for a grenade, R to reload, T to let go."}`, [s.id]);
+  track("control", { phone: isPhone() });
+  trackFirstInteraction("control");
+}
+
+function releaseControl(): void {
+  if (controlId === null) return;
+  engine.intervene({ kind: "control", personId: null });
+  endControl();
+}
+
+function endControl(): void {
+  controlId = null;
+  pin.fire = false;
+  pin.touchAim = null;
+  stickId = null;
+  pin.stick = { dx: 0, dy: 0, sprint: false };
+  renderer.pilotAim = null;
+  renderer.pilotFiring = false;
+  document.body.classList.remove("piloting");
+  setPower(power);
+  $("pilot").hidden = true;
+  $("stick").hidden = true;
+  if (world) renderInspector();
+}
+
+/** Sends the controls to the engine when they change: a steer is logged and replayed like any intervention. */
+function sendSteer(dx: number, dy: number, sprint: boolean, aim: { x: number; y: number } | null): void {
+  const a: [number, number] | null = aim ? [Math.floor(aim.x), Math.floor(aim.y)] : null;
+  const key = `${dx},${dy},${sprint},${pin.stance},${a ? a.join(",") : "-"},${pin.fire}`;
+  if (key === lastSteer && !pin.reload && !pin.grenade) return;
+  // Setting off or pulling the trigger: bring the next second forward, so he answers at once. At most once every two
+  // seconds, so tapping keys cannot hurry the battle along.
+  const was = lastSteer.split(",");
+  const starts = ((dx !== 0 || dy !== 0) && was[0] === "0" && was[1] === "0") || (pin.fire && was[was.length - 1] !== "true") || pin.grenade;
+  if (starts && !paused && performance.now() - lastHurry > 2000) {
+    acc = 1;
+    lastHurry = performance.now();
+  }
+  engine.intervene({ kind: "steer", dx, dy, sprint, stance: pin.stance, aim: a, fire: pin.fire, ...(pin.reload ? { reload: true } : {}), ...(pin.grenade ? { grenade: true } : {}) });
+  lastSteer = key;
+  pin.reload = false;
+  pin.grenade = false;
+}
+
+/** Every frame while a man is under control: read the keys or the stick and the pointer, steer him, keep the camera on him. */
+function pilotFrame(): void {
+  if (controlId === null) return;
+  const s = world.maybe(controlId);
+  if (!s) return endControl();
+  if (world.pilot?.id !== controlId) {
+    // Not taken yet (the next tick), or the engine would not have him.
+    if (world.tick > controlAsked + 2) endControl();
+    return;
+  }
+  const held = (a: string, b: string) => keys.has(a) || keys.has(b);
+  let dx = (held("d", "arrowright") ? 1 : 0) - (held("a", "arrowleft") ? 1 : 0);
+  let dy = (held("s", "arrowdown") ? 1 : 0) - (held("w", "arrowup") ? 1 : 0);
+  let sprint = keys.has("shift");
+  if (stickId !== null) ({ dx, dy, sprint } = pin.stick);
+  const aim = pin.touchAim ?? (hover ? { x: (hover.sx / cam.zoom + cam.x) / TILE, y: (hover.sy / cam.zoom + cam.y) / TILE } : null);
+  renderer.pilotAim = aim;
+  renderer.pilotFiring = pin.fire;
+  sendSteer(dx, dy, sprint, aim);
+  const rect = canvas.getBoundingClientRect();
+  const p = renderer.worldPos(s, prev, Math.min(1, acc));
+  cam.x += (p.x - rect.width / cam.zoom / 2 - cam.x) * 0.12;
+  cam.y += (p.y - rect.height / cam.zoom / 2 - cam.y) * 0.12;
+  userCamera = true;
+}
+
+const STANCES: Posture[] = ["stand", "crouch", "prone"];
+function cycleStance(): void {
+  pin.stance = STANCES[(STANCES.indexOf(pin.stance) + 1) % STANCES.length]!;
+  pilotFrame();
+  renderPilot();
+}
+
+/** The strip at the bottom while a man is under control: who, his weapon and rounds, how he is, and the keys. */
+function renderPilot(): void {
+  const el = $("pilot");
+  const s = controlId !== null ? world.maybe(controlId) : null;
+  if (!s) {
+    el.hidden = true;
+    return;
+  }
+  const spec = s.weapon ? world.config.weapons[s.weapon] : null;
+  const notes: string[] = [];
+  if (!s.conscious) notes.push(`<span class="bad">unconscious</span>`);
+  else if (cannotWalk(s)) notes.push(`<span class="bad">cannot walk: dragging himself</span>`);
+  else if (s.status === "casualty") notes.push(`<span class="bad">badly hurt</span>`);
+  if (bleedingOf(s) > 0.05) notes.push(`<span class="bad">bleeding</span>`);
+  if (s.reloadLeft > 0) notes.push(`reloading, ${s.reloadLeft}s`);
+  const setup = spec?.setup !== undefined ? spec.setup - (world.tick - (s.cooldowns["movedAt"] ?? -1e9)) : 0;
+  if (setup > 0) notes.push(`setting the gun up, ${setup}s`);
+  if (s.pinned) notes.push("pinned down");
+  else if (s.suppression > 0.35) notes.push("under fire");
+  if (s.fatigue >= world.config.fatigue.winded) notes.push("winded: cannot run");
+  const sq = world.squad(s.squadId);
+  const weapon = spec ? `${spec.name}: ${s.loaded} loaded, ${s.ammo} spare` : "unarmed";
+  const stance = { stand: "Standing", crouch: "Crouched", prone: "Prone" }[pin.stance];
+  const html = `<div class="ph"><em class="sw" style="background:${sq.color}"></em><b>${esc(s.abbr)} ${esc(s.last)} <small>${esc(roleName(s))}</small></b><button data-pilot="stance" title="Stand, crouch or go prone (C)">${stance}</button><button data-pilot="grenade" title="Throw a grenade where you aim (G or right-click)"${s.grenades > 0 ? "" : " disabled"}>Grenade ×${s.grenades}</button><button data-pilot="release" title="Let him go back to his own devices (T)">Release</button></div>
+    ${bar("Health", s.survival.health, s.survival.health > 0.5 ? "#7ac860" : s.survival.health > 0.25 ? "#e0a03a" : "#e05a4a")}
+    <div class="pst">${esc(weapon)}${notes.length ? ` · ${notes.join(" · ")}` : ""}</div>
+    <div class="pkeys">WASD move · Shift run · C stand/crouch/prone · click fire · G or right-click grenade · R reload · T release</div>`;
+  if (el.innerHTML !== html) el.innerHTML = html;
+  el.hidden = false;
+}
+setInterval(() => {
+  if (controlId !== null) renderPilot();
+  if (orderSquad !== null) renderOrders();
+}, 250);
+
+// The strip is redrawn as he fights, which can swallow a click: act on the press.
+$("pilot").addEventListener("pointerdown", (ev) => {
+  const b = (ev.target as HTMLElement).closest<HTMLElement>("[data-pilot]");
+  if (!b || (b as HTMLButtonElement).disabled) return;
+  ev.preventDefault();
+  if (b.dataset.pilot === "stance") cycleStance();
+  else if (b.dataset.pilot === "release") releaseControl();
+  else if (b.dataset.pilot === "grenade") {
+    pin.grenade = true;
+    pilotFrame();
+  }
+});
+
+// The thumb stick: eight ways, a dead spot in the middle, the rim to run.
+const stick = $("stick");
+function stickMove(ev: PointerEvent): void {
+  const r = stick.getBoundingClientRect();
+  const R = r.width / 2;
+  const ox = ev.clientX - (r.left + R), oy = ev.clientY - (r.top + R);
+  const d = Math.hypot(ox, oy) || 1;
+  const m = Math.min(d, R - 10);
+  (stick.firstElementChild as HTMLElement).style.transform = `translate(${(ox / d) * m}px, ${(oy / d) * m}px)`;
+  if (d < R * 0.25) pin.stick = { dx: 0, dy: 0, sprint: false };
+  else {
+    const oct = Math.round(Math.atan2(oy, ox) / (Math.PI / 4));
+    pin.stick = { dx: Math.round(Math.cos((oct * Math.PI) / 4)), dy: Math.round(Math.sin((oct * Math.PI) / 4)), sprint: d > R * 0.88 };
+  }
+}
+stick.addEventListener("pointerdown", (ev) => {
+  stickId = ev.pointerId;
+  stickMove(ev);
+  ev.preventDefault();
+  try {
+    stick.setPointerCapture(ev.pointerId);
+  } catch {
+    // The finger is already gone.
+  }
+});
+stick.addEventListener("pointermove", (ev) => {
+  if (ev.pointerId === stickId) stickMove(ev);
+});
+for (const type of ["pointerup", "pointercancel"] as const) {
+  stick.addEventListener(type, (ev) => {
+    if (ev.pointerId !== stickId) return;
+    stickId = null;
+    pin.stick = { dx: 0, dy: 0, sprint: false };
+    (stick.firstElementChild as HTMLElement).style.transform = "";
+    pilotFrame();
+  });
+}
+canvas.addEventListener("contextmenu", (ev) => {
+  if (controlId !== null) ev.preventDefault();
+});
+window.addEventListener("blur", () => keys.clear());
+
 // ---------- Input ----------
 
 function setPower(p: typeof power): void {
   power = p;
-  canvas.className = p === "inspect" ? "" : `power-${p}`;
+  canvas.className = `${p === "inspect" ? "" : `power-${p}`}${controlId !== null ? " piloting" : ""}`;
   document.querySelectorAll<HTMLButtonElement>("[data-power]").forEach((b) => b.classList.toggle("on", b.dataset.power === p));
+  if (orderSquad !== null) renderOrders();
 }
 
 function pickAt(sx: number, sy: number): number | null {
@@ -2020,9 +2335,28 @@ function pinchFrame(): { d: number; mx: number; my: number } {
   return { d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), mx: (a.x + b.x) / 2 - rect.left, my: (a.y + b.y) / 2 - rect.top };
 }
 
+/** The tile point under a place on the screen, in fractional tiles. */
+function tileAt(clientX: number, clientY: number): { x: number; y: number } {
+  const rect = canvas.getBoundingClientRect();
+  return { x: ((clientX - rect.left) / cam.zoom + cam.x) / TILE, y: ((clientY - rect.top) / cam.zoom + cam.y) / TILE };
+}
+
 canvas.addEventListener("pointerdown", (ev) => {
+  // A man under control: the left button is the trigger, the right a grenade. A finger on the map aims and fires.
+  if (controlId !== null && ev.pointerType !== "touch") {
+    canvas.setPointerCapture(ev.pointerId);
+    if (ev.button === 0) pin.fire = true;
+    else if (ev.button === 2) pin.grenade = true;
+    pilotFrame();
+    return;
+  }
   touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
   canvas.setPointerCapture(ev.pointerId);
+  if (controlId !== null) {
+    pin.fire = touches.size === 1;
+    pin.touchAim = tileAt(ev.clientX, ev.clientY);
+    pilotFrame();
+  }
   if (touches.size === 2) {
     const f = pinchFrame();
     pinch = { d: f.d, zoom: cam.zoom, wx: f.mx / cam.zoom + cam.x, wy: f.my / cam.zoom + cam.y };
@@ -2052,6 +2386,10 @@ canvas.addEventListener("pointermove", (ev) => {
   hover = { sx: ev.clientX - rect.left, sy: ev.clientY - rect.top };
   const tx = Math.floor(((ev.clientX - rect.left) / cam.zoom + cam.x) / TILE), ty = Math.floor(((ev.clientY - rect.top) / cam.zoom + cam.y) / TILE);
   renderer.hoverBuilding = world.map.inBounds(tx, ty) ? world.map.building[world.map.idx(tx, ty)]! : -1;
+  if (controlId !== null) {
+    if (ev.pointerType === "touch" && touches.size === 1) pin.touchAim = tileAt(ev.clientX, ev.clientY);
+    return;
+  }
   if (!dragging) return;
   const dx = ev.clientX - dragX, dy = ev.clientY - dragY;
   if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
@@ -2065,7 +2403,17 @@ canvas.addEventListener("pointermove", (ev) => {
   }
 });
 canvas.addEventListener("pointerup", (ev) => {
+  if (controlId !== null && ev.pointerType !== "touch") {
+    if (ev.button === 0) pin.fire = false;
+    pilotFrame();
+    return;
+  }
   touches.delete(ev.pointerId);
+  if (controlId !== null && !pinch) {
+    pin.fire = false;
+    pilotFrame();
+    return;
+  }
   if (pinch) {
     if (touches.size < 2) pinch = null;
     const rest = [...touches.values()][0];
@@ -2081,6 +2429,18 @@ canvas.addEventListener("pointerup", (ev) => {
   const rect = canvas.getBoundingClientRect();
   const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
   const tx = Math.floor((sx / cam.zoom + cam.x) / TILE), ty = Math.floor((sy / cam.zoom + cam.y) / TILE);
+  // An order for the squad whose panel is open: to this spot.
+  if (isOrderPower(power)) {
+    if (orderSquad !== null && world.map.inBounds(tx, ty)) giveSquadOrder(orderSquad, power, tx, ty);
+    setPower("inspect");
+    return;
+  }
+  // A squad's label in the wide view: its orders.
+  const banner = power === "inspect" ? renderer.bannerAt(sx, sy) : null;
+  if (banner !== null) {
+    openOrders(banner);
+    return;
+  }
   // A runner is a soldier like any other now: clicking him selects him (below). Clicking the envelope over his head follows him.
   for (const r of world.runners) {
     const rx = r.x * TILE + 8, ry = r.y * TILE + 8;
@@ -2156,6 +2516,7 @@ canvas.addEventListener("pointerup", (ev) => {
 });
 canvas.addEventListener("pointercancel", (ev) => {
   dragging = false;
+  pin.fire = false;
   touches.delete(ev.pointerId);
   if (touches.size < 2) pinch = null;
 });
@@ -2209,6 +2570,27 @@ window.addEventListener("keydown", (ev) => {
   if ((ev.target as HTMLElement).tagName === "INPUT") return;
   const k = ev.key.toLowerCase();
   keys.add(k);
+  // A man under control: WASD walks him, and a few keys are his.
+  if (controlId !== null && !$("modal").classList.contains("open")) {
+    if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) {
+      ev.preventDefault();
+      return;
+    }
+    if (k === "c") return cycleStance();
+    if (k === "r") {
+      pin.reload = true;
+      return pilotFrame();
+    }
+    if (k === "g") {
+      pin.grenade = true;
+      return pilotFrame();
+    }
+    if (k === "t" || k === "escape") return releaseControl();
+  } else if (k === "t") {
+    const s = world.maybe(selected);
+    if (s) takeControl(s.id);
+    return;
+  }
   if (k === " ") {
     paused = !paused;
     syncControls();
@@ -2231,6 +2613,7 @@ window.addEventListener("keydown", (ev) => {
   else if (k === "i") setPower("inspect");
   else if (k === "escape") {
     $("modal").classList.remove("open");
+    if (power === "inspect") closeOrders();
     setPower("inspect");
   }
 });
@@ -2239,6 +2622,14 @@ window.addEventListener("keyup", (ev) => keys.delete(ev.key.toLowerCase()));
 function panCamera(dt: number): void {
   const v = (keys.has("shift") ? 2500 : 1100) * dt / cam.zoom;
   let moved = false;
+  // WASD walks the man under control instead; the camera keeps on him.
+  if (controlId !== null) {
+    if (keys.has("q") || keys.has("e")) {
+      const rect = canvas.getBoundingClientRect();
+      zoomToward(cam.zoom * Math.exp((keys.has("e") ? 1 : -1) * dt * 2.4), rect.width / 2, rect.height / 2);
+    }
+    return;
+  }
   if (keys.has("w") || keys.has("arrowup")) { cam.y -= v; moved = true; }
   if (keys.has("s") || keys.has("arrowdown")) { cam.y += v; moved = true; }
   if (keys.has("a") || keys.has("arrowleft")) { cam.x -= v; moved = true; }
@@ -2308,6 +2699,13 @@ function openPerson(id: number): void {
 }
 // The roster is redrawn as the battle goes on, which can swallow a click: act on the press instead.
 document.addEventListener("pointerdown", (ev) => {
+  // The squads list is redrawn often too: open a squad's orders on the press.
+  const og = (ev.target as HTMLElement).closest<HTMLElement>("[data-orders]");
+  if (og) {
+    lastPersonPress = performance.now();
+    openOrders(Number(og.dataset.orders));
+    return;
+  }
   const a = (ev.target as HTMLElement).closest<HTMLElement>("#roster [data-person]");
   if (!a) return;
   lastPersonPress = performance.now();
@@ -2331,6 +2729,9 @@ document.addEventListener("click", (ev) => {
     if (t.closest("#modal")) $("modal").classList.remove("open");
     return;
   }
+  const ob = t.closest<HTMLElement>("[data-order]");
+  if (ob) return orderButton(ob.dataset.order!);
+  if (t.closest("[data-orders]")) return;
   const run = t.closest<HTMLElement>("[data-runner]");
   if (run) {
     const id = Number(run.dataset.runner);
@@ -2600,12 +3001,17 @@ requestAnimationFrame(frame);
   select,
   director,
   cam,
+  renderer,
   /** Where a man is on screen right now, for tests. */
   screenOf: (id: number) => renderer.screenOf(world.soldier(id), cam, prev),
   sfx,
   chains,
   /** Calls down the player's 105 mm barrage on a tile: squad.barrage(127, 90). */
   barrage: (x: number, y: number) => engine.intervene({ kind: "artillery", x, y }),
+  /** Orders a squad: squad.order(2, "move", 80, 120). */
+  order: (id: number, order: "move" | "assault" | "suppress" | "hold" | "resume", x = 0, y = 0) => giveSquadOrder(id, order, x, y),
+  /** Takes control of a man, or lets him go: squad.control(14), squad.control(null). */
+  control: (id: number | null) => (id === null ? releaseControl() : takeControl(id)),
   startCine: (id: number) => {
     const c = chains.get(id);
     if (c) startCine(c);

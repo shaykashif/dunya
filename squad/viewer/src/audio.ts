@@ -27,6 +27,9 @@ export interface PlayOptions {
   rate?: number;
   /** Seconds from now. */
   delay?: number;
+  /** Cut the recording short: it plays this many seconds, then fades out over `fade` (default 0.05 s). */
+  tail?: number;
+  fade?: number;
   /** Seconds into the sample to start from. */
   offset?: number;
   /** Lets a sound through when voices are scarce. */
@@ -484,7 +487,14 @@ export class Sfx {
       src.disconnect();
     };
     const offset = Math.max(0, Math.min(buf.duration - 0.05, o.offset ?? 0));
-    src.start(ctx.currentTime + Math.max(0, o.delay ?? 0), offset);
+    const at = ctx.currentTime + Math.max(0, o.delay ?? 0);
+    src.start(at, offset);
+    if (o.tail !== undefined && o.tail < buf.duration / rate) {
+      const fade = o.fade ?? 0.05;
+      g.gain.setValueAtTime(g.gain.value, at + o.tail);
+      g.gain.linearRampToValueAtTime(0, at + o.tail + fade);
+      src.stop(at + o.tail + fade + 0.01);
+    }
     if (o.x !== undefined && gain > 0.2) this.intensity = Math.min(1, this.intensity + 0.012 * gain);
     return true;
   }

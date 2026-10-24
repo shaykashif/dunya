@@ -409,7 +409,9 @@ export type SquadState =
   /** Moving up to bolster another squad that called for help. */
   | "reinforce"
   /** Waiting at the jump-off line for the mortars and the smoke, then going in. */
-  | "stage";
+  | "stage"
+  /** Carrying out an order the player gave it (see `Directive`). */
+  | "orders";
 
 export type FirePolicy = "hold" | "return" | "free";
 
@@ -423,6 +425,39 @@ export interface ElementOrder {
   pace: Pace;
   fire: FirePolicy;
   issued: number;
+}
+
+/**
+ * An order the player has given a squad: go to a place (bounding, as it would
+ * anyway), assault it, put fire on it, or hold where it is. The squad carries
+ * it out itself, its own way, until told otherwise; a move ends in a hold.
+ */
+export interface Directive {
+  kind: "move" | "assault" | "suppress" | "hold";
+  at: Point;
+  tick: number;
+}
+
+/**
+ * A man the player is steering: which way he is going, whether he is running,
+ * how low he keeps, where he is looking and whether the trigger is down. Set
+ * only by interventions, so a run with a man under control replays exactly.
+ */
+export interface Pilot {
+  id: number;
+  dx: number;
+  dy: number;
+  sprint: boolean;
+  stance: Posture;
+  aim: Point | null;
+  /** The trigger held down, and a pull since the last tick (so a click shorter than a tick still fires). */
+  firing: boolean;
+  pull: boolean;
+  /** Reload when he next can; throw a grenade at the aim point when he next can. */
+  reload: boolean;
+  grenade: boolean;
+  moveAcc: number;
+  since: number;
 }
 
 export interface Squad {
@@ -480,6 +515,8 @@ export interface Squad {
   sweep: { house: number; tick: number; held: boolean } | null;
   /** A sniper is working on the squad: where they think he is, and when he last fired. */
   sniperAlert: { x: number; y: number; tick: number } | null;
+  /** The player's order, while it stands. */
+  directive: Directive | null;
 }
 
 export interface FireMission {

@@ -4,7 +4,7 @@ import type { EventLog, SimEvent } from "../log/events.ts";
 import type { SimConfig } from "../scenario/config.ts";
 import type { Building, Layout } from "./layout.ts";
 import { type GameMap, cheb, findPath } from "./map.ts";
-import { MAX_FLOORS, isArmourRole, type Season, type Tank, type Weather, type BattlePhase, type BattleResult, type Corpse, type Impact, type Ordnance, type Platoon, type Point, type Runner, type Side, type SmokeCloud, type Soldier, type Squad } from "./types.ts";
+import { MAX_FLOORS, isArmourRole, type Season, type Tank, type Weather, type BattlePhase, type BattleResult, type Corpse, type Impact, type Ordnance, type Pilot, type Platoon, type Point, type Runner, type Side, type SmokeCloud, type Soldier, type Squad } from "./types.ts";
 
 export class World {
   readonly config: SimConfig;
@@ -45,6 +45,8 @@ export class World {
   attacker: Side;
   /** Ticks the attackers have held the objective unopposed. */
   objectiveHeld = 0;
+  /** The man the player is steering, if any. */
+  pilot: Pilot | null = null;
   /** Outcomes thirty days on, for the after-action report. */
   aftermath: Record<number, { outcome: string; lasting: string[]; died: boolean }> | null = null;
   private ids: Record<string, number> = {};
