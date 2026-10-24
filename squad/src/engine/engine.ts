@@ -481,12 +481,16 @@ export class Engine {
     const pace: Pace = !legs || p.stance === "prone" ? "crawl" : p.sprint && s.status === "active" ? "rush" : p.stance === "crouch" ? "crouch" : "walk";
     const moving = (p.dx !== 0 || p.dy !== 0) && (legs || armFactor(s) > 0.35);
     if (moving) {
-      // Setting off, he takes his first step at once rather than a second or two later (up to a tile of open ground: not over a bank).
-      if (p.moveAcc === 0 && legs) {
+      const gain = legs ? speedOf(w, s, pace) : w.config.movement.speed.crawl * 0.5;
+      // Setting off or turning, he takes his first step at once rather than a second or two later: on open ground, not
+      // over a bank. No more than three seconds' going at his pace (one, flat on his belly), so turning to and fro does
+      // not make a man crawl faster.
+      if (legs && (p.dx !== p.heading[0] || p.dy !== p.heading[1])) {
         const first = this.pilotNext(s, p.dx, p.dy);
-        if (first >= 0) p.moveAcc = Math.min(1.5, w.map.stepCost(w.cellOf(s), first));
+        if (first >= 0) p.moveAcc = Math.max(p.moveAcc, Math.min(1.5, gain * (pace === "crawl" ? 1 : 3), w.map.stepCost(w.cellOf(s), first)));
       }
-      p.moveAcc += legs ? speedOf(w, s, pace) : w.config.movement.speed.crawl * 0.5;
+      p.heading = [p.dx, p.dy];
+      p.moveAcc += gain;
       const n = w.map.tiles;
       const trail = w.trails.get(s.id) ?? [];
       let stepped = 0;
@@ -511,7 +515,10 @@ export class Engine {
         w.trails.set(s.id, trail);
         if (spec?.setup) s.cooldowns["movedAt"] = w.tick;
       }
-    } else p.moveAcc = 0;
+    } else {
+      p.moveAcc = 0;
+      p.heading = [0, 0];
+    }
     s.posture = s.status === "casualty" ? "prone" : moving ? postureFor(pace) : p.stance;
     if (moving && s.z === 0 && (w.map.at(s.x, s.y) === "hedge" || w.map.at(s.x, s.y) === "wire")) s.posture = "stand";
     if (!p.aim || !hands) return;

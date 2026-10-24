@@ -457,6 +457,8 @@ export interface Pilot {
   reload: boolean;
   grenade: boolean;
   moveAcc: number;
+  /** The way he is going ([0, 0] standing): a change of it gets a quick first step. */
+  heading: [number, number];
   since: number;
 }
 

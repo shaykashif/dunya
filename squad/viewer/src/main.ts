@@ -1295,6 +1295,8 @@ function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: fal
   quickId = null;
   $("quick").classList.remove("open");
   controlId = null;
+  timeDebt = 0;
+  carry = null;
   orderSquad = null;
   renderer.orderSquad = null;
   renderer.pilotAim = null;
@@ -1399,8 +1401,13 @@ async function advanceWithin(budget: number): Promise<void> {
   const start = performance.now();
   while (acc >= 1 && performance.now() - start < budget && !paused) {
     prev = new Map(world.soldiers.map((s) => [s.id, { x: s.x, y: s.y }]));
-    await engine.step();
+    if (carry) {
+      prev.set(carry.id, { x: carry.x, y: carry.y });
+      carry = null;
+    }
+    // Counted before the step runs: the frame drawn while it is under way starts the new glide, not the end of the old one.
     acc -= 1;
+    await engine.step();
   }
   if (acc > 2) acc = 1.99;
   busy = false;
@@ -1412,6 +1419,12 @@ function frame(t: number): void {
   lastTime = t;
   if (!paused && !busy) {
     acc += dt * SPEEDS[speed]!.tps;
+    // Paying back seconds run early for the man under control.
+    if (timeDebt > 0) {
+      const pay = Math.min(timeDebt, dt * SPEEDS[speed]!.tps * 0.25);
+      acc -= pay;
+      timeDebt -= pay;
+    }
     if (acc >= 1) void advanceWithin(FRAME_BUDGET_MS);
   }
   const alpha = Math.min(1, acc);
@@ -2096,7 +2109,9 @@ let controlAsked = 0;
 /** The controls as they stand: how low he keeps, the trigger, keys pressed since the last tick, the thumb stick, the last touch. */
 const pin = { stance: "crouch" as Posture, fire: false, reload: false, grenade: false, stick: { dx: 0, dy: 0, sprint: false }, touchAim: null as { x: number; y: number } | null };
 let lastSteer = "";
-let lastHurry = 0;
+/** Seconds of battle run early for the man under control, paid back by running a little slow; and where he was drawn when the early second came. */
+let timeDebt = 0;
+let carry: { id: number; x: number; y: number } | null = null;
 let stickId: number | null = null;
 const coarse = (): boolean => window.matchMedia("(pointer: coarse)").matches;
 
@@ -2160,19 +2175,32 @@ function endControl(): void {
   if (world) renderInspector();
 }
 
+/**
+ * Brings the next tick forward, so a change of the controls takes effect now
+ * rather than up to a second later. The time is owed, and paid back by running
+ * at 75% until it is (at most three seconds owed at once), so the battle keeps
+ * to real time. The man is drawn on from where he was, not snapped to the end of his step.
+ */
+function hurry(): void {
+  if (paused || busy || acc >= 1 || timeDebt + (1 - acc) > 3 || controlId === null) return;
+  const s = world.maybe(controlId);
+  const p = s ? prev.get(s.id) : undefined;
+  if (s && p) {
+    const a = Math.max(0, acc);
+    carry = { id: s.id, x: p.x + (s.x - p.x) * a, y: p.y + (s.y - p.y) * a };
+  }
+  timeDebt += 1 - acc;
+  acc = 1;
+}
+
 /** Sends the controls to the engine when they change: a steer is logged and replayed like any intervention. */
 function sendSteer(dx: number, dy: number, sprint: boolean, aim: { x: number; y: number } | null): void {
   const a: [number, number] | null = aim ? [Math.floor(aim.x), Math.floor(aim.y)] : null;
   const key = `${dx},${dy},${sprint},${pin.stance},${a ? a.join(",") : "-"},${pin.fire}`;
   if (key === lastSteer && !pin.reload && !pin.grenade) return;
-  // Setting off or pulling the trigger: bring the next second forward, so he answers at once. At most once every two
-  // seconds, so tapping keys cannot hurry the battle along.
+  // Setting off, turning, stopping, pulling the trigger: the next second comes at once, so he answers at once.
   const was = lastSteer.split(",");
-  const starts = ((dx !== 0 || dy !== 0) && was[0] === "0" && was[1] === "0") || (pin.fire && was[was.length - 1] !== "true") || pin.grenade;
-  if (starts && !paused && performance.now() - lastHurry > 2000) {
-    acc = 1;
-    lastHurry = performance.now();
-  }
+  if (was[0] !== String(dx) || was[1] !== String(dy) || (pin.fire && was[was.length - 1] !== "true") || pin.grenade) hurry();
   engine.intervene({ kind: "steer", dx, dy, sprint, stance: pin.stance, aim: a, fire: pin.fire, ...(pin.reload ? { reload: true } : {}), ...(pin.grenade ? { grenade: true } : {}) });
   lastSteer = key;
   pin.reload = false;
@@ -2344,10 +2372,16 @@ function tileAt(clientX: number, clientY: number): { x: number; y: number } {
 canvas.addEventListener("pointerdown", (ev) => {
   // A man under control: the left button is the trigger, the right a grenade. A finger on the map aims and fires.
   if (controlId !== null && ev.pointerType !== "touch") {
-    canvas.setPointerCapture(ev.pointerId);
+    const rect = canvas.getBoundingClientRect();
+    hover = { sx: ev.clientX - rect.left, sy: ev.clientY - rect.top };
     if (ev.button === 0) pin.fire = true;
     else if (ev.button === 2) pin.grenade = true;
     pilotFrame();
+    try {
+      canvas.setPointerCapture(ev.pointerId);
+    } catch {
+      // The button is already up.
+    }
     return;
   }
   touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
@@ -3004,6 +3038,8 @@ requestAnimationFrame(frame);
   renderer,
   /** Where a man is on screen right now, for tests. */
   screenOf: (id: number) => renderer.screenOf(world.soldier(id), cam, prev),
+  /** Where a man is drawn on the map right now, in world pixels, for tests. */
+  drawnAt: (id: number) => renderer.worldPos(world.soldier(id), prev, renderer.alpha),
   sfx,
   chains,
   /** Calls down the player's 105 mm barrage on a tile: squad.barrage(127, 90). */

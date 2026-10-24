@@ -72,7 +72,7 @@ export function applyIntervention(w: World, cmd: Intervention): void {
       releasePilot(w, "another");
       if (s.carryingId !== null) setDown(w, s, "the player took him in hand");
       s.act = null;
-      w.pilot = { id: s.id, dx: 0, dy: 0, sprint: false, stance: s.posture === "prone" ? "prone" : "crouch", aim: null, firing: false, pull: false, reload: false, grenade: false, moveAcc: 0, since: w.tick };
+      w.pilot = { id: s.id, dx: 0, dy: 0, sprint: false, stance: s.posture === "prone" ? "prone" : "crouch", aim: null, firing: false, pull: false, reload: false, grenade: false, moveAcc: 0, heading: [0, 0], since: w.tick };
       w.emit("control", [s.id], { person: s.id, on: true });
       return;
     }
