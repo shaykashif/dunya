@@ -8,7 +8,7 @@ Commit `d8aa542`.
 
 ### New
 
-- **Selecting several squads.** Drag a box with the left button round the squads you want; shift-click a label to add one or take it out. The orders panel then speaks to all of them.
+- **Selecting several squads.** Drag a box with the left button round the squads you want; shift-click a label to add one or take it out. The orders panel then speaks to all of them. A click anywhere else on the map lets them go (shift-click keeps them).
 - **Orders along a line.** With Move to, Assault or Suppress chosen, hold the left button and draw a line (a finger works too):
   - **Move to:** the squad moves up to near the line, then every man takes his own spot along it, and they hold it.
   - **Assault:** the same, but the last stretch is rushed, firing.

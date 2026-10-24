@@ -2627,6 +2627,8 @@ canvas.addEventListener("pointerup", (ev) => {
     openOrders(banner, ev.shiftKey);
     return;
   }
+  // Anywhere else on the map lets the selected squads go (shift keeps them), and the click goes on to do what it does.
+  if (power === "inspect" && orderSquads.length > 0 && !ev.shiftKey) closeOrders();
   // A runner is a soldier like any other now: clicking him selects him (below). Clicking the envelope over his head follows him.
   for (const r of world.runners) {
     const rx = r.x * TILE + 8, ry = r.y * TILE + 8;
