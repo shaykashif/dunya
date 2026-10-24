@@ -46,7 +46,7 @@ export function emptyOrder(tick: number): ElementOrder {
 
 function setOrder(w: World, sq: Squad, el: "A" | "B", o: Omit<ElementOrder, "issued">): void {
   const prev = sq.orders[el];
-  const same = prev.kind === o.kind && prev.pace === o.pace && prev.fire === o.fire && JSON.stringify(prev.positions) === JSON.stringify(o.positions) && (prev.target?.x ?? -1) === (o.target?.x ?? -1) && (prev.target?.y ?? -1) === (o.target?.y ?? -1);
+  const same = prev.kind === o.kind && prev.pace === o.pace && prev.fire === o.fire && JSON.stringify(prev.positions) === JSON.stringify(o.positions) && (prev.target?.x ?? -1) === (o.target?.x ?? -1) && (prev.target?.y ?? -1) === (o.target?.y ?? -1) && JSON.stringify(prev.targets) === JSON.stringify(o.targets);
   if (same) return;
   sq.orders[el] = { ...o, issued: w.tick };
   // Interrupt men carrying out a superseded order.
@@ -2151,7 +2151,7 @@ const ORDER_SHOUTS: Record<Directive["kind"], [string, string]> = {
  * bounding to the place, assaulting it with the base of fire covering, getting
  * every man a line of fire on it, or holding where it is.
  */
-export function giveOrder(w: World, sq: Squad, kind: Directive["kind"] | "resume", at: Point): void {
+export function giveOrder(w: World, sq: Squad, kind: Directive["kind"] | "resume", at: Point, to: Point | null = null): void {
   const leader = w.maybe(sq.leaderId);
   if (kind === "resume") {
     if (!sq.directive) return;
@@ -2160,12 +2160,17 @@ export function giveOrder(w: World, sq: Squad, kind: Directive["kind"] | "resume
     w.emit("squad_order", leader ? [leader.id] : [], { squad: sq.id, kind: "resume" });
     return;
   }
-  if (sq.isHQ || sq.state === "broken" || sq.state === "withdraw" || w.phase !== "battle" || !leader) return;
+  // Rifle squads and machine-gun teams take orders; headquarters and the forward observers keep to their own work.
+  const pl = w.platoons[sq.side];
+  if (!pl.squadIds.includes(sq.id) && !pl.mgIds.includes(sq.id)) return;
+  if (sq.state === "broken" || sq.state === "withdraw" || w.phase !== "battle" || !leader) return;
   const men = ableMen(w, sq);
   if (men.length === 0) return;
   const pos = centroid(men);
-  const target = kind === "hold" ? { x: Math.round(pos.x), y: Math.round(pos.y) } : { x: Math.max(0, Math.min(w.map.width - 1, Math.round(at.x))), y: Math.max(0, Math.min(w.map.height - 1, Math.round(at.y))) };
-  sq.directive = { kind, at: target, tick: w.tick };
+  const clamp = (p: Point): Point => ({ x: Math.max(0, Math.min(w.map.width - 1, Math.round(p.x))), y: Math.max(0, Math.min(w.map.height - 1, Math.round(p.y))) });
+  const target = kind === "hold" ? { x: Math.round(pos.x), y: Math.round(pos.y) } : clamp(at);
+  const end = kind !== "hold" && to ? clamp(to) : null;
+  sq.directive = end && cheb(end, target) >= 2 ? { kind, at: target, to: end, tick: w.tick } : { kind, at: target, tick: w.tick };
   sq.route = [];
   sq.routeIdx = 0;
   sq.boundWp = -1;
@@ -2174,9 +2179,40 @@ export function giveOrder(w: World, sq: Squad, kind: Directive["kind"] | "resume
   sq.refuge = null;
   sq.resume = null;
   waitingSinceOf(w).delete(sq.id);
-  setState(w, sq, "orders", kind === "hold" ? "on orders, holding where they are" : `ordered to ${ORDER_WORDS[kind]} the ground ${bearing(pos, target)}`);
+  const line = sq.directive.to ? lineOf(sq.directive) : null;
+  setState(w, sq, "orders", kind === "hold" ? "on orders, holding where they are" : line ? `ordered to ${kind === "suppress" ? "spread their fire along" : kind === "assault" ? "rush up to" : "move up to"} a line ${Math.round(dist(line.a, line.b) * 3)} m long, ${bearing(pos, line.mid)}` : `ordered to ${ORDER_WORDS[kind]} the ground ${bearing(pos, target)}`);
   shout(w, leader, ORDER_SHOUTS[kind][sq.side === "us" ? 0 : 1], null);
-  w.emit("squad_order", [leader.id], { squad: sq.id, kind, at: [target.x, target.y] });
+  w.emit("squad_order", [leader.id], { squad: sq.id, kind, at: [target.x, target.y], ...(sq.directive.to ? { to: [sq.directive.to.x, sq.directive.to.y] } : {}) });
+}
+
+/** A line order's two ends and its middle. */
+function lineOf(d: Directive): { a: Point; b: Point; mid: Point } {
+  const b = d.to ?? d.at;
+  return { a: d.at, b, mid: { x: Math.round((d.at.x + b.x) / 2), y: Math.round((d.at.y + b.y) / 2) } };
+}
+
+/**
+ * Men spread evenly along a line, in the order they stand along it so nobody
+ * crosses another: each man's point on it, or with `free` the nearest free
+ * tile to it that he can reach and nobody else has been given.
+ */
+function alongLine(w: World, men: readonly Soldier[], a: Point, b: Point, free: boolean): Record<number, Point> {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const sorted = [...men].sort((m, n) => (m.x - a.x) * dx + (m.y - a.y) * dy - ((n.x - a.x) * dx + (n.y - a.y) * dy) || m.id - n.id);
+  const out: Record<number, Point> = {};
+  const taken: Point[] = [];
+  sorted.forEach((m, i) => {
+    const t = (i + 0.5) / sorted.length;
+    const p = { x: Math.round(a.x + dx * t), y: Math.round(a.y + dy * t) };
+    if (!free) {
+      out[m.id] = p;
+      return;
+    }
+    const spot = w.freeTileNear(p, 3, m.id, (x, y) => !taken.some((q) => q.x === x && q.y === y) && w.map.reachable(m, { x, y })) ?? spotOf(m);
+    taken.push(spot);
+    out[m.id] = spot;
+  });
+  return out;
 }
 
 /** The nearest spot on the way to `at` from which it can be fired on, with some cover if there is a choice. */
@@ -2239,7 +2275,8 @@ function directiveStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void 
   const focus = pickFocus(w, sq, pos);
   if (focus) sq.focus = focus.at;
   const at = d.at;
-  const where = bearing(pos, at);
+  const line = d.to ? lineOf(d) : null;
+  const where = bearing(pos, line?.mid ?? at);
   // A defending platoon waiting for the word keeps its fire even under orders, unless the order is to shoot.
   const policy: FirePolicy = pl.role === "defend" && pl.killZone.sprung < 0 && !pl.withdrawing ? "hold" : "free";
   const holdAt = (positions: Record<number, Point> | null) => {
@@ -2251,6 +2288,32 @@ function directiveStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void 
       setOrder(w, sq, el, order("hold", keep, "crouch", policy));
     }
   };
+  // A line drawn for a move or an assault: bound up to near it, then every man to his own spot along it (the last
+  // stretch at a rush, firing, for an assault), and hold it once they are there.
+  if (line && (d.kind === "move" || d.kind === "assault")) {
+    if (sq.route.length === 0) {
+      sq.route = routeTo(w, sq.side, pos, w.freeTileNear(line.mid, 5) ?? line.mid);
+      sq.routeIdx = 0;
+      sq.boundWp = -1;
+      sq.bounding = "A";
+    }
+    if (sq.routeIdx < sq.route.length && dist(pos, line.mid) > (d.kind === "assault" ? 25 : 14)) {
+      advanceByBounds(w, sq, men, line.mid, facingFrom(pos, focus?.at ?? line.mid));
+      sq.state = "orders";
+      sq.intent = `on orders, moving up to the line ${where}: ${sq.intent.replace(/^on orders, moving up to the line [^:]*: /, "")}`;
+      return;
+    }
+    const spots = alongLine(w, all, line.a, line.b, true);
+    for (const el of ["A", "B"] as const) {
+      const mine: Record<number, Point> = {};
+      for (const m of men[el]) mine[m.id] = spots[m.id]!;
+      setOrder(w, sq, el, d.kind === "assault" ? order("assault", mine, "rush", "free", line.mid) : order("move", mine, "crouch", "return", line.mid));
+    }
+    sq.directive = { kind: "hold", at: d.at, to: line.b, settle: true, tick: w.tick };
+    sq.intent = d.kind === "assault" ? "on orders: rushing up to the line, firing as they go" : "on orders: getting into line along the ground they were given";
+    if (d.kind === "assault") shout(w, leader, leader.side === "us" ? "On line! Go, go, go!" : "In Linie! Marsch, marsch!", null);
+    return;
+  }
   switch (d.kind) {
     case "move": {
       if (sq.route.length === 0) {
@@ -2316,30 +2379,49 @@ function directiveStep(w: World, sq: Squad, pl: Platoon, leader: Soldier): void 
     }
     case "suppress": {
       // Men who have a line of fire on the place keep it; the rest go to where they can get one, up toward it if need be.
-      const face = facingFrom(pos, at);
+      // Along a line, each man has his own stretch of it to fire on.
+      const centre = line?.mid ?? at;
+      const aims = line ? alongLine(w, all, line.a, line.b, false) : null;
+      const face = facingFrom(pos, centre);
       for (const el of ["A", "B"] as const) {
         if (men[el].length === 0) continue;
         const prev = sq.orders[el].positions;
         const spots: Record<number, Point> = {};
+        const targets: Record<number, Point> = {};
         const need: Soldier[] = [];
         for (const m of men[el]) {
+          const aim = aims?.[m.id] ?? at;
+          targets[m.id] = aim;
           const p = prev[m.id];
-          if (p && cheb(p, m) <= 6 && canFireOn(w, p, at)) spots[m.id] = p;
-          else if (canFireOn(w, m, at)) spots[m.id] = spotOf(m);
+          if (p && cheb(p, m) <= 6 && canFireOn(w, p, aim)) spots[m.id] = p;
+          else if (canFireOn(w, m, aim)) spots[m.id] = spotOf(m);
           else need.push(m);
         }
         if (need.length > 0) {
-          sq.flankPoint ??= firingBase(w, centroid(need), at);
-          const picked = pickPositions(w, need, sq.flankPoint ?? centroid(need), face, 2, 6, at);
+          sq.flankPoint ??= firingBase(w, centroid(need), centre);
+          const picked = pickPositions(w, need, sq.flankPoint ?? centroid(need), face, 2, 6, centre);
           for (const m of need) spots[m.id] = picked[m.id] ?? spotOf(m);
         }
-        setOrder(w, sq, el, order("suppress", spots, need.length > 0 ? "rush" : "crouch", "free", at));
+        const o = order("suppress", spots, need.length > 0 ? "rush" : "crouch", "free", centre);
+        setOrder(w, sq, el, aims ? { ...o, targets } : o);
       }
       const reach = Math.max(...all.map((m) => (m.weapon ? w.config.weapons[m.weapon].maxRange : 0)));
-      sq.intent = dist(pos, at) > reach ? `on orders, firing on ${where}, though it is beyond their range` : `on orders, putting fire on ${where}`;
+      const what = line ? `fire along the line ${where}` : `fire on ${where}`;
+      sq.intent = dist(pos, centre) > reach ? `on orders, putting ${what}, though it is beyond their range` : `on orders, putting ${what}`;
       return;
     }
     case "hold": {
+      if (d.settle) {
+        // Getting into line: hold once most of each team is on its spot.
+        const placed = (["A", "B"] as const).every((el) => arrived(w, men[el], sq.orders[el], 1)) || w.tick - d.tick > 120;
+        if (!placed) return;
+        sq.directive = d.to ? { kind: "hold", at: d.at, to: d.to, tick: w.tick } : { kind: "hold", at: d.at, tick: w.tick };
+        holdAt(null);
+        sq.intent = "on orders: holding the line they were given";
+        shout(w, leader, sq.side === "us" ? "Hold this line!" : "Linie halten!", null);
+        w.emit("squad_order", [leader.id], { squad: sq.id, kind: "arrived", at: [d.at.x, d.at.y] });
+        return;
+      }
       holdAt(null);
       return;
     }

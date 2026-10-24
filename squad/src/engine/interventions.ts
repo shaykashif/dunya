@@ -14,8 +14,8 @@ export type Intervention =
   | { kind: "smoke"; x: number; y: number }
   /** A shot from an unseen sniper. */
   | { kind: "sniper"; personId: number }
-  /** An order to a squad: go to a place, assault it, fire on it, hold; or "resume" to hand it back to its leader. */
-  | { kind: "order"; squadId: number; order: Directive["kind"] | "resume"; x: number; y: number }
+  /** An order to a squad: go to a place, assault it, fire on it, hold; or "resume" to hand it back to its leader. With x2 and y2, a line from (x, y) to there. */
+  | { kind: "order"; squadId: number; order: Directive["kind"] | "resume"; x: number; y: number; x2?: number; y2?: number }
   /** Take a man under control, or (null) let him go back to his own devices. */
   | { kind: "control"; personId: number | null }
   /** The controls of the man under control, sent as they change: which way, how fast, how low, where he looks, the trigger. */
@@ -61,7 +61,7 @@ export function applyIntervention(w: World, cmd: Intervention): void {
     }
     case "order": {
       const sq = w.squads[cmd.squadId];
-      if (sq) giveOrder(w, sq, cmd.order, { x: cmd.x, y: cmd.y });
+      if (sq) giveOrder(w, sq, cmd.order, { x: cmd.x, y: cmd.y }, cmd.x2 !== undefined && cmd.y2 !== undefined ? { x: cmd.x2, y: cmd.y2 } : null);
       return;
     }
     case "control": {

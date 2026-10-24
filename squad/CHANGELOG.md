@@ -2,6 +2,25 @@
 
 What changed in the squad simulation, newest first. The reasons behind each change are in [`DECISIONS.md`](DECISIONS.md), and every number mentioned here lives in `src/scenario/config.ts`.
 
+## 23 October 2026: selecting squads with a box, and orders along a line
+
+### New
+
+- **Selecting several squads.** Drag a box with the left button round the squads you want; shift-click a label to add one or take it out. The orders panel then speaks to all of them.
+- **Orders along a line.** With Move to, Assault or Suppress chosen, hold the left button and draw a line (a finger works too):
+  - **Move to:** the squad moves up to near the line, then every man takes his own spot along it, and they hold it.
+  - **Assault:** the same, but the last stretch is rushed, firing.
+  - **Suppress:** each man fires on his own stretch of the line.
+
+  Several squads share the line out, each taking the stretch nearest it. A plain click still gives a single spot, and several squads sent to one spot fan out across it.
+- **A Take control button** beside Barrage, Smoke and Sniper: it takes the selected man, or asks you to click one.
+
+### Changed
+
+- **Panning** is now the right or middle button (or WASD); the left button selects. A finger still drags the map on a phone.
+- The help line along the bottom is one line again, so it no longer runs under the powers bar.
+- Headquarters and the forward observation teams no longer take orders: they never carried them out.
+
 ## 23 October 2026: orders for squads, and a man of your own
 
 ### New

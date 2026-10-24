@@ -48,6 +48,43 @@ describe("the player's orders and the man under control", () => {
     expect(rounds).toBeGreaterThan(10);
   });
 
+  it("a squad sent up to a line drawn on the map strings out along it and holds it", async () => {
+    const engine = createSimulation({ seed: 42 });
+    await engine.runTicks(60);
+    const w = engine.world;
+    const sq = w.squad(w.platoons[w.attacker].squadIds[0]!);
+    const men = () => sq.members.map((id) => w.soldier(id)).filter((m) => w.able(m));
+    const c = centroid(men());
+    const a = w.freeTileNear({ x: Math.round(c.x + 8), y: Math.round(c.y - 4) }, 4)!;
+    const b = w.freeTileNear({ x: Math.round(c.x + 30), y: Math.round(c.y - 4) }, 4)!;
+    engine.intervene({ kind: "order", squadId: sq.id, order: "move", x: a.x, y: a.y, x2: b.x, y2: b.y });
+    await engine.runTicks(240);
+    expect(sq.directive?.kind).toBe("hold");
+    expect(sq.directive?.to).toEqual(b);
+    // Close to the line, and spread along most of it rather than bunched at one point.
+    const off = (m: { x: number; y: number }) => Math.abs((b.y - a.y) * m.x - (b.x - a.x) * m.y + b.x * a.y - b.y * a.x) / Math.hypot(b.x - a.x, b.y - a.y);
+    const near = men().filter((m) => off(m) <= 4);
+    expect(near.length).toBeGreaterThanOrEqual(Math.ceil(men().length * 0.6));
+    const xs = near.map((m) => m.x);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan((b.x - a.x) * 0.5);
+  });
+
+  it("a squad told to suppress along a line gives each man his own stretch of it", async () => {
+    const engine = createSimulation({ seed: 42 });
+    await engine.runTicks(60);
+    const w = engine.world;
+    const sq = w.squad(w.platoons[w.attacker].squadIds[0]!);
+    const c = centroid(sq.members.map((id) => w.soldier(id)));
+    const ahead = w.platoons[w.attacker].rearY > c.y ? -25 : 25;
+    const a = { x: Math.round(c.x - 15), y: Math.round(c.y + ahead) }, b = { x: Math.round(c.x + 15), y: Math.round(c.y + ahead) };
+    engine.intervene({ kind: "order", squadId: sq.id, order: "suppress", x: a.x, y: a.y, x2: b.x, y2: b.y });
+    await engine.runTicks(6);
+    const aims = Object.values({ ...sq.orders.A.targets, ...sq.orders.B.targets });
+    expect(aims.length).toBeGreaterThan(5);
+    expect(new Set(aims.map((p) => p.x)).size).toBeGreaterThan(5);
+    for (const p of aims) expect(Math.abs(p.y - a.y)).toBeLessThanOrEqual(1);
+  });
+
   it("a man under control walks where he is steered, fires where he looks, and is let go when he is killed", async () => {
     const engine = createSimulation({ seed: 42 });
     await engine.runTicks(40);

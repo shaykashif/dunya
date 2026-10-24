@@ -277,7 +277,8 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
     }
     // ---- Suppress what can't be seen ----
     const points: Point[] = [];
-    if (order.kind === "suppress" && order.target) points.push(order.target);
+    const myTarget = order.targets?.[s.id] ?? order.target;
+    if (order.kind === "suppress" && myTarget) points.push(myTarget);
     if (underFire && !waiting && s.underFire && !s.sees.includes(s.underFire.by)) points.push({ x: s.underFire.x, y: s.underFire.y });
     if (fire === "free" && contacts.length > 0 && !contacts[0]!.visible) points.push(contacts[0]!.z > 0 ? { x: contacts[0]!.x, y: contacts[0]!.y, z: contacts[0]!.z } : { x: contacts[0]!.x, y: contacts[0]!.y });
     if (alert) points.push({ x: alert.x, y: alert.y });
@@ -325,7 +326,7 @@ export function generateCandidates(w: World, s: Soldier): Candidate[] {
       // Not into friends: an assault going in near the target.
       if (w.friendsNear({ ...p, side: s.side, id: s.id }, 3).some((f) => w.able(f))) continue;
       seen.add(key);
-      const ordered = order.kind === "suppress" && order.target !== null && cheb(order.target, p) <= 2;
+      const ordered = order.kind === "suppress" && myTarget !== null && cheb(myTarget, p) <= 2;
       const atSniper = alert !== null && p.x === alert.x && p.y === alert.y;
       out.push(
         cand("suppress", `suppress:${key}`, `put fire on ${ordered ? "the enemy position" : atSniper ? "where the sniper might be" : "where the fire came from"}`, {

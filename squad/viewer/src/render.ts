@@ -861,6 +861,7 @@ export class Renderer {
     // The ambush countdown shows in the wide view, where the trap and the enemy walking into it can both be seen.
     if (cam.zoom < SQUAD_BANNER_ZOOM + SQUAD_BANNER_FADE) this.drawAmbushTimers(w, cam, prev, time);
     this.drawDirectives(w, cam, prev, time);
+    this.drawOrderLine(cam);
     this.drawPilot(w, cam, prev, time);
 
     // Screen space from here: the weather over everything, and the floor buttons.
@@ -868,12 +869,57 @@ export class Renderer {
     this.drawWeather(w, vw, vh, time);
     this.drawFloorButtons(w, cam, vw, vh, views);
     this.drawScopeButtons(w, cam, vw, vh, prev);
+    const box = this.selectBox;
+    if (box) {
+      g.fillStyle = "rgba(255,224,112,0.08)";
+      g.fillRect(box.x, box.y, box.w, box.h);
+      g.strokeStyle = "#ffe070";
+      g.lineWidth = 1;
+      g.setLineDash([5, 3]);
+      g.strokeRect(Math.round(box.x) + 0.5, Math.round(box.y) + 0.5, Math.round(box.w), Math.round(box.h));
+      g.setLineDash([]);
+    }
+  }
+
+  /** The line being drawn for an order, with a tick where it will be shared out between squads. */
+  private drawOrderLine(cam: Camera): void {
+    const l = this.orderLine;
+    if (!l) return;
+    const g = this.g;
+    const k = 1 / cam.zoom;
+    const ax = l.a.x * TILE, ay = l.a.y * TILE, bx = l.b.x * TILE, by = l.b.y * TILE;
+    const color = l.kind === "move" ? "#ffe070" : "#ff7a5a";
+    g.save();
+    for (const [c, wd] of [["#000000bb", 5 * k], [color, 2.5 * k]] as const) {
+      g.strokeStyle = c;
+      g.lineWidth = wd;
+      g.beginPath();
+      g.moveTo(ax, ay);
+      g.lineTo(bx, by);
+      g.stroke();
+    }
+    const len = Math.hypot(bx - ax, by - ay) || 1;
+    const nx = -(by - ay) / len, ny = (bx - ax) / len;
+    g.strokeStyle = color;
+    g.lineWidth = 2 * k;
+    for (let i = 0; i <= l.n; i++) {
+      const f = i / Math.max(1, l.n);
+      const x = ax + (bx - ax) * f, y = ay + (by - ay) * f;
+      g.beginPath();
+      g.moveTo(x - nx * 6 * k, y - ny * 6 * k);
+      g.lineTo(x + nx * 6 * k, y + ny * 6 * k);
+      g.stroke();
+    }
+    g.restore();
   }
 
   /** The squad labels drawn last frame, in screen (CSS) pixels: click one for that squad's orders. */
   private banners: { id: number; x: number; y: number; w: number; h: number }[] = [];
-  /** The squad the order panel is open for: its label is ringed and its order drawn boldly. */
-  orderSquad: number | null = null;
+  /** The squads the order panel is open for: their labels are ringed and their orders drawn boldly. */
+  orderSquads = new Set<number>();
+  /** A selection box being dragged (screen pixels), and a line being drawn for an order (tiles) with how many squads will share it. */
+  selectBox: { x: number; y: number; w: number; h: number } | null = null;
+  orderLine: { a: { x: number; y: number }; b: { x: number; y: number }; kind: string; n: number } | null = null;
   /** Where the player's man is looking (tiles, fractional) and whether the trigger is down, set by the page each frame. */
   pilotAim: { x: number; y: number } | null = null;
   pilotFiring = false;
@@ -910,8 +956,10 @@ export class Renderer {
       if (n === 0) continue;
       cx /= n;
       cy /= n;
-      const tx = d.at.x * TILE + 8, ty = d.at.y * TILE + 8;
-      const bold = sq.id === this.orderSquad;
+      // A line order is drawn as the line itself, the mark at its middle.
+      const end = d.to ?? d.at;
+      const tx = ((d.at.x + end.x) / 2) * TILE + 8, ty = ((d.at.y + end.y) / 2) * TILE + 8;
+      const bold = this.orderSquads.has(sq.id);
       const lw = Math.max(1, (bold ? 2.5 : 1.6) * k);
       g.save();
       g.strokeStyle = "#000000aa";
@@ -928,6 +976,16 @@ export class Renderer {
         g.stroke();
       }
       g.setLineDash([]);
+      if (d.to) {
+        for (const [c, wd] of [["#000000aa", lw + 3 * k], [d.kind === "assault" || d.kind === "suppress" ? "#ff7a5a" : sq.color, lw + k]] as const) {
+          g.strokeStyle = c;
+          g.lineWidth = wd;
+          g.beginPath();
+          g.moveTo(d.at.x * TILE + 8, d.at.y * TILE + 8);
+          g.lineTo(d.to.x * TILE + 8, d.to.y * TILE + 8);
+          g.stroke();
+        }
+      }
       const r = Math.max(9, 7 * k);
       const mark = () => {
         g.beginPath();
@@ -2040,7 +2098,7 @@ export class Renderer {
       g.fillRect(x, y, pad * 0.7, h);
       // Click a squad's label for its orders; the one being given orders is ringed in gold.
       if (!sq.isHQ && g.globalAlpha > 0.4) this.banners.push({ id: sq.id, x: (x - cam.x) * cam.zoom, y: (y - cam.y) * cam.zoom, w: wBox * cam.zoom, h: h * cam.zoom });
-      if (sq.id === this.orderSquad) {
+      if (this.orderSquads.has(sq.id)) {
         g.strokeStyle = "#ffe070";
         g.lineWidth = 2 * k;
         g.strokeRect(x - k, y - k, wBox + 2 * k, h + 2 * k);

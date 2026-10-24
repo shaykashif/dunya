@@ -422,6 +422,8 @@ export interface ElementOrder {
   positions: Record<number, Point>;
   /** Where to direct fire, if suppressing. */
   target: Point | null;
+  /** Each man's own aim point, when the fire is spread along a line. */
+  targets?: Record<number, Point>;
   pace: Pace;
   fire: FirePolicy;
   issued: number;
@@ -435,6 +437,10 @@ export interface ElementOrder {
 export interface Directive {
   kind: "move" | "assault" | "suppress" | "hold";
   at: Point;
+  /** The other end of a line drawn on the map, from `at`: the squad lines up along it, or spreads its fire along it. */
+  to?: Point;
+  /** Holding, but still getting into line. */
+  settle?: boolean;
   tick: number;
 }
 

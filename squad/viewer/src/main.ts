@@ -66,7 +66,7 @@ let selected: number | null = null;
 let follow = false;
 let userCamera = false;
 let lastSize = "";
-let power: "inspect" | "artillery" | "smoke" | "sniper" | "move" | "assault" | "suppress" = "inspect";
+let power: "inspect" | "artillery" | "smoke" | "sniper" | "move" | "assault" | "suppress" | "control" = "inspect";
 let tab = "men";
 let dirty = { feed: true, events: true };
 let reportShown = false;
@@ -1170,7 +1170,7 @@ function toastFor(e: SimEvent): void {
       if (!sq) break;
       if (d.kind === "arrived") toast("squad", "In position", `${sq.name} has reached the place you sent it and is holding it.`, [], sq.color, sq.id);
       else if (d.kind === "resume" && d.why === "withdraw") toast("squad", "Orders cancelled", `${sq.name} is pulling back with the platoon.`, [], sq.color, sq.id);
-      if (sq.id === orderSquad) renderOrders();
+      if (orderSquads.includes(sq.id)) renderOrders();
       break;
     }
     case "squad_state":
@@ -1297,8 +1297,8 @@ function newBattle(seed: number, opts: { cinematic: boolean } = { cinematic: fal
   controlId = null;
   timeDebt = 0;
   carry = null;
-  orderSquad = null;
-  renderer.orderSquad = null;
+  orderSquads = [];
+  renderer.orderSquads = new Set();
   renderer.pilotAim = null;
   document.body.classList.remove("piloting");
   $("orders").hidden = true;
@@ -2040,28 +2040,42 @@ function openReport(): void {
 type OrderPower = "move" | "assault" | "suppress";
 const isOrderPower = (p: string): p is OrderPower => p === "move" || p === "assault" || p === "suppress";
 const ORDER_HINT: Record<OrderPower, string> = {
-  move: "Click where the squad should go. It bounds there its own way, then holds it.",
-  assault: "Click the position to take. The base of fire pins it while the rifle team rushes it, grenades and all.",
-  suppress: "Click where the squad should put its fire. Men with no line of fire move up until they have one.",
+  move: "Click where to go, or hold the button and draw a line for them to line up along. They bound there their own way, then hold it.",
+  assault: "Click the position to take, or draw a line to rush up to. The base of fire pins it while the rifle team rushes it, grenades and all.",
+  suppress: "Click where to put the fire, or draw a line to spread it along. Men with no line of fire move up until they have one.",
 };
 const DIRECTIVE_WORDS: Record<string, string> = { move: "moving where you sent them", assault: "assaulting the position you gave them", suppress: "putting fire where you told them", hold: "holding where you told them" };
 
-/** The squad whose orders panel is open. */
-let orderSquad: number | null = null;
+/** The squads the orders panel is open for: one from a label, several from a box dragged round them. */
+let orderSquads: number[] = [];
 
-function openOrders(id: number): void {
+/** Rifle squads and machine-gun teams take orders; headquarters and the forward observers do not. */
+function orderable(id: number): boolean {
   const sq = world.squads[id];
-  if (!sq || sq.isHQ) return;
-  orderSquad = id;
-  renderer.orderSquad = id;
+  if (!sq) return false;
+  const pl = world.platoons[sq.side];
+  return pl.squadIds.includes(id) || pl.mgIds.includes(id);
+}
+
+/** Opens the orders for a squad; with `add`, puts it in the selection (or takes it out) instead. */
+function openOrders(id: number, add = false): void {
+  if (!orderable(id)) return;
+  const next = add ? (orderSquads.includes(id) ? orderSquads.filter((x) => x !== id) : [...orderSquads, id]) : [id];
+  selectSquads(next);
+}
+
+function selectSquads(ids: number[]): void {
+  orderSquads = ids.filter(orderable);
+  renderer.orderSquads = new Set(orderSquads);
+  if (orderSquads.length === 0) return closeOrders();
   if (isOrderPower(power)) setPower("inspect");
   renderOrders();
   trackFirstInteraction("orders");
 }
 
 function closeOrders(): void {
-  orderSquad = null;
-  renderer.orderSquad = null;
+  orderSquads = [];
+  renderer.orderSquads = new Set();
   if (isOrderPower(power)) setPower("inspect");
   $("orders").hidden = true;
 }
@@ -2069,36 +2083,112 @@ function closeOrders(): void {
 /** The panel beside the powers: who, what they are doing, and the orders that can be given. */
 function renderOrders(): void {
   const el = $("orders");
-  const sq = orderSquad !== null ? world.squads[orderSquad] : undefined;
-  if (!sq) {
+  const squads = orderSquads.map((id) => world.squads[id]!).filter(Boolean);
+  if (squads.length === 0) {
     el.hidden = true;
     return;
   }
-  const men = sq.members.map((id) => world.soldier(id));
+  const men = squads.flatMap((sq) => sq.members.map((id) => world.soldier(id)));
   const able = men.filter((m) => world.able(m)).length;
-  const d = sq.directive;
-  const status = able === 0 ? "Nobody left on his feet to give orders to." : sq.state === "broken" || sq.state === "withdraw" ? "Pulling back: it will not take orders now." : d ? `Under your orders: ${DIRECTIVE_WORDS[d.kind]}.` : "Following the platoon's plan. Give it an order of your own:";
+  const one = squads.length === 1 ? squads[0]! : null;
+  const d = one?.directive;
+  const ordered = squads.some((sq) => sq.directive);
+  const status = able === 0 ? "Nobody left on his feet to give orders to." : one && (one.state === "broken" || one.state === "withdraw") ? "Pulling back: it will not take orders now." : d ? `Under your orders: ${DIRECTIVE_WORDS[d.kind]}.` : one ? "Following the platoon's plan. Give it an order of your own:" : `${squads.length} squads: an order goes to all of them, and a line is shared out between them. Shift-click a label to add or drop one.`;
   const hint = isOrderPower(power) ? `<b>${ORDER_HINT[power]}</b>` : esc(status);
   const btn = (k: string, text: string, title: string) => `<button data-order="${k}" class="${power === k ? "on" : ""}" title="${title}">${text}</button>`;
-  const html = `<span class="who"><em class="sw" style="background:${sq.color}"></em>${esc(sq.name)} · ${able}/${men.length}</span>${btn("move", "Move to", "Send the squad to a place: it bounds there and holds it")}${btn("assault", "Assault", "Take a position: base of fire and a rush")}${btn("suppress", "Suppress", "Put the squad's fire on a place")}${btn("hold", "Hold", "Stay where they are and fight from there")}${d ? btn("resume", "Carry on", "Back to the platoon's own plan") : ""}<button data-order="close" title="Close (Esc)">${icon("close")}</button><div class="ohint">${hint}</div>`;
+  const who = one ? `<em class="sw" style="background:${one.color}"></em>${esc(one.name)} · ${able}/${men.length}` : `${squads.map((sq) => `<em class="sw" style="background:${sq.color}" title="${esc(sq.name)}"></em>`).join("")} ${squads.length} squads · ${able} men`;
+  const html = `<span class="who">${who}</span>${btn("move", "Move to", "Send them to a place, or draw a line for them to line up along")}${btn("assault", "Assault", "Take a position, or rush up to a line")}${btn("suppress", "Suppress", "Put their fire on a place, or spread it along a line")}${btn("hold", "Hold", "Stay where they are and fight from there")}${ordered ? btn("resume", "Carry on", "Back to the platoon's own plan") : ""}<button data-order="close" title="Close (Esc)">${icon("close")}</button><div class="ohint">${hint}</div>`;
   if (el.innerHTML !== html) el.innerHTML = html;
   el.hidden = false;
 }
 
 function orderButton(kind: string): void {
   if (kind === "close") return closeOrders();
-  const sq = orderSquad !== null ? world.squads[orderSquad] : undefined;
-  if (!sq) return closeOrders();
+  if (orderSquads.length === 0) return closeOrders();
   if (isOrderPower(kind)) return setPower(power === kind ? "inspect" : kind);
-  if (kind === "hold" || kind === "resume") giveSquadOrder(sq.id, kind, 0, 0);
+  if (kind === "hold" || kind === "resume") for (const id of orderSquads) sendOrder(id, kind, { x: 0, y: 0 }, null);
+  afterOrders();
 }
 
-function giveSquadOrder(id: number, order: OrderPower | "hold" | "resume", x: number, y: number): void {
-  engine.intervene({ kind: "order", squadId: id, order, x, y });
-  track("order", { order });
+/** Where a squad's men are, as one point: the able ones, or everyone on the field. */
+function squadCentre(id: number): { x: number; y: number } {
+  const all = world.squads[id]!.members.map((m) => world.soldier(m));
+  const men = all.filter((m) => world.able(m));
+  const use = men.length > 0 ? men : all.filter((m) => world.onField(m));
+  if (use.length === 0) return { x: 0, y: 0 };
+  return { x: use.reduce((a, m) => a + m.x, 0) / use.length, y: use.reduce((a, m) => a + m.y, 0) / use.length };
+}
+
+/**
+ * An order to the selected squads, at a point or along a line from `a` to `b`.
+ * A line is shared out between them, each taking the stretch nearest it; sent
+ * to one spot together, they fan out across it rather than pile onto it.
+ */
+function issueOrders(kind: OrderPower, a: { x: number; y: number }, b: { x: number; y: number } | null): void {
+  const ids = orderSquads.filter((id) => world.squads[id]!.members.some((m) => world.able(world.soldier(m))));
+  if (ids.length === 0) return;
+  if (b === null && kind === "move" && ids.length > 1) {
+    const cs = ids.map(squadCentre);
+    const cx = cs.reduce((s, c) => s + c.x, 0) / cs.length, cy = cs.reduce((s, c) => s + c.y, 0) / cs.length;
+    const len = Math.hypot(a.x - cx, a.y - cy) || 1;
+    const px = -(a.y - cy) / len, py = (a.x - cx) / len, half = 6 * ids.length;
+    b = { x: a.x + px * half, y: a.y + py * half };
+    a = { x: a.x - px * half, y: a.y - py * half };
+  }
+  if (b === null) {
+    for (const id of ids) sendOrder(id, kind, a, null);
+  } else {
+    const ux = b.x - a.x, uy = b.y - a.y;
+    const along = (id: number) => {
+      const c = squadCentre(id);
+      return (c.x - a.x) * ux + (c.y - a.y) * uy;
+    };
+    const sorted = [...ids].sort((p, q) => along(p) - along(q) || p - q);
+    sorted.forEach((id, i) => {
+      const f0 = i / sorted.length, f1 = (i + 1) / sorted.length;
+      sendOrder(id, kind, { x: a.x + ux * f0, y: a.y + uy * f0 }, { x: a.x + ux * f1, y: a.y + uy * f1 });
+    });
+  }
+  track("order", { order: kind, line: b !== null, squads: ids.length });
   trackFirstInteraction("order");
+  afterOrders();
+}
+
+function sendOrder(id: number, order: OrderPower | "hold" | "resume", a: { x: number; y: number }, b: { x: number; y: number } | null): void {
+  const x = Math.floor(a.x), y = Math.floor(a.y);
+  engine.intervene(b ? { kind: "order", squadId: id, order, x, y, x2: Math.floor(b.x), y2: Math.floor(b.y) } : { kind: "order", squadId: id, order, x, y });
+}
+
+function afterOrders(): void {
   if (paused && !busy) void advance(1).then(renderOrders);
   else setTimeout(renderOrders, 50);
+}
+
+/** The squads with men inside a box dragged on the screen: of whichever side has more men in it. */
+function boxSelect(x0: number, y0: number, x1: number, y1: number, add: boolean): void {
+  const lx = Math.min(x0, x1), hx = Math.max(x0, x1), ly = Math.min(y0, y1), hy = Math.max(y0, y1);
+  const count = new Map<number, number>();
+  const bySide: Record<Side, number> = { us: 0, de: 0 };
+  for (const sq of world.squads) {
+    if (sq.isHQ) continue;
+    let n = 0;
+    for (const id of sq.members) {
+      const m = world.soldier(id);
+      if (!world.able(m)) continue;
+      const p = renderer.screenOf(m, cam, prev);
+      if (p.x >= lx && p.x <= hx && p.y >= ly && p.y <= hy) n++;
+    }
+    if (n === 0) continue;
+    count.set(sq.id, n);
+    bySide[sq.side] += n;
+  }
+  const side: Side = bySide.us === bySide.de ? world.attacker : bySide.us > bySide.de ? "us" : "de";
+  const ids = [...count.keys()].filter((id) => world.squads[id]!.side === side);
+  if (ids.length === 0) {
+    if (!add) closeOrders();
+    return;
+  }
+  selectSquads(add ? [...new Set([...orderSquads, ...ids])] : ids);
 }
 
 // ---------- The man under control ----------
@@ -2272,7 +2362,7 @@ function renderPilot(): void {
 }
 setInterval(() => {
   if (controlId !== null) renderPilot();
-  if (orderSquad !== null) renderOrders();
+  if (orderSquads.length > 0) renderOrders();
 }, 250);
 
 // The strip is redrawn as he fights, which can swallow a click: act on the press.
@@ -2325,9 +2415,17 @@ for (const type of ["pointerup", "pointercancel"] as const) {
     pilotFrame();
   });
 }
-canvas.addEventListener("contextmenu", (ev) => {
-  if (controlId !== null) ev.preventDefault();
-});
+// The right button drags the map about, so no menu.
+canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
+
+/** The Take control button: the selected man, or pick one with the next click; with a man already in hand, let him go. */
+function controlButton(): void {
+  if (controlId !== null) return releaseControl();
+  const s = world.maybe(selected);
+  if (canControl(s)) return takeControl(s.id);
+  setPower(power === "control" ? "inspect" : "control");
+  toast("battle", "Take control", "Click the man you want to steer.");
+}
 window.addEventListener("blur", () => keys.clear());
 
 // ---------- Input ----------
@@ -2335,8 +2433,8 @@ window.addEventListener("blur", () => keys.clear());
 function setPower(p: typeof power): void {
   power = p;
   canvas.className = `${p === "inspect" ? "" : `power-${p}`}${controlId !== null ? " piloting" : ""}`;
-  document.querySelectorAll<HTMLButtonElement>("[data-power]").forEach((b) => b.classList.toggle("on", b.dataset.power === p));
-  if (orderSquad !== null) renderOrders();
+  document.querySelectorAll<HTMLButtonElement>("[data-power]").forEach((b) => b.classList.toggle("on", b.dataset.power === p || (b.dataset.power === "control" && controlId !== null)));
+  if (orderSquads.length > 0) renderOrders();
 }
 
 function pickAt(sx: number, sy: number): number | null {
@@ -2354,6 +2452,9 @@ function pickAt(sx: number, sy: number): number | null {
 }
 
 let dragging = false, dragMoved = false, dragX = 0, dragY = 0;
+/** A line being drawn for an order (tiles), and a selection box being dragged (screen pixels). */
+let drawing: { id: number; a: { x: number; y: number }; b: { x: number; y: number }; sx: number; sy: number; moved: boolean } | null = null;
+let boxing: { id: number; x0: number; y0: number; moved: boolean } | null = null;
 const touches = new Map<number, { x: number; y: number }>();
 let pinch: { d: number; zoom: number; wx: number; wy: number } | null = null;
 
@@ -2391,6 +2492,19 @@ canvas.addEventListener("pointerdown", (ev) => {
     pin.touchAim = tileAt(ev.clientX, ev.clientY);
     pilotFrame();
   }
+  // With an order chosen, holding the button down draws a line on the map (a finger too).
+  if (touches.size === 1 && isOrderPower(power) && (ev.button === 0 || ev.pointerType === "touch")) {
+    const t = tileAt(ev.clientX, ev.clientY);
+    drawing = { id: ev.pointerId, a: t, b: t, sx: ev.clientX, sy: ev.clientY, moved: false };
+    return;
+  }
+  // The left button drags a box round squads to select them; the right or middle one drags the map. A finger drags the map.
+  if (ev.pointerType !== "touch" && ev.button === 0 && controlId === null) {
+    const rect = canvas.getBoundingClientRect();
+    boxing = { id: ev.pointerId, x0: ev.clientX - rect.left, y0: ev.clientY - rect.top, moved: false };
+    return;
+  }
+  if (ev.button === 1) ev.preventDefault();
   if (touches.size === 2) {
     const f = pinchFrame();
     pinch = { d: f.d, zoom: cam.zoom, wx: f.mx / cam.zoom + cam.x, wy: f.my / cam.zoom + cam.y };
@@ -2422,6 +2536,18 @@ canvas.addEventListener("pointermove", (ev) => {
   renderer.hoverBuilding = world.map.inBounds(tx, ty) ? world.map.building[world.map.idx(tx, ty)]! : -1;
   if (controlId !== null) {
     if (ev.pointerType === "touch" && touches.size === 1) pin.touchAim = tileAt(ev.clientX, ev.clientY);
+    return;
+  }
+  if (drawing && drawing.id === ev.pointerId) {
+    drawing.b = tileAt(ev.clientX, ev.clientY);
+    if (Math.abs(ev.clientX - drawing.sx) + Math.abs(ev.clientY - drawing.sy) > 6) drawing.moved = true;
+    renderer.orderLine = drawing.moved ? { a: drawing.a, b: drawing.b, kind: power, n: orderSquads.length } : null;
+    return;
+  }
+  if (boxing && boxing.id === ev.pointerId) {
+    const x1 = ev.clientX - rect.left, y1 = ev.clientY - rect.top;
+    if (Math.abs(x1 - boxing.x0) + Math.abs(y1 - boxing.y0) > 6) boxing.moved = true;
+    renderer.selectBox = boxing.moved ? { x: Math.min(boxing.x0, x1), y: Math.min(boxing.y0, y1), w: Math.abs(x1 - boxing.x0), h: Math.abs(y1 - boxing.y0) } : null;
     return;
   }
   if (!dragging) return;
@@ -2458,21 +2584,47 @@ canvas.addEventListener("pointerup", (ev) => {
     }
     return;
   }
-  dragging = false;
-  if (dragMoved) return;
   const rect = canvas.getBoundingClientRect();
   const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
+  // A line drawn for an order, or a box dragged round squads.
+  const line = drawing && drawing.id === ev.pointerId ? drawing : null;
+  const box = boxing && boxing.id === ev.pointerId ? boxing : null;
+  drawing = null;
+  boxing = null;
+  renderer.orderLine = null;
+  renderer.selectBox = null;
+  if (line && isOrderPower(power)) {
+    const end = tileAt(ev.clientX, ev.clientY);
+    if (line.moved && Math.hypot(end.x - line.a.x, end.y - line.a.y) >= 2) {
+      issueOrders(power, line.a, end);
+      setPower("inspect");
+      return;
+    }
+  }
+  if (box?.moved) {
+    boxSelect(box.x0, box.y0, sx, sy, ev.shiftKey);
+    return;
+  }
+  dragging = false;
+  if (dragMoved) return;
   const tx = Math.floor((sx / cam.zoom + cam.x) / TILE), ty = Math.floor((sy / cam.zoom + cam.y) / TILE);
-  // An order for the squad whose panel is open: to this spot.
+  // An order for the squads whose panel is open: to this spot.
   if (isOrderPower(power)) {
-    if (orderSquad !== null && world.map.inBounds(tx, ty)) giveSquadOrder(orderSquad, power, tx, ty);
+    if (world.map.inBounds(tx, ty)) issueOrders(power, { x: tx, y: ty }, null);
     setPower("inspect");
     return;
   }
-  // A squad's label in the wide view: its orders.
+  // A man to take in hand.
+  if (power === "control") {
+    const hit = pickAt(sx, sy);
+    setPower("inspect");
+    if (hit !== null) takeControl(hit);
+    return;
+  }
+  // A squad's label in the wide view: its orders (shift adds it to the ones already chosen).
   const banner = power === "inspect" ? renderer.bannerAt(sx, sy) : null;
   if (banner !== null) {
-    openOrders(banner);
+    openOrders(banner, ev.shiftKey);
     return;
   }
   // A runner is a soldier like any other now: clicking him selects him (below). Clicking the envelope over his head follows him.
@@ -2551,6 +2703,10 @@ canvas.addEventListener("pointerup", (ev) => {
 canvas.addEventListener("pointercancel", (ev) => {
   dragging = false;
   pin.fire = false;
+  drawing = null;
+  boxing = null;
+  renderer.orderLine = null;
+  renderer.selectBox = null;
   touches.delete(ev.pointerId);
   if (touches.size < 2) pinch = null;
 });
@@ -2621,8 +2777,7 @@ window.addEventListener("keydown", (ev) => {
     }
     if (k === "t" || k === "escape") return releaseControl();
   } else if (k === "t") {
-    const s = world.maybe(selected);
-    if (s) takeControl(s.id);
+    controlButton();
     return;
   }
   if (k === " ") {
@@ -2648,6 +2803,10 @@ window.addEventListener("keydown", (ev) => {
   else if (k === "escape") {
     $("modal").classList.remove("open");
     if (power === "inspect") closeOrders();
+    drawing = null;
+    boxing = null;
+    renderer.orderLine = null;
+    renderer.selectBox = null;
     setPower("inspect");
   }
 });
@@ -2795,6 +2954,7 @@ document.addEventListener("click", (ev) => {
   const tg = t.closest<HTMLElement>("[data-toggle]");
   if (tg) return toggle(tg.dataset.toggle as keyof ViewOptions);
   const pw = t.closest<HTMLElement>("[data-power]");
+  if (pw?.dataset.power === "control") return controlButton();
   if (pw) return setPower(pw.dataset.power as typeof power);
   const tb = t.closest<HTMLElement>("[data-tab]");
   if (tb) return setTab(tb.dataset.tab!);
@@ -3045,7 +3205,12 @@ requestAnimationFrame(frame);
   /** Calls down the player's 105 mm barrage on a tile: squad.barrage(127, 90). */
   barrage: (x: number, y: number) => engine.intervene({ kind: "artillery", x, y }),
   /** Orders a squad: squad.order(2, "move", 80, 120). */
-  order: (id: number, order: "move" | "assault" | "suppress" | "hold" | "resume", x = 0, y = 0) => giveSquadOrder(id, order, x, y),
+  order: (id: number, order: "move" | "assault" | "suppress" | "hold" | "resume", x = 0, y = 0, x2?: number, y2?: number) => {
+    sendOrder(id, order, { x, y }, x2 !== undefined && y2 !== undefined ? { x: x2, y: y2 } : null);
+    afterOrders();
+  },
+  /** Selects squads for orders, as a dragged box would: squad.selectSquads([1, 2]). */
+  selectSquads,
   /** Takes control of a man, or lets him go: squad.control(14), squad.control(null). */
   control: (id: number | null) => (id === null ? releaseControl() : takeControl(id)),
   startCine: (id: number) => {

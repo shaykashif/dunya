@@ -195,7 +195,9 @@ export function describe(e: SimEvent, w: World): FeedLine | null {
         kind === "resume" ? (d.why === "withdraw" ? `${sq.name}'s orders are overtaken: the platoon is pulling back.` : `${sq.name} goes back to the platoon's plan.`)
         : kind === "arrived" ? `${sq.name} reaches the place it was sent and holds it.`
         : kind === "hold" ? `${sq.name} is ordered to hold where it is.`
-        : `${sq.name} is ordered to ${kind === "move" ? "move" : kind === "assault" ? "assault a position" : "put fire on a position"} ${d.at ? `at ${gridSquare((d.at as [number, number])[0], (d.at as [number, number])[1])}` : ""}.`;
+        : d.to
+          ? `${sq.name} is ordered to ${kind === "move" ? "move up to" : kind === "assault" ? "rush up to" : "spread its fire along"} a line from ${gridSquare(...(d.at as [number, number]))} to ${gridSquare(...(d.to as [number, number]))}.`
+          : `${sq.name} is ordered to ${kind === "move" ? "move" : kind === "assault" ? "assault a position" : "put fire on a position"} ${d.at ? `at ${gridSquare((d.at as [number, number])[0], (d.at as [number, number])[1])}` : ""}.`;
       return line(text, sq.side, [], true);
     }
     case "control": {
